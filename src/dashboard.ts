@@ -13,6 +13,7 @@ import { startDashboardAudioCapture } from "./dashboardCapture";
 import { escapeHtml, formatDuration, sanitizeTopicStatus } from "./utils/domHelpers";
 import { sanitizeDataAttr } from "./utils/sanitize";
 import { renderApiUsageDashboard } from "./apiUsageDashboard";
+import { VB_SYNC_STATUS_KEY, type VbSendResult, type VbSyncStatus } from "./vbClient";
 
 const UI_TRUNCATION_MAX = 50;
 
@@ -1650,6 +1651,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
                 Download
               </button>
+              <button class="session-export-btn vb-send-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Send this session to ValorBrain">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m16 16-4-4-4 4"></path></svg>
+                <span class="vb-send-label">Send to ValorBrain</span>
+              </button>
               <button class="session-delete-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Delete session">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
                 Delete
@@ -1676,6 +1681,77 @@ document.addEventListener("DOMContentLoaded", async () => {
           const sessionId = btn.dataset.sessionId;
           const session = sessionId ? await loadFullSavedSession(sessionId) : null;
           if (session) downloadSessionMarkdown(session);
+        });
+      });
+
+      // Wire up ValorBrain send buttons (sending / sent / error-with-retry)
+      const setVbButtonState = (
+        btn: HTMLButtonElement,
+        state: "idle" | "sending" | "sent" | "error",
+        message = "",
+      ) => {
+        const label = btn.querySelector(".vb-send-label");
+        btn.classList.remove("vb-state-sending", "vb-state-sent", "vb-state-error");
+        if (state === "idle") {
+          btn.disabled = false;
+          if (label) label.textContent = "Send to ValorBrain";
+        } else if (state === "sending") {
+          btn.disabled = true;
+          btn.classList.add("vb-state-sending");
+          if (label) label.textContent = "Sending...";
+        } else if (state === "sent") {
+          btn.disabled = true;
+          btn.classList.add("vb-state-sent");
+          if (label) label.textContent = message || "Sent ✓";
+        } else {
+          // Error keeps the button clickable as an explicit retry.
+          btn.disabled = false;
+          btn.classList.add("vb-state-error");
+          if (label) label.textContent = "Retry send";
+        }
+      };
+
+      container.querySelectorAll<HTMLButtonElement>(".vb-send-btn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const sessionId = btn.dataset.sessionId;
+          if (!sessionId) return;
+          setVbButtonState(btn, "sending");
+
+          const session = await loadFullSavedSession(sessionId);
+          if (!session) {
+            setVbButtonState(btn, "idle");
+            return;
+          }
+
+          let result: VbSendResult | undefined;
+          try {
+            result = (await chrome.runtime.sendMessage({
+              type: "VB_SEND_SESSION",
+              session,
+            })) as VbSendResult | undefined;
+          } catch (err) {
+            const e = err as Error;
+            result = {
+              ok: false,
+              kind: "network",
+              error: e.message || "Send failed",
+              retryable: true,
+            };
+          }
+
+          if (result?.ok) {
+            setVbButtonState(btn, "sent");
+            showToast(
+              result.docRef ? `Sent to ValorBrain (${result.docRef})` : "Sent to ValorBrain",
+              "success",
+            );
+          } else {
+            setVbButtonState(btn, "error");
+            showToast(
+              `ValorBrain error: ${(result as VbSendResult & { error?: string })?.error || "Send failed"}`,
+              "error",
+            );
+          }
         });
       });
 
@@ -2031,6 +2107,38 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.querySelector('[data-tab="sessions"]')?.addEventListener("click", loadMeetingHistory);
   // Load history on tab switch
   document.querySelector('[data-tab="history"]')?.addEventListener("click", loadMeetingHistory);
+
+  // ——— ValorBrain sync badge (last send ok/fail, local status) ———
+  const vbSyncBadge = document.getElementById("vb-sync-badge") as HTMLDivElement | null;
+
+  function renderVbSyncBadge(status: VbSyncStatus | null | undefined) {
+    if (!vbSyncBadge) return;
+    if (!status || typeof status.at !== "number") {
+      vbSyncBadge.hidden = true;
+      return;
+    }
+    const time = new Date(status.at).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    vbSyncBadge.hidden = false;
+    vbSyncBadge.classList.toggle("vb-sync-ok", status.ok === true);
+    vbSyncBadge.classList.toggle("vb-sync-fail", status.ok !== true);
+    vbSyncBadge.textContent = status.ok === true ? `ValorBrain ✓ ${time}` : `ValorBrain ✗ ${time}`;
+    vbSyncBadge.title =
+      status.ok === true
+        ? `Last ValorBrain sync succeeded${status.docRef ? ` (${status.docRef})` : ""}`
+        : `Last ValorBrain sync failed: ${status.error || "unknown error"}`;
+  }
+
+  chrome.storage.local.get(VB_SYNC_STATUS_KEY).then((values) => {
+    renderVbSyncBadge(values[VB_SYNC_STATUS_KEY] as VbSyncStatus | undefined);
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes[VB_SYNC_STATUS_KEY]) return;
+    renderVbSyncBadge(changes[VB_SYNC_STATUS_KEY].newValue as VbSyncStatus | undefined);
+  });
 
   // ——— Copy Transcript Message (Event Delegation) ———
   transcriptContainer?.addEventListener("click", (e) => {
