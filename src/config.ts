@@ -1,15 +1,5 @@
 // Shared Configuration Constants for Late Meet
 
-// AI Model Names
-/** The default OpenAI chat model used for meeting summarization and AI features. */
-export const DEFAULT_CHAT_MODEL = "gpt-4o-mini";
-
-/** The ElevenLabs speech-to-text model used for audio transcription. */
-export const ELEVENLABS_STT_MODEL = "scribe_v2";
-
-/** The OpenAI Whisper model used as the fallback speech-to-text engine. */
-export const WHISPER_MODEL = "whisper-1";
-
 // AI Processing Limits
 /** Maximum number of characters allowed in a single AI prompt before truncation. */
 export const MAX_PROMPT_LENGTH = 2000;
