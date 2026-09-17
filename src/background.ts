@@ -36,6 +36,13 @@ import {
   WHISPER_MODEL,
 } from "./config";
 import { updateUsageStats, calculateDeltaCost, UsageDelta } from "./usageTracker";
+import {
+  getVbSettings,
+  normalizeVbSettings,
+  recordVbSyncStatus,
+  sendToValorBrain,
+  testValorBrainConnection,
+} from "./vbClient";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions";
@@ -1581,6 +1588,26 @@ async function savePendingSession() {
 let isProcessingSession = false;
 let inMemoryPendingSession: StoredSession | null = null;
 
+/**
+ * Best-effort push of a saved session to ValorBrain when `vb.autoSend` is on.
+ * Never throws — failures are recorded for the sync badge and logged only.
+ */
+async function autoSendSavedSessionToValorBrain(session: StoredSession) {
+  try {
+    const vbSettings = await getVbSettings();
+    if (!vbSettings.autoSend) return;
+    const result = await sendToValorBrain(session, vbSettings);
+    await recordVbSyncStatus(result, session.id);
+    if (!result.ok) {
+      console.warn("[LateMeet] ValorBrain auto-send failed:", result.error);
+    } else if (DEBUG) {
+      console.log("[LateMeet] ValorBrain auto-send succeeded:", result.docRef);
+    }
+  } catch (err) {
+    console.warn("[LateMeet] ValorBrain auto-send error:", err);
+  }
+}
+
 async function persistSession() {
   if (isProcessingSession) {
     if (DEBUG) {
@@ -1601,6 +1628,10 @@ async function persistSession() {
     if (DEBUG) {
       console.log("[LateMeet] Session successfully saved:", session.id);
     }
+    // Optional ValorBrain auto-send (vb.autoSend). Fire-and-forget: the local
+    // transcript is the source of truth, so a VB failure must never block the
+    // local export (R3).
+    void autoSendSavedSessionToValorBrain(session);
   } catch (err) {
     console.error("[LateMeet] Error persisting session:", err);
     throw err;
@@ -2188,6 +2219,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "DELETE_SAVED_SESSION": {
         await deleteSavedMeetingSession(chrome.storage.local, message.sessionId);
         sendResponse({ success: true });
+        return;
+      }
+
+      case "VB_SEND_SESSION": {
+        const session = message?.session as State | undefined;
+        if (!session?.id) {
+          sendResponse({
+            ok: false,
+            kind: "config",
+            error: "No saved session provided",
+            retryable: false,
+          });
+          return;
+        }
+        const vbSettings = await getVbSettings();
+        const result = await sendToValorBrain(session, vbSettings);
+        await recordVbSyncStatus(result, session.id);
+        sendResponse(result);
+        return;
+      }
+
+      case "VB_TEST_CONNECTION": {
+        // Callers (options page) may pass the unsaved form values to test.
+        const vbSettings = message?.settings
+          ? normalizeVbSettings(message.settings)
+          : await getVbSettings();
+        sendResponse(await testValorBrainConnection(vbSettings));
         return;
       }
 
