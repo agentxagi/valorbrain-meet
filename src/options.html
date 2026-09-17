@@ -475,6 +475,120 @@
           </div>
         </div>
       </section>
+      <!-- ValorBrain Section -->
+      <section class="options-section">
+        <h2 class="section-title">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="lucide lucide-cloud-upload"
+          >
+            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+            <path d="M12 12v9" />
+            <path d="m16 16-4-4-4 4" />
+          </svg>
+          ValorBrain
+        </h2>
+        <p class="form-hint">
+          Push saved sessions to your tenant's ValorBrain memory. All fields are per-tenant and
+          stored only in this browser.
+        </p>
+
+        <div class="form-group">
+          <label class="form-label" for="vb-base-url">Base URL</label>
+          <p class="form-hint">e.g. https://memory.valor.digital — leave empty to disable</p>
+          <input
+            type="text"
+            id="vb-base-url"
+            class="form-input"
+            placeholder="https://your-valorbrain-host"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="vb-api-token">API Token</label>
+          <p class="form-hint">Bearer token issued to your tenant</p>
+          <div class="input-row">
+            <input
+              type="password"
+              id="vb-api-token"
+              class="form-input"
+              placeholder="Your ValorBrain API token..."
+              autocomplete="off"
+            />
+            <button
+              class="toggle-vis"
+              data-target="vb-api-token"
+              aria-label="Toggle token visibility"
+              title="Show/Hide Token"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-eye"
+              >
+                <path
+                  d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+                />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="vb-tenant-id">Tenant ID</label>
+          <p class="form-hint">UUID of your ValorBrain tenant</p>
+          <input
+            type="text"
+            id="vb-tenant-id"
+            class="form-input"
+            placeholder="00000000-0000-0000-0000-000000000000"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
+        <div class="toggle-group">
+          <div class="toggle-item">
+            <div>
+              <div class="toggle-label">Auto-send to ValorBrain</div>
+              <div class="toggle-hint">
+                Send each saved session automatically when the meeting ends. Local export is never
+                blocked by send failures.
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="vb-auto-send" aria-label="Auto-send to ValorBrain" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <button id="vb-test-connection-btn" class="btn" aria-label="Test ValorBrain connection">
+            Test connection
+          </button>
+          <div id="vb-test-status" class="form-hint" style="margin-top: 8px"></div>
+        </div>
+      </section>
+
       <!-- Storage Section -->
       <section class="options-section">
         <h2 class="section-title">

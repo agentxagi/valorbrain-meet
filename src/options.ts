@@ -29,6 +29,11 @@ interface KnownSettings {
   transcriptRefinement?: boolean;
   theme?: "system" | "light" | "dark";
   accent?: string;
+  // ValorBrain ingest (vbClient.ts owns these keys)
+  "vb.baseUrl"?: string;
+  "vb.apiToken"?: string;
+  "vb.tenantId"?: string;
+  "vb.autoSend"?: boolean;
 }
 
 /**
@@ -99,6 +104,28 @@ document.addEventListener("DOMContentLoaded", async () => {
   const elevenlabsKeyInput = document.getElementById("elevenlabs-key") as HTMLInputElement | null;
   if (elevenlabsKeyInput && credentials.elevenlabs_api_key) {
     elevenlabsKeyInput.value = credentials.elevenlabs_api_key;
+  }
+
+  // ——— ValorBrain settings ———
+  const vbBaseUrlInput = document.getElementById("vb-base-url") as HTMLInputElement | null;
+  const vbApiTokenInput = document.getElementById("vb-api-token") as HTMLInputElement | null;
+  const vbTenantIdInput = document.getElementById("vb-tenant-id") as HTMLInputElement | null;
+  const vbAutoSendInput = document.getElementById("vb-auto-send") as HTMLInputElement | null;
+  if (vbBaseUrlInput && settings["vb.baseUrl"]) vbBaseUrlInput.value = settings["vb.baseUrl"];
+  if (vbApiTokenInput && settings["vb.apiToken"]) vbApiTokenInput.value = settings["vb.apiToken"];
+  if (vbTenantIdInput && settings["vb.tenantId"]) vbTenantIdInput.value = settings["vb.tenantId"];
+  if (vbAutoSendInput) vbAutoSendInput.checked = settings["vb.autoSend"] === true;
+
+  function readVbFields(): Pick<
+    KnownSettings,
+    "vb.baseUrl" | "vb.apiToken" | "vb.tenantId" | "vb.autoSend"
+  > {
+    return {
+      "vb.baseUrl": vbBaseUrlInput?.value.trim() ?? "",
+      "vb.apiToken": vbApiTokenInput?.value.trim() ?? "",
+      "vb.tenantId": vbTenantIdInput?.value.trim() ?? "",
+      "vb.autoSend": vbAutoSendInput?.checked === true,
+    };
   }
 
   // Interval slider
@@ -397,6 +424,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         transcriptRefinement: (document.getElementById("refinement-toggle") as HTMLInputElement)
           ?.checked,
 
+        // ValorBrain ingest settings (vb.* keys)
+        ...readVbFields(),
+
         // Save theme selections into the global config tree bundle block
         theme: (themeSelect?.value as Settings["theme"]) || "system",
         accent: selectedAccentColor,
@@ -461,6 +491,41 @@ document.addEventListener("DOMContentLoaded", async () => {
       saveBtn.textContent = originalText;
     }
   });
+  // ——— ValorBrain: Test connection ———
+  // Goes through the service worker so extension-page CSP/connect-src never
+  // limits which ValorBrain hosts a tenant can configure.
+  document.getElementById("vb-test-connection-btn")?.addEventListener("click", async () => {
+    const testBtn = document.getElementById("vb-test-connection-btn") as HTMLButtonElement | null;
+    const testStatus = document.getElementById("vb-test-status");
+    const fields = readVbFields();
+
+    if (!fields["vb.baseUrl"] || !fields["vb.apiToken"] || !fields["vb.tenantId"]) {
+      if (testStatus) {
+        testStatus.textContent = "Fill in Base URL, API token, and Tenant ID first.";
+      }
+      return;
+    }
+
+    if (testBtn) testBtn.disabled = true;
+    if (testStatus) testStatus.textContent = "Testing connection...";
+    try {
+      const result = (await chrome.runtime.sendMessage({
+        type: "VB_TEST_CONNECTION",
+        settings: fields,
+      })) as { ok: boolean; message: string } | undefined;
+      if (testStatus) {
+        testStatus.textContent = result?.ok
+          ? `✓ ${result.message}`
+          : `✗ ${result?.message || "Connection failed"}`;
+      }
+    } catch (err) {
+      const e = err as Error;
+      if (testStatus) testStatus.textContent = `✗ ${e.message || "Connection failed"}`;
+    } finally {
+      if (testBtn) testBtn.disabled = false;
+    }
+  });
+
   // ——— Storage Dashboard ———
   const storageContainer = document.getElementById("storage-dashboard-container");
   if (storageContainer) {
