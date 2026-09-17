@@ -4,7 +4,8 @@ import {
   isUnlocked,
   unlockCredentials,
 } from "./utils/credentials";
-import { validateOpenAIKey, validateElevenLabsKey } from "./utils/api";
+import { validateProviderConnection } from "./utils/api";
+import { providerConfigFromProfile } from "./utils/providerSettings";
 
 export async function renderOnboarding(container: HTMLElement) {
   container.hidden = false;
@@ -55,7 +56,7 @@ export async function renderOnboarding(container: HTMLElement) {
       title: "API Keys",
       html: `
         <h2>API Keys</h2>
-        <p>Provide your OpenAI API key to enable summarization features. ElevenLabs is optional for TTS.</p>
+        <p>Provide your OpenAI API key to enable summarization features. Other providers (local Whisper, Z.ai GLM, custom endpoints) are configured in Settings → AI Providers.</p>
         <div class="form-group">
           <label for="onb-passphrase">Encryption Passphrase</label>
           <input id="onb-passphrase" type="password" class="form-input" placeholder="Create or enter passphrase..." />
@@ -65,12 +66,6 @@ export async function renderOnboarding(container: HTMLElement) {
           <input id="onb-openai" class="form-input" placeholder="sk-xxxx" />
           <button id="onb-validate-openai" class="btn">Validate</button>
           <div id="onb-openai-status" class="form-note"></div>
-        </div>
-        <div class="form-group">
-          <label for="onb-eleven">ElevenLabs API Key (optional)</label>
-          <input id="onb-eleven" class="form-input" placeholder="xxxxx" />
-          <button id="onb-validate-eleven" class="btn">Validate</button>
-          <div id="onb-eleven-status" class="form-note"></div>
         </div>
       `,
     },
@@ -124,16 +119,12 @@ export async function renderOnboarding(container: HTMLElement) {
     if (step.id === "api-keys") {
       const passInput = container.querySelector<HTMLInputElement>("#onb-passphrase")!;
       const openaiInput = container.querySelector<HTMLInputElement>("#onb-openai")!;
-      const elevenInput = container.querySelector<HTMLInputElement>("#onb-eleven")!;
       const openaiStatus = container.querySelector<HTMLDivElement>("#onb-openai-status")!;
-      const elevenStatus = container.querySelector<HTMLDivElement>("#onb-eleven-status")!;
       const valOpenBtn = container.querySelector<HTMLButtonElement>("#onb-validate-openai")!;
-      const valElevenBtn = container.querySelector<HTMLButtonElement>("#onb-validate-eleven")!;
 
       (async () => {
         const creds = await getApiCredentials();
         if (creds.openai_api_key) openaiInput.value = creds.openai_api_key;
-        if (creds.elevenlabs_api_key) elevenInput.value = creds.elevenlabs_api_key;
       })();
 
       type UnlockResult = { unlocked: true } | { unlocked: false; reason: "missing" | "wrong" };
@@ -156,7 +147,7 @@ export async function renderOnboarding(container: HTMLElement) {
         openaiStatus.textContent = "Validating...";
         const key = openaiInput.value.trim();
         try {
-          const ok = await validateOpenAIKey(key);
+          const ok = await validateProviderConnection(providerConfigFromProfile("openai", key));
           if (ok) {
             const result = await ensureUnlocked();
             if (!result.unlocked) {
@@ -170,27 +161,6 @@ export async function renderOnboarding(container: HTMLElement) {
           }
         } catch {
           openaiStatus.textContent = "Validation error.";
-        }
-      });
-
-      valElevenBtn.addEventListener("click", async () => {
-        elevenStatus.textContent = "Validating...";
-        const key = elevenInput.value.trim();
-        try {
-          const ok = await validateElevenLabsKey(key);
-          if (ok) {
-            const result = await ensureUnlocked();
-            if (!result.unlocked) {
-              elevenStatus.textContent = unlockFailureMessage(result.reason);
-              return;
-            }
-            await saveApiCredentials({ elevenlabs_api_key: key });
-            elevenStatus.textContent = "Valid ElevenLabs key — saved.";
-          } else {
-            elevenStatus.textContent = "Invalid ElevenLabs key.";
-          }
-        } catch {
-          elevenStatus.textContent = "Validation error.";
         }
       });
     }

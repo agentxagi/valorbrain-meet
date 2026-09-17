@@ -127,7 +127,7 @@ function buildDashboardHTML(stats: Record<string, DayStats>): string {
         </div>
         <p class="usage-footnote">
           Costs estimated using OpenAI published pricing.<br>
-          ElevenLabs STT estimated at ~$0.40/hr.
+          Other providers are shown without cost estimates.
         </p>
       </div>`;
   }
@@ -213,7 +213,7 @@ function buildDashboardHTML(stats: Record<string, DayStats>): string {
 
       <p class="usage-footnote">
         Costs estimated using OpenAI published pricing.<br>
-        ElevenLabs STT estimated at ~$0.40/hr (Starter plan).
+        Other providers are shown without cost estimates.
       </p>
     </div>`;
 }
