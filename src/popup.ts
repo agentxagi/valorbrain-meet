@@ -12,6 +12,7 @@ import {
   getProviderConfig,
   providerConfigFromProfile,
   resolveProviderApiKey,
+  storageKeyFor,
 } from "./utils/providerSettings";
 import { resolveManualMeetTab } from "./meetingTabs";
 import { startPopupAudioCapture } from "./popupCapture";
@@ -79,10 +80,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     pendingUnlock = handlePassphraseUnlock();
   });
 
-  // ——— Check if an API key is configured ———
+  // ——— Check whether first-run setup is still needed ———
+  // Setup is done when the legacy OpenAI vault key exists OR any AI provider
+  // block was saved (transcription itself works keyless against a local
+  // Whisper server, so a key is never a hard requirement).
   const config = await getApiCredentials();
+  const providerBlocks = await chrome.storage.local.get([
+    storageKeyFor("transcription"),
+    storageKeyFor("summary"),
+  ]);
+  const setupDone =
+    Boolean(config.openai_api_key) ||
+    Boolean(providerBlocks[storageKeyFor("transcription")]) ||
+    Boolean(providerBlocks[storageKeyFor("summary")]);
 
-  if (!config.openai_api_key) {
+  if (!setupDone) {
     setupView.style.display = "block";
     mainView.style.display = "none";
   } else {
@@ -160,6 +172,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ——— Settings ———
   document.getElementById("settings-btn")?.addEventListener("click", () => {
+    chrome.runtime.openOptionsPage();
+  });
+
+  // ——— AI Providers setup shortcut (setup view) ———
+  document.getElementById("open-providers")?.addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
   });
 

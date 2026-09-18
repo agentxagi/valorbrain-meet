@@ -31,8 +31,14 @@
         </div>
         <h1 class="setup-title">Initialize Copilot</h1>
         <p class="setup-subtitle">
-          Connect your OpenAI API key to begin transcribing meetings locally.
+          Configure your AI Providers (local Whisper, Z.ai GLM, OpenAI or custom) in Settings —
+          transcription works without any key. The OpenAI vault key below is optional (legacy).
         </p>
+
+        <button id="open-providers" class="setup-btn" style="margin-bottom: 14px">
+          <span>Open Settings — AI Providers</span>
+          <span class="btn-icon">→</span>
+        </button>
 
         <div class="setup-form">
           <label class="setup-label" for="passphrase-input">Encryption Passphrase</label>
