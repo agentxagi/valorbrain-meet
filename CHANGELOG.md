@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-18
+
+### 🚀 Features
+
+- Provider-agnostic AI pipeline: independent transcription and summary providers configured in a new **AI Providers** options section (profile dropdown + editable Base URL / API Key / Model, per-block connection test). Defaults: **Local Whisper (faster-whisper)** `http://127.0.0.1:8394/v1` + **Z.ai GLM** `https://api.z.ai/api/paas/v4` (`glm-5.3-flash`); OpenAI remains a first-class profile ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+- URL validator now accepts plain HTTP for loopback (`localhost`, `127.0.0.0/8`, `::1`) and private LAN IPv4 addresses; all other hosts still require HTTPS ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+- Manifest: `host_permissions` and CSP `connect-src` for `api.z.ai`, `localhost`, `127.0.0.1` (port wildcards) and `*.valor.digital`; renamed to **ValorBrain Meet** ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+
+### ♻️ Refactors
+
+- All AI endpoints in `background.ts` / `api.ts` read from provider settings — zero hardcoded provider URLs. Transcription no longer requires an API key ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+- AI Providers UI and provider-agnostic connection validation; popup capture start no longer blocks without an OpenAI key ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+
+### 📚 Documentation
+
+- README provider setup guide + manifest CSP platform limitation; `CHANGES.md` with the manual **Load unpacked** step ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+
 ## [1.0.0] - 2025-05-13
 
 ### Added
