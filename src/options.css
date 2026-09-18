@@ -468,3 +468,17 @@ body {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* --- AI Providers Section --- */
+.provider-block {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.25));
+  border-radius: 12px;
+}
+
+.provider-block-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}

@@ -13,12 +13,6 @@ const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
   "whisper-1": { input: 0, output: 0 },
 };
 
-/**
- * ElevenLabs STT (Scribe v2) estimated cost per audio second.
- * Based on ~$0.40/hour on the Starter plan ≈ $0.000111/second.
- */
-const ELEVENLABS_STT_PRICE_PER_SECOND = 0.000111;
-
 /** Whisper is billed at $0.006 per minute of audio. */
 const WHISPER_PRICE_PER_SECOND = 0.006 / 60;
 
@@ -43,10 +37,30 @@ export interface UsageDelta {
   totalTokens?: number;
   /** Seconds of audio processed by OpenAI Whisper. */
   whisperSeconds?: number;
-  /** Seconds of audio processed by ElevenLabs STT. */
-  elevenlabsSeconds?: number;
+  /** Seconds of audio processed by a local/self-hosted STT server (zero cost). */
+  localSeconds?: number;
   /** The model used for this chat completion (for pricing lookup). */
   model?: string;
+}
+
+/**
+ * Resolves the per-token pricing for a chat model. Only OpenAI models have a
+ * published price table; unknown models (e.g. Z.ai GLM or custom deployments)
+ * are treated as free until a provider price list is added.
+ */
+function pricingForModel(model: string | undefined): { input: number; output: number } | null {
+  if (!model) return null;
+  return OPENAI_PRICING[model] ?? null;
+}
+
+function chatCostFor(
+  promptTokens: number,
+  completionTokens: number,
+  model: string | undefined,
+): number {
+  const pricing = pricingForModel(model);
+  if (!pricing) return 0;
+  return (promptTokens / 1000) * pricing.input + (completionTokens / 1000) * pricing.output;
 }
 
 export function calculateDeltaCost(delta: UsageDelta): {
@@ -58,19 +72,14 @@ export function calculateDeltaCost(delta: UsageDelta): {
   const ct = delta.completionTokens ?? 0;
   const tt = delta.totalTokens ?? pt + ct;
   const ws = delta.whisperSeconds ?? 0;
-  const es = delta.elevenlabsSeconds ?? 0;
+  const ls = delta.localSeconds ?? 0;
 
-  const model = delta.model ?? "gpt-4o-mini";
-  const pricing = OPENAI_PRICING[model] ?? OPENAI_PRICING["gpt-4o-mini"];
-  const chatCost = (pt / 1000) * pricing.input + (ct / 1000) * pricing.output;
-
-  const whisperCost = ws * WHISPER_PRICE_PER_SECOND;
-  const elevenlabsCost = es * ELEVENLABS_STT_PRICE_PER_SECOND;
+  const cost = chatCostFor(pt, ct, delta.model) + ws * WHISPER_PRICE_PER_SECOND;
 
   return {
     tokens: tt,
-    cost: chatCost + whisperCost + elevenlabsCost,
-    audioSeconds: ws + es,
+    cost,
+    audioSeconds: ws + ls,
   };
 }
 
@@ -81,48 +90,38 @@ let writeQueue = Promise.resolve();
  * Atomically increments today's stats in chrome.storage.local.
  * All fields are optional — only supplied deltas are applied.
  */
-export async function updateUsageStats(delta: UsageDelta): Promise<void> {
-  return new Promise((resolve, reject) => {
-    writeQueue = writeQueue.then(async () => {
-      try {
-        const key = getTodayKey();
-        const stats = await getUsageStats();
-        const today = stats[key] ?? {
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          audioSeconds: 0,
-          estimatedCost: 0,
-        };
+export function updateUsageStats(delta: UsageDelta): Promise<void> {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  writeQueue = writeQueue.then(async () => {
+    try {
+      const key = getTodayKey();
+      const stats = await getUsageStats();
+      const today = stats[key] ?? {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        audioSeconds: 0,
+        estimatedCost: 0,
+      };
 
-        const pt = delta.promptTokens ?? 0;
-        const ct = delta.completionTokens ?? 0;
-        const tt = delta.totalTokens ?? pt + ct;
-        const ws = delta.whisperSeconds ?? 0;
-        const es = delta.elevenlabsSeconds ?? 0;
+      const pt = delta.promptTokens ?? 0;
+      const ct = delta.completionTokens ?? 0;
+      const tt = delta.totalTokens ?? pt + ct;
+      const ws = delta.whisperSeconds ?? 0;
+      const ls = delta.localSeconds ?? 0;
 
-        today.promptTokens += pt;
-        today.completionTokens += ct;
-        today.totalTokens += tt;
-        today.audioSeconds += ws + es;
+      today.promptTokens += pt;
+      today.completionTokens += ct;
+      today.totalTokens += tt;
+      today.audioSeconds += ws + ls;
+      today.estimatedCost += chatCostFor(pt, ct, delta.model) + ws * WHISPER_PRICE_PER_SECOND;
 
-        // Chat completion cost
-        const model = delta.model ?? "gpt-4o-mini";
-        const pricing = OPENAI_PRICING[model] ?? OPENAI_PRICING["gpt-4o-mini"];
-        const chatCost = (pt / 1000) * pricing.input + (ct / 1000) * pricing.output;
-
-        // Audio transcription cost
-        const whisperCost = ws * WHISPER_PRICE_PER_SECOND;
-        const elevenlabsCost = es * ELEVENLABS_STT_PRICE_PER_SECOND;
-
-        today.estimatedCost += chatCost + whisperCost + elevenlabsCost;
-
-        stats[key] = today;
-        await chrome.storage.local.set({ usageStats: stats });
-        resolve();
-      } catch (err) {
-        reject(err);
-      }
-    });
+      stats[key] = today;
+      await chrome.storage.local.set({ usageStats: stats });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
   });
+  return promise;
 }

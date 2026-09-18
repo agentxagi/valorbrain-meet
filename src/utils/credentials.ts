@@ -15,15 +15,14 @@ import { evaluatePassphraseStrength } from "../passphraseStrength";
 const ENCRYPTED_MARKER = "enc:";
 
 /** Union of all credential key names managed by this module. */
-export type CredentialKey = "openai_api_key" | "elevenlabs_api_key";
+export type CredentialKey = "openai_api_key";
 
 /** Bag of optional API credential strings. */
 export interface ApiCredentials {
   openai_api_key?: string;
-  elevenlabs_api_key?: string;
 }
 
-const CREDENTIAL_KEYS: CredentialKey[] = ["openai_api_key", "elevenlabs_api_key"];
+const CREDENTIAL_KEYS: CredentialKey[] = ["openai_api_key"];
 
 function normalizedCredential(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -355,25 +354,6 @@ export async function getOpenAiApiKey(): Promise<string | null> {
 }
 
 /**
- * Retrieves the stored ElevenLabs API key.
- *
- * Convenience wrapper around {@link getApiCredentials} for callers that only
- * need the ElevenLabs key.
- *
- * @returns The ElevenLabs API key string, or `null` if none is stored.
- *
- * @example
- * const key = await getElevenLabsApiKey();
- * if (key) {
- *   // Use ElevenLabs for higher-quality transcription
- * }
- */
-export async function getElevenLabsApiKey(): Promise<string | null> {
-  const credentials = await getApiCredentials();
-  return credentials.elevenlabs_api_key || null;
-}
-
-/**
  * Persists API credentials to both `chrome.storage.local` (encrypted) and
  * `chrome.storage.session` (plaintext cache).
  *
@@ -393,11 +373,11 @@ export async function getElevenLabsApiKey(): Promise<string | null> {
  *   (encryption requires an unlocked vault).
  *
  * @example
- * // Save a new OpenAI key without touching the ElevenLabs key:
+ * // Save a new OpenAI key:
  * await saveApiCredentials({ openai_api_key: "sk-..." });
  *
- * // Clear the ElevenLabs key:
- * await saveApiCredentials({ elevenlabs_api_key: "" });
+ * // Clear the OpenAI key:
+ * await saveApiCredentials({ openai_api_key: "" });
  */
 export async function saveApiCredentials(credentials: ApiCredentials): Promise<void> {
   const saveData: ApiCredentials = {};

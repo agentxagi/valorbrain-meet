@@ -5,7 +5,18 @@ import {
   isUnlocked,
   isVaultInitialized,
 } from "./utils/credentials";
-import { validateOpenAIKey, validateElevenLabsKey } from "./utils/api.js";
+import { validateProviderConnection } from "./utils/api.js";
+import {
+  getProviderConfig,
+  getProviderProfile,
+  migrateProviderSettings,
+  normalizeProviderConfig,
+  providerConfigFromProfile,
+  saveProviderConfig,
+  type ProviderConfig,
+  type ProviderRole,
+} from "./utils/providerSettings";
+import { validateApiUrl } from "./utils/urlValidator";
 import { renderStorageDashboard } from "./storageDashboard";
 import { renderApiUsageDashboard } from "./apiUsageDashboard";
 import { MIN_PASSPHRASE_LENGTH, evaluatePassphraseStrength } from "./passphraseStrength";
@@ -19,7 +30,6 @@ import { getSettings } from "./settings";
 interface KnownSettings {
   summarizationInterval?: number;
   vadThreshold?: number;
-  aiModel?: string;
   lateJoinerBriefing?: boolean;
   publicLateJoinerChat?: boolean;
   topicDetection?: boolean;
@@ -66,6 +76,73 @@ function applyThemePreview(theme: "system" | "light" | "dark", accent: string) {
   root.style.setProperty("--accent-color", accent);
 }
 
+// ——— AI Providers section helpers ———
+// DOM ids follow `${role}-${field}` and must stay in sync with options.html.
+
+type ProviderField = "profile" | "base-url" | "api-key" | "model" | "test" | "test-status";
+
+function providerInputId(role: ProviderRole, field: ProviderField): string {
+  return `${role}-${field}`;
+}
+
+function providerRoleLabel(role: ProviderRole): string {
+  return role === "transcription" ? "Transcription" : "Summary";
+}
+
+function inputValue(id: string): string {
+  return ((document.getElementById(id) as HTMLInputElement | null)?.value ?? "").trim();
+}
+
+function setInputValue(id: string, value: string): void {
+  const el = document.getElementById(id) as HTMLInputElement | null;
+  if (el) el.value = value;
+}
+
+function readProviderFields(role: ProviderRole): ProviderConfig {
+  const select = document.getElementById(
+    providerInputId(role, "profile"),
+  ) as HTMLSelectElement | null;
+  return normalizeProviderConfig(role, {
+    profile: select?.value,
+    baseUrl: inputValue(providerInputId(role, "base-url")),
+    apiKey: inputValue(providerInputId(role, "api-key")),
+    model: inputValue(providerInputId(role, "model")),
+  });
+}
+
+function writeProviderFields(role: ProviderRole, config: ProviderConfig): void {
+  const select = document.getElementById(
+    providerInputId(role, "profile"),
+  ) as HTMLSelectElement | null;
+  if (select) select.value = config.profile;
+  setInputValue(providerInputId(role, "base-url"), config.baseUrl);
+  setInputValue(providerInputId(role, "api-key"), config.apiKey);
+  setInputValue(providerInputId(role, "model"), config.model);
+}
+
+function applyProviderProfilePreset(role: ProviderRole, profileId: string): void {
+  const preset = getProviderProfile(profileId);
+  if (!preset) return; // "custom" keeps the current fields untouched
+  setInputValue(providerInputId(role, "base-url"), preset.baseUrl);
+  setInputValue(providerInputId(role, "model"), preset.model);
+}
+
+async function testProviderConnection(role: ProviderRole): Promise<void> {
+  const statusEl = document.getElementById(providerInputId(role, "test-status"));
+  if (statusEl) {
+    statusEl.className = "passphrase-status";
+    statusEl.textContent = "Testing connection…";
+  }
+
+  const ok = await validateProviderConnection(readProviderFields(role));
+  if (statusEl) {
+    statusEl.className = `passphrase-status status-${ok ? "success" : "danger"}`;
+    statusEl.textContent = ok
+      ? `${providerRoleLabel(role)} provider reachable — connection OK.`
+      : `${providerRoleLabel(role)} provider unreachable. Check the base URL and API key.`;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   // ——— Load saved settings ———
   // Uses the shared getSettings() helper instead of re-fetching/parsing the
@@ -96,9 +173,25 @@ document.addEventListener("DOMContentLoaded", async () => {
     openaiKeyInput.value = credentials.openai_api_key;
   }
 
-  const elevenlabsKeyInput = document.getElementById("elevenlabs-key") as HTMLInputElement | null;
-  if (elevenlabsKeyInput && credentials.elevenlabs_api_key) {
-    elevenlabsKeyInput.value = credentials.elevenlabs_api_key;
+  // ——— AI Providers ———
+  // Runs the one-time legacy migration before reading, so a pre-existing
+  // OpenAI credential shows up as the OpenAI profile instead of the defaults.
+  await migrateProviderSettings().catch((err) =>
+    console.warn("[LateMeet] Provider settings migration failed:", err),
+  );
+
+  for (const role of ["transcription", "summary"] as const) {
+    const config = await getProviderConfig(role);
+    writeProviderFields(role, config);
+
+    const select = document.getElementById(
+      providerInputId(role, "profile"),
+    ) as HTMLSelectElement | null;
+    select?.addEventListener("change", () => applyProviderProfilePreset(role, select.value));
+
+    document
+      .getElementById(providerInputId(role, "test"))
+      ?.addEventListener("click", () => void testProviderConnection(role));
   }
 
   // Interval slider
@@ -149,11 +242,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // AI Model
-  const aiModelSelect = document.getElementById("ai-model") as HTMLSelectElement | null;
-  if (aiModelSelect && settings.aiModel) {
-    aiModelSelect.value = settings.aiModel;
-  }
+  // AI model selection moved to the AI Providers section (per-provider model).
 
   // Feature toggles
   const toggles: Array<{ id: string; key: BooleanSettingKey }> = [
@@ -299,9 +388,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (openaiKeyInput && creds.openai_api_key) {
       openaiKeyInput.value = creds.openai_api_key;
     }
-    if (elevenlabsKeyInput && creds.elevenlabs_api_key) {
-      elevenlabsKeyInput.value = creds.elevenlabs_api_key;
-    }
   }
 
   async function handleUnlock() {
@@ -358,12 +444,28 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const openaiKey =
       (document.getElementById("openai-key") as HTMLInputElement | null)?.value.trim() ?? "";
-    const elevenlabsKey =
-      (document.getElementById("elevenlabs-key") as HTMLInputElement | null)?.value.trim() ?? "";
 
     const originalText = saveBtn.textContent?.trim() || "Save Settings";
     saveBtn.disabled = true;
     try {
+      // ——— AI Providers blocks ———
+      for (const role of ["transcription", "summary"] as const) {
+        const config = readProviderFields(role);
+        const urlCheck = validateApiUrl(config.baseUrl);
+        if (!urlCheck.valid) {
+          if (status) {
+            status.style.color = "red";
+            status.textContent = `${providerRoleLabel(role)} base URL: ${urlCheck.error}`;
+            status.classList.add("visible");
+            setTimeout(() => status.classList.remove("visible"), 4000);
+          }
+          saveBtn.disabled = false;
+          saveBtn.textContent = originalText;
+          return;
+        }
+        await saveProviderConfig(role, config);
+      }
+
       const parsedInterval = intervalSlider ? parseInt(intervalSlider.value, 10) : 300;
       let validatedInterval =
         Number.isNaN(parsedInterval) || !Number.isFinite(parsedInterval) ? 300 : parsedInterval;
@@ -382,7 +484,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         ...settings, // Retain existing unmapped fields
         summarizationInterval: validatedInterval,
         vadThreshold: validatedVadThreshold,
-        aiModel: (document.getElementById("ai-model") as HTMLSelectElement)?.value,
         lateJoinerBriefing: (document.getElementById("late-joiner-toggle") as HTMLInputElement)
           ?.checked,
         publicLateJoinerChat: (
@@ -408,17 +509,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (pendingUnlock) await pendingUnlock;
       if (isUnlocked()) {
         saveBtn.textContent = "Validating Keys...";
-        const [isOpenAIValid, isElevenLabsValid] = await Promise.all([
-          openaiKey ? validateOpenAIKey(openaiKey) : Promise.resolve(true),
-          elevenlabsKey ? validateElevenLabsKey(elevenlabsKey) : Promise.resolve(true),
-        ]);
+        const isOpenAIValid = openaiKey
+          ? await validateProviderConnection(providerConfigFromProfile("openai", openaiKey))
+          : true;
 
-        if (!isOpenAIValid || !isElevenLabsValid) {
+        if (!isOpenAIValid) {
           if (status) {
             status.style.color = "red";
-            status.textContent = !isOpenAIValid
-              ? "Invalid OpenAI API key. Please check and try again."
-              : "Invalid ElevenLabs API key. Please check and try again.";
+            status.textContent = "Invalid OpenAI API key. Please check and try again.";
             status.classList.add("visible");
             setTimeout(() => status.classList.remove("visible"), 4000);
           }
@@ -427,9 +525,8 @@ document.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        const credentialsToSave: { openai_api_key?: string; elevenlabs_api_key?: string } = {};
+        const credentialsToSave: { openai_api_key?: string } = {};
         if (openaiKey) credentialsToSave.openai_api_key = openaiKey;
-        if (elevenlabsKey) credentialsToSave.elevenlabs_api_key = elevenlabsKey;
         if (Object.keys(credentialsToSave).length > 0) {
           await saveApiCredentials(credentialsToSave);
         }

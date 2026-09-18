@@ -460,8 +460,29 @@ Late Meet uses a **Bring Your Own Key (BYOK)** model. You connect your own accou
 > 🔑 **For provider checklists, troubleshooting, and detailed setup tips, read the full [`docs/API_KEYS.md`](docs/API_KEYS.md) integration guide.**
 
 <details>
+<summary><b>⚡ AI Providers — pick your transcription and summary engines (recommended)</b></summary>
+<br/>
+
+The pipeline is **provider-agnostic**: transcription and summarization are configured independently in **Options → AI Providers**, and every provider speaks the OpenAI-compatible wire format (`POST {base}/chat/completions`, `POST {base}/audio/transcriptions`).
+
+| Role                | Built-in profiles                                                | Default                                                                                  |
+| ------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Transcription (STT) | `Local Whisper (faster-whisper)`, `Z.ai GLM`, `OpenAI`, `Custom` | **Local Whisper** — `http://127.0.0.1:8394/v1`, model `whisper-local`, no API key        |
+| Summary (Chat)      | same list                                                        | **Z.ai GLM** — `https://api.z.ai/api/paas/v4`, model `glm-5.3-flash` + your Z.ai API key |
+
+Choosing a profile pre-fills the Base URL / API Key / Model fields — everything stays editable, so any OpenAI-compatible endpoint works (LAN Whisper servers included, e.g. `http://192.168.1.20:8394/v1`).
+
+> ⚠️ **Platform limitation (not a bug):** MV3 extensions can only connect to hosts declared in the manifest. The current `connect-src` CSP allows `api.openai.com`, `api.z.ai`, `*.valor.digital`, `localhost:*`, and `127.0.0.1:*` (any port). A provider on a **different host** (e.g. a LAN IP like `http://192.168.1.20`) must be added to `host_permissions` **and** `content_security_policy.extension_pages → connect-src` in `src/manifest.json`, then the extension must be rebuilt/reloaded. Plain-HTTP LAN hosts are allowed by design because meeting audio never leaves your machine.
+
+**Legacy OpenAI users:** a saved OpenAI vault key keeps working — the migration points both roles at the OpenAI profile, and the `API Keys` section still stores the encrypted OpenAI key used as fallback when the OpenAI profile has no key of its own.
+
+</details>
+
+<details>
 <summary><b>Step 1 — Get your ElevenLabs API Key (Speech-to-Text)</b></summary>
 <br/>
+
+> 🗑️ **Deprecated:** ElevenLabs STT is no longer part of the pipeline (the unused `@elevenlabs/elevenlabs-js` SDK dependency was removed). Configure any OpenAI-compatible transcription provider in **AI Providers** instead.
 
 ElevenLabs powers high-accuracy multilingual transcription via Scribe v2.
 
