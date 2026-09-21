@@ -166,7 +166,7 @@ function buildDashboardHTML(stats: Record<string, DayStats>): string {
               <span>tokens</span>
             </div>
           </div>
-          <div style="text-align:right;">
+          <div class="usage-alltime-right">
             <div class="usage-alltime-heading">All Time · Est. Cost</div>
             <div class="usage-alltime-cost">$${allTime.cost.toFixed(4)}</div>
           </div>

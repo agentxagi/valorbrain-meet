@@ -1,8 +1,6 @@
 /* Dashboard Styles — AI Meeting Copilot Side Panel */
 /* Premium minimalism, stark adaptive design */
 
-@import "https://fonts.googleapis.com/css2?family=Inter:wght=400;500;600;700;800;900&display=swap";
-
 /* --- THEME TOKENS --- */
 @import "./theme.css";
 
@@ -1477,4 +1475,123 @@ body::-webkit-scrollbar-thumb,
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* --- CSP-safe utilities (substituem style= inline bloqueado pelo MV3) --- */
+.u-export-controls {
+  margin-right: 12px;
+  display: inline-flex;
+  gap: 8px;
+}
+.u-hidden-init {
+  display: none;
+}
+.u-text-right {
+  text-align: right;
+}
+.u-sentiment-label {
+  font-weight: 700;
+  color: var(--text-main);
+}
+.u-danger-soft {
+  color: #fca5a5;
+}
+.u-svg-mr {
+  margin-right: 6px;
+}
+.u-mr-2 {
+  margin-right: 2px;
+}
+.u-muted-11 {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.u-fw-500-light {
+  font-weight: 500;
+  color: var(--text-main);
+}
+.u-meta-right {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.u-cursor-pointer {
+  cursor: pointer;
+}
+.u-inline-gap-6 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.u-svg-mr-8 {
+  margin-right: 8px;
+}
+.u-copy-summary-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+}
+.u-danger-ghost {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.u-persists-badge {
+  font-size: 11px;
+  background: #fee2e2;
+  color: #dc2626;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+.u-header-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--border-radius-md);
+}
+.u-copy-summary-btn-row {
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+.decision-tentative-badge {
+  font-size: 11px;
+  background: #fef3c7;
+  color: #d97706;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+.action-speculative-badge {
+  font-size: 11px;
+  background: #fee2e2;
+  color: #dc2626;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+.action-conf-badge {
+  font-size: 11px;
+  background: #f3f4f6;
+  color: #6b7280;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+
+.icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: middle;
 }

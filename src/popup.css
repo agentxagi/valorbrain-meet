@@ -909,3 +909,20 @@ body::-webkit-scrollbar-thumb {
   cursor: wait;
   pointer-events: none;
 }
+
+.u-display-none {
+  display: none;
+}
+.u-mb-14 {
+  margin-bottom: 14px;
+}
+.u-status-hint {
+  font-size: 11px;
+  margin: 4px 0 12px;
+  text-align: left;
+}
+
+.late-joiner-briefed-badge {
+  color: var(--text-muted);
+  font-size: 10px;
+}

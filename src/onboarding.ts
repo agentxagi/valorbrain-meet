@@ -14,10 +14,10 @@ export async function renderOnboarding(container: HTMLElement) {
       <div class="onboard-card" role="dialog" aria-modal="true" aria-label="Onboarding do ValorBrain Meet">
         <div id="onboard-content"></div>
         <div class="onboard-footer">
-          <button id="onboard-skip" class="btn">Skip</button>
+          <button id="onboard-skip" class="btn">Pular</button>
           <div class="onboard-nav">
-            <button id="onboard-back" class="btn" disabled>Back</button>
-            <button id="onboard-next" class="btn btn-primary">Next</button>
+            <button id="onboard-back" class="btn" disabled>Voltar</button>
+            <button id="onboard-next" class="btn btn-primary">Próximo</button>
           </div>
         </div>
       </div>
@@ -100,8 +100,8 @@ export async function renderOnboarding(container: HTMLElement) {
         <h2>Tudo pronto</h2>
         <p>Configuração concluída. Abra o dashboard para começar.</p>
         <div class="onboard-actions">
-          <button id="onb-open-dashboard" class="btn btn-primary">Open Dashboard</button>
-          <button id="onb-finish" class="btn">Finish</button>
+          <button id="onb-open-dashboard" class="btn btn-primary">Abrir dashboard</button>
+          <button id="onb-finish" class="btn">Concluir</button>
         </div>
       `,
     },
@@ -113,7 +113,7 @@ export async function renderOnboarding(container: HTMLElement) {
     const step = steps[index];
     content.innerHTML = step.html;
     backBtn.disabled = index === 0;
-    nextBtn.textContent = index === steps.length - 1 ? "Finish" : "Next";
+    nextBtn.textContent = index === steps.length - 1 ? "Concluir" : "Próximo";
 
     // Wire validate/save controls if API step
     if (step.id === "api-keys") {

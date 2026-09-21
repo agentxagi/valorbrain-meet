@@ -349,3 +349,7 @@
   line-height: 1.5;
   padding: 0 4px;
 }
+
+.usage-alltime-right {
+  text-align: right;
+}

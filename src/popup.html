@@ -9,7 +9,7 @@
   </head>
   <body>
     <!-- SETUP VIEW (API Key Config) -->
-    <div id="setup-view" class="view" style="display: none">
+    <div id="setup-view" class="view u-display-none">
       <div class="setup-container">
         <div class="setup-logo">
           <svg
@@ -35,7 +35,7 @@
           — a transcrição funciona sem nenhuma chave. A chave OpenAI abaixo é opcional (legado).
         </p>
 
-        <button id="open-providers" class="setup-btn" style="margin-bottom: 14px">
+        <button id="open-providers" class="setup-btn u-mb-14">
           <span>Abrir Configurações — AI Providers</span>
           <span class="btn-icon">→</span>
         </button>
@@ -50,10 +50,7 @@
               placeholder="Frase para desbloquear a criptografia..."
             />
           </div>
-          <div
-            id="passphrase-status"
-            style="font-size: 11px; margin: 4px 0 12px; text-align: left; color: #ef4444"
-          >
+          <div id="passphrase-status" class="status-text status-danger u-status-hint">
             Locked — enter passphrase first
           </div>
 
@@ -64,7 +61,7 @@
               id="toggle-key"
               class="toggle-btn"
               aria-label="Toggle API key visibility"
-              title="Show/Hide Key"
+              title="Mostrar/ocultar chave"
             >
               👁
             </button>
@@ -79,7 +76,7 @@
     </div>
 
     <!-- MAIN VIEW -->
-    <div id="main-view" class="view" style="display: none">
+    <div id="main-view" class="view u-display-none">
       <!-- Header -->
       <header class="header">
         <div class="header-left">
@@ -109,11 +106,11 @@
             </div>
           </div>
         </div>
-        <button id="settings-btn" class="icon-btn" aria-label="Settings">⚙️</button>
+        <button id="settings-btn" class="icon-btn" aria-label="Configurações">⚙️</button>
       </header>
 
       <!-- Content Sections -->
-      <div id="meeting-section" style="display: none">
+      <div id="meeting-section" class="u-display-none">
         <!-- Duration & ID -->
         <div class="duration-bar">
           <span class="duration-icon">⏱</span>
@@ -195,7 +192,7 @@
         </div>
 
         <!-- Late Joiners -->
-        <div id="late-joiners-section" class="card" style="display: none">
+        <div id="late-joiners-section" class="card u-display-none">
           <div class="card-header">
             <span class="card-icon">🚪</span>
             <span class="card-title">Atrasados</span>
@@ -208,7 +205,7 @@
       <div id="no-meeting-section">
         <div class="empty-meeting">
           <div class="empty-icon">🎥</div>
-          <h2 class="empty-title">No Active Meeting</h2>
+          <h2 class="empty-title">Nenhuma reunião ativa</h2>
           <p class="empty-text">
             Entre em um Google Meet para ativar — o copilot inicia automaticamente
           </p>
@@ -248,19 +245,16 @@
     <!-- SESSION MODAL (Save/Discard) -->
     <div
       id="session-modal"
-      class="session-modal"
+      class="session-modal u-display-none"
       role="dialog"
       aria-modal="true"
       aria-labelledby="session-modal-title"
-      style="display: none"
     >
       <div class="session-modal-backdrop"></div>
       <div class="session-modal-content">
         <div class="session-modal-icon">💾</div>
         <h2 id="session-modal-title" class="session-modal-title">Reunião encerrada</h2>
-        <p class="session-modal-text">
-          Would you like to save the intelligence and transcript for this session?
-        </p>
+        <p class="session-modal-text">Salvar a inteligência e a transcrição desta sessão?</p>
         <p id="session-modal-error" class="session-modal-error" hidden></p>
         <div class="session-modal-actions">
           <button id="discard-session-btn" class="session-btn discard">Descartar</button>

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-09-21
+
+### 🐛 Bug Fixes
+
+- **"Testar conexão" deixou de ser falso positivo**: o probe agora usa o endpoint autenticado `GET /api/v1/memory/working-context` (antes batia no `/health` público, que respondia 200 até com token inválido)
+- **Mensagens de erro do ingest em PT-BR** (auth/rate limit/timeout/rede/config) — aparecem no badge de sync e nos toasts
+- **CSP compliance total**: removidos os ~50 `style="…"` inline e o bloco `<style>` do dashboard (bloqueados por `style-src 'self'` desde a introdução do CSP — barras de progresso, botões de export, badges e colunas de custo voltaram a renderizar); removido o `@import` do Google Fonts (a fonte Inter já é empacotada localmente)
+- **Save valida a Base URL do ValorBrain** com o mesmo validador dos AI Providers
+
+### 🚀 Features
+
+- Botão **Desconectar** na seção ValorBrain (limpa Base URL, token e Tenant ID)
+- Testar conexão não exige mais Tenant ID (tokens OAuth resolvem o tenant no servidor)
+- Traduções finais: botões do onboarding, modal de fim de reunião, estados vazios e fallback do briefing
+
 ## [1.7.1] - 2026-09-21
 
 ### 🐛 Bug Fixes

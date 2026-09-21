@@ -87,6 +87,8 @@ export function resolveAutoSend(settings: VbSettings): boolean {
 
 export const VB_STORE_PATH = "/api/v1/memory/store";
 export const VB_HEALTH_PATH = "/health";
+/** Endpoint autenticado e barato usado como probe de conexão real. */
+export const VB_PROBE_PATH = "/api/v1/memory/working-context";
 
 export interface VbMemoryPayload {
   type: "observation";
@@ -266,10 +268,12 @@ async function attemptRequest(
     return { response };
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      return { failure: failure("timeout", "ValorBrain request timed out", true) };
+      return { failure: failure("timeout", "Requisição ao ValorBrain expirou", true) };
     }
     const message = err instanceof Error ? err.message : String(err);
-    return { failure: failure("network", `Could not reach ValorBrain: ${message}`, true) };
+    return {
+      failure: failure("network", `Não foi possível alcançar o ValorBrain: ${message}`, true),
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -279,18 +283,18 @@ function classifyResponse(response: Response): VbFailure | null {
   if (response.status === 401 || response.status === 403) {
     return failure(
       "auth",
-      "ValorBrain rejected the credentials (HTTP " +
+      "Credenciais rejeitadas pelo ValorBrain (HTTP " +
         response.status +
-        ") — check vb.apiToken and vb.tenantId",
+        ") — verifique o token em Configurações → ValorBrain",
     );
   }
   if (response.ok) return null;
   if (response.status === 429) {
-    return failure("rateLimit", "ValorBrain rate limit reached (HTTP 429)", true);
+    return failure("rateLimit", "ValorBrain atingiu o limite de requisições (HTTP 429)", true);
   }
   return failure(
     "server",
-    `ValorBrain responded with HTTP ${response.status}`,
+    `ValorBrain respondeu com HTTP ${response.status}`,
     response.status >= 500,
   );
 }
@@ -322,18 +326,18 @@ export async function sendToValorBrain(
   if (!isVbConfigured(settings)) {
     return failure(
       "config",
-      "ValorBrain is not configured — fill in Base URL, API token, and Tenant ID in Settings",
+      "ValorBrain não configurado — preencha Base URL e token em Configurações → ValorBrain",
     );
   }
   if (!session) {
-    return failure("config", "No meeting session to send");
+    return failure("config", "Nenhuma sessão de reunião para enviar");
   }
 
   let url: URL;
   try {
     url = new URL(VB_STORE_PATH, settings.baseUrl);
   } catch {
-    return failure("config", `Invalid ValorBrain Base URL: ${settings.baseUrl}`);
+    return failure("config", `Base URL do ValorBrain inválida: ${settings.baseUrl}`);
   }
 
   const headers: Record<string, string> = {
@@ -372,8 +376,10 @@ export interface VbTestResult {
 }
 
 /**
- * Performs GET `{baseUrl}/health` with the auth headers to validate the
- * configured ValorBrain connection. Returns a human-readable outcome.
+ * Valida a conexão real com o tenant: faz GET `{baseUrl}/api/v1/memory/working-context`
+ * (endpoint autenticado e barato) com as credenciais configuradas. Um token
+ * inválido retorna 401/403 aqui — diferente de `/health`, que é público.
+ * Retorna um resultado legível para a UI.
  */
 export async function testValorBrainConnection(
   settings: VbSettings,
@@ -382,15 +388,15 @@ export async function testValorBrainConnection(
   if (!isVbConfigured(settings)) {
     return {
       ok: false,
-      message: "Fill in Base URL, API token, and Tenant ID before testing",
+      message: "Preencha Base URL e token em Configurações → ValorBrain antes de testar",
     };
   }
 
   let url: URL;
   try {
-    url = new URL(VB_HEALTH_PATH, settings.baseUrl);
+    url = new URL(VB_PROBE_PATH, settings.baseUrl);
   } catch {
-    return { ok: false, message: `Invalid Base URL: ${settings.baseUrl}` };
+    return { ok: false, message: `Base URL inválida: ${settings.baseUrl}` };
   }
 
   const headers: Record<string, string> = {
@@ -409,7 +415,7 @@ export async function testValorBrainConnection(
   const classified = classifyResponse(outcome.response!);
   if (classified) return { ok: false, message: classified.error };
 
-  return { ok: true, message: `Connected to ${settings.baseUrl}` };
+  return { ok: true, message: `Conectado a ${settings.baseUrl} — token válido` };
 }
 
 // ---------------------------------------------------------------------------

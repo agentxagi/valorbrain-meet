@@ -97,7 +97,7 @@
                 data-color="161, 84%, 25%"
                 aria-label="Accent color: Verde Valor"
                 aria-pressed="false"
-                style="background-color: hsl(161, 84%, 25%)"
+                data-swatch="valorbrain"
               ></button>
               <!-- Blue -->
               <button
@@ -106,7 +106,7 @@
                 data-color="145, 65%, 45%"
                 aria-label="Accent color: Green"
                 aria-pressed="false"
-                style="background-color: hsl(145, 65%, 45%)"
+                data-swatch="green"
               ></button>
               <!-- Green -->
               <button
@@ -115,7 +115,7 @@
                 data-color="280, 75%, 60%"
                 aria-label="Accent color: Purple"
                 aria-pressed="false"
-                style="background-color: hsl(280, 75%, 60%)"
+                data-swatch="purple"
               ></button>
               <!-- Purple -->
               <button
@@ -124,7 +124,7 @@
                 data-color="15, 95%, 55%"
                 aria-label="Accent color: Orange"
                 aria-pressed="false"
-                style="background-color: hsl(15, 95%, 55%)"
+                data-swatch="orange"
               ></button>
               <!-- Orange -->
               <button
@@ -133,7 +133,7 @@
                 data-color="340, 85%, 55%"
                 aria-label="Accent color: Pink"
                 aria-pressed="false"
-                style="background-color: hsl(340, 85%, 55%)"
+                data-swatch="pink"
               ></button>
               <!-- Pink -->
             </div>
@@ -198,7 +198,7 @@
                 </svg>
               </button>
             </div>
-            <div id="passphrase-status" class="form-hint" style="margin-top: 8px"></div>
+            <div id="passphrase-status" class="form-hint u-mt-8"></div>
           </div>
         </section>
       </div>
@@ -724,10 +724,15 @@
         </div>
 
         <div class="form-group">
-          <button id="vb-test-connection-btn" class="btn" aria-label="Test ValorBrain connection">
-            Testar conexão
-          </button>
-          <div id="vb-test-status" class="form-hint" style="margin-top: 8px"></div>
+          <div class="input-row">
+            <button id="vb-test-connection-btn" class="btn" aria-label="Test ValorBrain connection">
+              Testar conexão
+            </button>
+            <button id="vb-disconnect-btn" class="btn" aria-label="Disconnect ValorBrain">
+              Desconectar
+            </button>
+          </div>
+          <div id="vb-test-status" class="form-hint u-mt-8"></div>
         </div>
       </section>
 
@@ -808,11 +813,7 @@
           <p class="form-hint">
             Apaga definitivamente sessões salvas, chaves e configurações deste navegador.
           </p>
-          <button
-            id="clear-data-btn"
-            class="save-btn"
-            style="background-color: #ef4444; margin-top: 10px"
-          >
+          <button id="clear-data-btn" class="save-btn" class="u-danger-clear u-mt-10">
             <span class="save-text">Apagar todos os dados</span>
             <span class="save-icon">
               <svg

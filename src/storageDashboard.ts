@@ -22,6 +22,7 @@ export async function renderStorageDashboard(container: HTMLElement): Promise<vo
   try {
     const stats = await getStorageStats();
     container.innerHTML = buildDashboardHTML(stats);
+    applyStorageStyles(container, stats);
     attachEventListeners(container);
   } catch (err) {
     console.error("[LateMeet] Failed to load storage dashboard:", err);
@@ -29,9 +30,24 @@ export async function renderStorageDashboard(container: HTMLElement): Promise<vo
   }
 }
 
+/** CSP-safe: estilos dinâmicos da barra e dos dots via style API pós-insert. */
+function applyStorageStyles(container: HTMLElement, stats: StorageStats): void {
+  const bar = container.querySelector<HTMLElement>(".storage-progress-bar");
+  if (bar) {
+    bar.style.width = `${stats.unlimited ? 100 : stats.percentUsed}%`;
+    bar.style.background =
+      !stats.unlimited && stats.percentUsed >= stats.warningThreshold
+        ? "var(--color-text-danger)"
+        : "var(--color-text-success)";
+  }
+  container.querySelectorAll<HTMLElement>(".breakdown-color-dot").forEach((dot) => {
+    const color = dot.dataset.color;
+    if (color) dot.style.background = color;
+  });
+}
+
 function buildDashboardHTML(stats: StorageStats): string {
   const isWarning = !stats.unlimited && stats.percentUsed >= stats.warningThreshold;
-  const progressColor = isWarning ? "var(--color-text-danger)" : "var(--color-text-success)";
   const usageValue = stats.unlimited
     ? `${formatBytes(stats.totalBytes)} <span class="storage-unlimited">• ilimitado</span>`
     : `${formatBytes(stats.totalBytes)} / ${formatBytes(stats.quotaBytes)}`;
@@ -55,7 +71,7 @@ function buildDashboardHTML(stats: StorageStats): string {
           <span class="storage-value">${usageValue}</span>
         </div>
         <div class="storage-progress-track">
-          <div class="storage-progress-bar" style="width: ${stats.unlimited ? 100 : stats.percentUsed}%; background: ${progressColor}"></div>
+          <div class="storage-progress-bar"></div>
         </div>
         <div class="storage-percent">${
           stats.unlimited
@@ -116,7 +132,7 @@ function buildBreakdownCard(label: string, bytes: number, total: number, color: 
   const pct = total > 0 ? Math.round((bytes / total) * 100) : 0;
   return `
     <div class="storage-breakdown-card">
-      <div class="breakdown-color-dot" style="background: ${color}"></div>
+      <div class="breakdown-color-dot" data-color="${color}"></div>
       <div class="breakdown-info">
         <span class="breakdown-label">${label}</span>
         <span class="breakdown-bytes">${formatBytes(bytes)}</span>

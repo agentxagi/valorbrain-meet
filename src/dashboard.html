@@ -7,14 +7,6 @@
     <link rel="stylesheet" href="fonts/fonts.css" />
     <link rel="stylesheet" href="dashboard.css" />
     <link rel="stylesheet" href="apiUsageDashboard.css" />
-    <style>
-      .icon {
-        width: 1em;
-        height: 1em;
-        display: inline-block;
-        vertical-align: middle;
-      }
-    </style>
   </head>
 
   <body>
@@ -51,24 +43,12 @@
       </div>
       <div class="dash-header-right">
         <!-- Export Controls -->
-        <div class="export-controls" style="margin-right: 12px; display: inline-flex; gap: 8px">
+        <div class="export-controls u-export-controls">
           <button
             id="header-export-md-btn"
             class="btn-glass"
             title="Export as Markdown"
-            style="
-              display: inline-flex;
-              align-items: center;
-              gap: 6px;
-              padding: 6px 12px;
-              font-size: 12px;
-              font-weight: 500;
-              border-radius: var(--border-radius-md);
-              background: rgba(255, 255, 255, 0.05);
-              border: 1px solid var(--color-border-secondary);
-              color: var(--text-main);
-              cursor: pointer;
-            "
+            class="u-header-export-btn"
           >
             <svg
               width="14"
@@ -91,19 +71,7 @@
             id="header-export-pdf-btn"
             class="btn-glass"
             title="Export as PDF"
-            style="
-              display: inline-flex;
-              align-items: center;
-              gap: 6px;
-              padding: 6px 12px;
-              font-size: 12px;
-              font-weight: 500;
-              border-radius: var(--border-radius-md);
-              background: rgba(255, 255, 255, 0.05);
-              border: 1px solid var(--color-border-secondary);
-              color: var(--text-main);
-              cursor: pointer;
-            "
+            class="u-header-export-btn"
           >
             <svg
               width="14"
@@ -137,7 +105,7 @@
             stroke-linecap="round"
             stroke-linejoin="round"
             class="icon"
-            style="margin-right: 6px"
+            class="u-svg-mr"
             aria-hidden="true"
           >
             <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
@@ -291,7 +259,7 @@
         </div>
 
         <!-- Live Session Token & Cost Tracker -->
-        <div class="dash-card live-tracker-card" id="live-tracker-card" style="display: none">
+        <div class="dash-card live-tracker-card u-hidden-init" id="live-tracker-card">
           <div class="dash-card-head">
             <span class="dash-card-icon">
               <svg
@@ -319,7 +287,7 @@
               <span class="usage-metric-label">Tokens consumidos</span>
               <span class="usage-metric-value" id="live-tokens">0</span>
             </div>
-            <div class="usage-metric" style="text-align: right">
+            <div class="usage-metric u-text-right">
               <span class="usage-metric-label">Custo estimado (USD)</span>
               <span class="usage-metric-value accent" id="live-cost">$0.0000</span>
             </div>
@@ -359,20 +327,7 @@
               class="copy-item-btn"
               title="Copy entire summary"
               aria-label="Copy entire summary"
-              style="
-                background: transparent;
-                border: none;
-                color: var(--text-muted);
-                cursor: pointer;
-                padding: 4px;
-                border-radius: 4px;
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                opacity: 0.6;
-                margin-left: 8px;
-                flex-shrink: 0;
-              "
+              class="u-copy-summary-btn u-copy-summary-btn-row"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -546,13 +501,11 @@
             <span class="dash-card-title">Sentimento da reunião</span>
           </div>
           <div class="sentiment-bar">
-            <div id="dash-sentiment-fill" class="sentiment-fill" style="width: 50%"></div>
+            <div id="dash-sentiment-fill" class="sentiment-fill"></div>
           </div>
           <div class="sentiment-labels">
             <span>Negativo</span>
-            <span id="dash-sentiment-label" style="font-weight: 700; color: var(--text-main)"
-              >Neutro</span
-            >
+            <span id="dash-sentiment-label" class="u-sentiment-label">Neutro</span>
             <span>Positivo</span>
           </div>
         </div>
@@ -775,7 +728,7 @@
             <div class="empty-msg">Nenhum participante detectado</div>
           </div>
         </div>
-        <div class="dash-card" id="late-joiners-card" style="display: none">
+        <div class="dash-card u-hidden-init" id="late-joiners-card">
           <div class="dash-card-head">
             <span class="dash-card-icon">
               <svg
@@ -1044,7 +997,7 @@
             stroke-linecap="round"
             stroke-linejoin="round"
             class="icon"
-            style="margin-right: 6px"
+            class="u-svg-mr"
             aria-hidden="true"
           >
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -1068,7 +1021,7 @@
               stroke-linejoin="round"
               class="icon"
               aria-hidden="true"
-              style="margin-right: 8px"
+              class="u-svg-mr-8"
             >
               <path
                 d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"
@@ -1090,7 +1043,7 @@
               stroke-linejoin="round"
               class="icon"
               aria-hidden="true"
-              style="margin-right: 8px"
+              class="u-svg-mr-8"
             >
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
               <polyline points="14 2 14 8 20 8"></polyline>
@@ -1112,7 +1065,7 @@
               stroke-linecap="round"
               stroke-linejoin="round"
               class="icon"
-              style="margin-right: 8px"
+              class="u-svg-mr-8"
               aria-hidden="true"
             >
               <path
@@ -1135,7 +1088,7 @@
               stroke-linecap="round"
               stroke-linejoin="round"
               class="icon"
-              style="margin-right: 8px"
+              class="u-svg-mr-8"
               aria-hidden="true"
             >
               <rect width="8" height="4" x="8" y="2" rx="1" ry="1"></rect>
@@ -1157,7 +1110,7 @@
     <div id="delete-confirm-modal" class="modal-overlay hidden">
       <div class="dash-card modal-content glow-card">
         <div class="dash-card-head">
-          <span class="dash-card-icon" style="color: #fca5a5">
+          <span class="dash-card-icon u-danger-soft">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="16"
@@ -1176,22 +1129,14 @@
               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
             </svg>
           </span>
-          <span class="dash-card-title" style="color: #fca5a5">Excluir sessão</span>
+          <span class="dash-card-title u-danger-soft">Excluir sessão</span>
         </div>
         <div class="modal-body">
           <p>Excluir esta sessão? Esta ação não pode ser desfeita.</p>
         </div>
         <div class="modal-actions">
           <button id="cancel-delete-btn" class="dash-tab">Cancelar</button>
-          <button
-            id="confirm-delete-btn"
-            class="session-delete-btn"
-            style="
-              background: rgba(239, 68, 68, 0.15);
-              color: #fca5a5;
-              border-color: rgba(239, 68, 68, 0.3);
-            "
-          >
+          <button id="confirm-delete-btn" class="session-delete-btn" class="u-danger-ghost">
             Delete
           </button>
         </div>

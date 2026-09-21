@@ -567,6 +567,22 @@ document.addEventListener("DOMContentLoaded", async () => {
         accent: selectedAccentColor,
       };
 
+      const vbBase = newSettings["vb.baseUrl"] as string | undefined;
+      if (vbBase) {
+        const vbCheck = validateApiUrl(vbBase);
+        if (!vbCheck.valid) {
+          if (status) {
+            status.style.color = "red";
+            status.textContent = `Base URL do ValorBrain: ${vbCheck.error}`;
+            status.classList.add("visible");
+            setTimeout(() => status.classList.remove("visible"), 5000);
+          }
+          saveBtn.disabled = false;
+          saveBtn.textContent = originalText;
+          return;
+        }
+      }
+
       await chrome.storage.local.set({ settings: newSettings });
 
       let credentialsSaved = false;
@@ -630,15 +646,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     const testStatus = document.getElementById("vb-test-status");
     const fields = readVbFields();
 
-    if (!fields["vb.baseUrl"] || !fields["vb.apiToken"] || !fields["vb.tenantId"]) {
+    if (!fields["vb.baseUrl"] || !fields["vb.apiToken"]) {
       if (testStatus) {
-        testStatus.textContent = "Fill in Base URL, API token, and Tenant ID first.";
+        testStatus.textContent =
+          "Preencha Base URL e token antes de testar (Tenant ID é opcional).";
       }
       return;
     }
 
     if (testBtn) testBtn.disabled = true;
-    if (testStatus) testStatus.textContent = "Testing connection...";
+    if (testStatus) testStatus.textContent = "Testando conexão...";
     try {
       const result = (await chrome.runtime.sendMessage({
         type: "VB_TEST_CONNECTION",
@@ -647,14 +664,28 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (testStatus) {
         testStatus.textContent = result?.ok
           ? `✓ ${result.message}`
-          : `✗ ${result?.message || "Connection failed"}`;
+          : `✗ ${result?.message || "Falha na conexão"}`;
       }
     } catch (err) {
       const e = err as Error;
-      if (testStatus) testStatus.textContent = `✗ ${e.message || "Connection failed"}`;
+      if (testStatus) testStatus.textContent = `✗ ${e.message || "Falha na conexão"}`;
     } finally {
       if (testBtn) testBtn.disabled = false;
     }
+  });
+
+  // ——— ValorBrain: Desconectar (limpa credenciais vb.*) ———
+  document.getElementById("vb-disconnect-btn")?.addEventListener("click", async () => {
+    delete settings["vb.baseUrl"];
+    delete settings["vb.apiToken"];
+    delete settings["vb.tenantId"];
+    await chrome.storage.local.set({ settings });
+    if (vbBaseUrlInput) vbBaseUrlInput.value = "";
+    if (vbApiTokenInput) vbApiTokenInput.value = "";
+    if (vbTenantIdInput) vbTenantIdInput.value = "";
+    if (vbAutoSendInput) vbAutoSendInput.checked = false;
+    const testStatus = document.getElementById("vb-test-status");
+    if (testStatus) testStatus.textContent = "Desconectado — credenciais removidas.";
   });
 
   // ——— Storage Dashboard ———

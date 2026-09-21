@@ -714,7 +714,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             <div class="late-joiner-item">
               <span class="joiner-icon">🚪</span>
               <span class="joiner-name">${escapeHtml(name || "")}</span>
-              <span style="color: var(--text-muted); font-size: 10px;">briefed ✓</span>
+              <span class="late-joiner-briefed-badge">briefed ✓</span>
             </div>
           `,
             )

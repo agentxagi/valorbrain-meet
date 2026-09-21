@@ -319,7 +319,7 @@ test("sendToValorBrain classifies other HTTP errors as server failures", async (
 // Connection test
 // ---------------------------------------------------------------------------
 
-test("testValorBrainConnection hits /health with the auth headers", async () => {
+test("testValorBrainConnection probes the authenticated working-context endpoint", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fetchImpl: typeof fetch = async (url, init) => {
     calls.push({ url: String(url), init: init as RequestInit });
@@ -329,9 +329,9 @@ test("testValorBrainConnection hits /health with the auth headers", async () => 
   const result = await testValorBrainConnection(configuredSettings(), { fetchImpl });
 
   assert.equal(result.ok, true);
-  assert.match(result.message, /Connected/);
+  assert.match(result.message, /token válido/);
   assert.equal(calls.length, 1);
-  assert.ok(calls[0].url.startsWith("https://memory.valor.digital/health"));
+  assert.ok(calls[0].url.startsWith("https://memory.valor.digital/api/v1/memory/working-context"));
   const headers = new Headers(calls[0].init.headers);
   assert.equal(headers.get("Authorization"), "Bearer test-token");
   assert.equal(headers.get("X-Tenant-ID"), "test-tenant");

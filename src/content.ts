@@ -303,7 +303,7 @@ void initTheme().catch((err) => console.error(err));
 
       const text = document.createElement("div");
       text.className = "mc-brief-text";
-      text.textContent = String(briefContent || "No brief content available.");
+      text.textContent = String(briefContent || "Sem briefing disponível.");
 
       const footer = document.createElement("div");
       footer.className = "mc-brief-footer";
@@ -360,7 +360,7 @@ void initTheme().catch((err) => console.error(err));
       if (greeting) greeting.textContent = targetName ? `Welcome, ${targetName}` : "Welcome back";
 
       const text = overlay.querySelector(".mc-brief-text");
-      if (text) text.textContent = String(briefContent || "No brief content available.");
+      if (text) text.textContent = String(briefContent || "Sem briefing disponível.");
 
       overlay.classList.add("mc-visible");
     }

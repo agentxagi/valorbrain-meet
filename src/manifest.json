@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ValorBrain Meet",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "ValorBrain Meet — AI meeting copilot for Google Meet with provider-agnostic transcription (local Whisper) and summaries (Z.ai GLM, OpenAI, or any OpenAI-compatible endpoint)",
   "permissions": [
     "storage",
