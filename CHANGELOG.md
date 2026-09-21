@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-21
+
+### 🚀 Features
+
+- **ValorBrain ingest** — send saved meeting sessions straight into your ValorBrain tenant as memory documents (`POST {baseUrl}/api/v1/memory/store`, collection `meetings`)
+  - Settings → **ValorBrain**: Base URL, API token, Tenant ID, connection test; auto-send is **opt-in** (default OFF) — local export stays the source of truth
+  - Dashboard: **Send to ValorBrain** button per saved session with sending/sent/error + retry and local sync badge
+- Provider-agnostic pipeline + popup setup gate fixes from v1.3.x now ship together with ingest ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+
+Setup: Settings → ValorBrain → Base URL `https://valorbrain-api.valor.digital` + your tenant API token (`vb_agent_…`). Full contract and manual test recipe in [`docs/VB-INGEST.md`](docs/VB-INGEST.md).
+
 ## [1.3.1] - 2026-09-18
 
 ### 🐛 Bug Fixes
