@@ -1,100 +1,95 @@
-# Changes — feat/vb-ingest (ValorBrain ingest)
+# Changes — Provider-Agnostic AI Pipeline (`feat/provider-agnostic`)
 
-Implements the `valorbrain-meet` PRD: each saved meeting session can be pushed
-into the tenant's ValorBrain memory over REST (never MCP). The extension is a
-distributed per-tenant client — **no URL, token, or tenant ID is hardcoded**;
-everything is configured in Settings under the `vb.*` keys.
+## Summary
 
-## What was added
+The AI pipeline is no longer tied to OpenAI. Transcription and summarization are
+now configured independently in **Options → AI Providers**, each speaking the
+OpenAI-compatible wire format:
 
-| Area                                  | Change                                                                                                                                                                                                                                                                                                                                   |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/vbClient.ts` (new)               | `sendToValorBrain(session, settings)`, `buildValorBrainPayload`, `testValorBrainConnection`, `normalizeVbSettings` / `getVbSettings`, sync-status recording. Errors are explicit results: `config` / `auth` (401/403) / `rateLimit` (429, one retry with 2s backoff) / `network` / `timeout` (30s) / `server`.                           |
-| `src/vbClient.test.ts` (new)          | Payload assembly, headers, docRef extraction (`path` or `docid`), 401/429 handling, retry/timeout, connection test. Wired into `npm test`.                                                                                                                                                                                               |
-| `src/background.ts`                   | `VB_SEND_SESSION` and `VB_TEST_CONNECTION` message handlers (all ValorBrain fetches go through the service worker). Optional auto-send: when `vb.autoSend` is on, `persistSession()` fires a best-effort send after the session is saved — **a VB failure never blocks the local export** (the local transcript is the source of truth). |
-| `src/options.html` / `src/options.ts` | "ValorBrain" section: Base URL, API token (password), Tenant ID, Auto-send toggle (default OFF), and a "Test connection" button (`GET {baseUrl}/health` with the auth headers, showing OK/failure with reason).                                                                                                                          |
-| `src/dashboard.html` / `.ts` / `.css` | "Send to ValorBrain" button on each saved session (sending / Sent ✓ / error with Retry). Local last-sync badge in the panel (ok/fail + time, tooltip carries the doc ref or error).                                                                                                                                                      |
-| `src/manifest.json`                   | `host_permissions` += `https://*.valor.digital/*`; CSP `connect-src` += `https://*.valor.digital`.                                                                                                                                                                                                                                       |
-| `package.json`                        | `src/vbClient.test.ts` added to the `test` script.                                                                                                                                                                                                                                                                                       |
+- Chat: `POST {base}/chat/completions`
+- Audio: `POST {base}/audio/transcriptions` (multipart)
+- Connectivity probe: `GET {base}/models`
 
-## Settings keys (`settings` object in `chrome.storage.local`)
+Target setup (zero cost per meeting minute, audio never leaves the machine):
 
-- `vb.baseUrl` — string, default `""` (empty disables; no production default is committed)
-- `vb.apiToken` — string, default `""`
-- `vb.tenantId` — string, default `""` (UUID)
-- `vb.autoSend` — boolean, default `false`
+| Role          | Default provider               | Base URL                       | API key                  | Model           |
+| ------------- | ------------------------------ | ------------------------------ | ------------------------ | --------------- |
+| Transcription | Local Whisper (faster-whisper) | `http://127.0.0.1:8394/v1`     | _(empty — local server)_ | `whisper-local` |
+| Summary       | Z.ai GLM                       | `https://api.z.ai/api/paas/v4` | _(user key)_             | `glm-5.3-flash` |
 
-Summary generation is deliberately **not** touched here (`provider.*` belongs to
-the parallel `feat/provider-agnostic` PRD). `vbClient` only transports whatever
-summary exists under `## Resumo`; once the PT-BR prompt lands, its sections flow
-through unchanged.
+OpenAI remains a first-class option (`https://api.openai.com/v1`,
+`gpt-4o-mini`), and any OpenAI-compatible endpoint works through the `Custom`
+profile.
 
-## ⚠️ Merge-conflict note for `feat/provider-agnostic`
+## What changed
 
-Both branches part from the same commit and both add the ValorBrain domain to
-`src/manifest.json` (`host_permissions` and CSP `connect-src`). **Keep only one
-copy** of each when resolving:
+- **New settings module** (`src/utils/providerSettings.ts`): two independent
+  provider blocks stored in `chrome.storage.local` under `provider.transcription`
+  and `provider.summary` (the `provider.*` prefix avoids colliding with other
+  settings namespaces). Built-in profiles pre-fill the editable fields.
+- **No hardcoded provider URLs.** All AI fetches in `src/background.ts` and
+  `src/utils/api.ts` read Base URL / key / model from the provider settings.
+- **One-time migration.** Users with a saved (legacy) OpenAI vault key are
+  migrated to the OpenAI profile automatically; the existing encrypted vault
+  key keeps working as fallback when the OpenAI profile has no key of its own.
+  Existing `settings.aiModel` values carry over as the summary model.
+- **Options page** gained the "AI Providers" section (profile dropdown +
+  editable Base URL / API key / Model per role, plus a "Test connection"
+  button). The legacy ElevenLabs field and the global "AI Model" dropdown were
+  removed (superseded by per-provider models).
+- **URL validator** (`src/utils/urlValidator.ts`) now accepts plain HTTP for
+  loopback (`localhost`, `127.0.0.0/8`, `::1`) and private LAN IPv4 addresses
+  (RFC 1918 + link-local) so self-hosted Whisper servers on the local network
+  work; all other hosts still require HTTPS.
+- **Manifest** (`src/manifest.json`):
+  - `host_permissions` added: `http://localhost/*`, `http://127.0.0.1/*`,
+    `https://api.z.ai/*`, `https://*.valor.digital/*` (ElevenLabs removed).
+  - CSP `connect-src` mirrors the same hosts; loopback sources use port
+    wildcards (`http://localhost:* http://127.0.0.1:*`) because a CSP source
+    without a port only matches the scheme's default port. A provider outside
+    this list needs a manifest entry — MV3 platform limitation, not a bug
+    (documented in the README).
+  - Renamed to **"ValorBrain Meet"**; description mentions ValorBrain.
+- **ElevenLabs removed from the pipeline.** The `@elevenlabs/elevenlabs-js`
+  dependency was never imported at runtime — removed from `package.json`
+  (smaller install). The ElevenLabs STT fetch branch, key fields, and vault
+  entry were removed with it.
+- **Usage tracking**: unknown chat models (e.g. GLM) no longer inherit
+  gpt-4o-mini pricing; local/self-hosted transcription seconds are counted
+  without a cost estimate.
+- **Popup**: starting a capture no longer requires an API key (transcription
+  works keyless against a local server). If the summary provider has no key,
+  a non-blocking "transcripts only" notice is shown instead of blocking.
 
-- `host_permissions`: `"https://*.valor.digital/*"`
-- CSP: `connect-src ... https://*.valor.digital ...`
+## Load unpacked (manual step)
 
-## Manual integration test (against a real VB)
+1. Build the extension:
 
-No real keys live in this repo. Run from a shell, substituting your own values:
+   ```
+   npm ci && npm run build
+   ```
 
-```bash
-BASE_URL="https://memory.valor.digital"   # your ValorBrain engine
-TOKEN="<tenant api token>"
-TENANT="<tenant uuid>"
+2. Open `chrome://extensions`, enable **Developer mode**.
+3. Click **Load unpacked** and select the `dist/` folder.
+4. Open the extension **Options → AI Providers** and confirm/save your
+   transcription and summary providers (defaults work with a local Whisper
+   server on `127.0.0.1:8394`; add your Z.ai API key for summaries).
 
-# 1. Health check (same request the options-page "Test connection" button makes)
-curl -sS -o /dev/null -w "health: %{http_code}\n" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "X-Tenant-ID: $TENANT" \
-  "$BASE_URL/health"
+## Verification performed
 
-# 2. Store a memory (exact payload shape the extension posts)
-curl -sS -w "\nstore: %{http_code}\n" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "X-Tenant-ID: $TENANT" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "observation",
-    "title": "Reunião: smoke-test (2026-01-15 12:00)",
-    "content": "## Resumo\nTeste de integração do valorbrain-meet.\n\n## Decisões\n_(nenhuma)_\n\n## Action Items\n_(nenhum)_\n\n## Transcript\n[00:10] Tester: Olá.",
-    "collection": "meetings",
-    "tags": ["reuniao", "meet", "valorbrain-meet"],
-    "confidence": 0.85
-  }' \
-  "$BASE_URL/api/v1/memory/store"
+- `npm ci && npm run build` — passes.
+- `npm test` — 150 tests pass, including new tests for provider profile
+  resolution, settings migration, and the URL validator.
+- `grep` over `src/utils/api.ts` and `src/background.ts` shows no hardcoded
+  provider URLs (only `meet.google.com` tab-matching queries remain).
+- `CHANGES.md` (this file) documents the change and the manual load step.
+- Manual smoke test in a real Chromium with the unpacked build: provider
+  defaults render, profile switching fills fields, saving persists
+  `provider.*` blocks, "Test connection" reaches a live local Whisper server,
+  and the legacy-OpenAI migration produces the OpenAI profile for both roles.
 
-# 3. Negative checks
-curl -sS -o /dev/null -w "bad token (expect 401/403): %{http_code}\n" \
-  -H "Authorization: Bearer wrong" -H "X-Tenant-ID: $TENANT" \
-  "$BASE_URL/api/v1/memory/store" -X POST -H "Content-Type: application/json" -d '{}'
-```
+---
 
-Expected: `health: 200`; `store: 200` (or `201`) with a JSON body containing
-`path` or `docid` — the extension surfaces that reference in the success toast;
-bad token returns `401`/`403`, which the extension maps to an explicit
-"check vb.apiToken and vb.tenantId" error.
+## ValorBrain ingest (feat/vb-ingest)
 
-In-browser E2E: load the unpacked extension from `dist/`, fill the ValorBrain
-section in Settings, click "Test connection" (expect ✓), save a meeting
-session, then use "Send to ValorBrain" on it in the Sessions tab (expect toast
-with doc ref and the footer badge turning ✓).
-
-## Implementation notes
-
-- **Sync badge storage**: the PRD sketched a `localStorage` badge. The badge is
-  written by the service worker (so auto-send updates it too), which cannot
-  reach page `localStorage`; the status therefore lives in
-  `chrome.storage.local` under `vbLastSync` — same "local to this browser"
-  semantics, and the side panel listens via `chrome.storage.onChanged`.
-- **Auto-send hook point**: `persistSession()` (i.e. right after the end-of-
-  meeting "Save session" commit, when the final summary is already part of the
-  pending session). Fire-and-forget by design.
-- **Why sends go through the service worker**: extension-page CSP
-  (`connect-src`) would otherwise restrict which ValorBrain hosts tenants can
-  configure; the worker + `host_permissions` keep arbitrary self-hosted
-  `vb.baseUrl` values workable.
+Cada sessão salva pode ser enviada ao tenant ValorBrain por REST (`POST {baseUrl}/api/v1/memory/store`, headers `Authorization: Bearer` + `X-Tenant-ID`). Configuração em **Settings → ValorBrain** (`vb.baseUrl`, `vb.apiToken`, `vb.tenantId`, `vb.autoSend` — default OFF) + botão **Send to ValorBrain** por sessão no dashboard. Falha de envio nunca bloqueia o export local. Doc completa (contrato da API + receita de teste manual): [`docs/VB-INGEST.md`](docs/VB-INGEST.md).

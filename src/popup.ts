@@ -7,7 +7,13 @@ import {
   isUnlocked,
 } from "./utils/credentials";
 import { escapeHtml, formatDuration, sanitizeTopicStatus } from "./utils/domHelpers";
-import { validateOpenAIKey } from "./utils/api.js";
+import { validateProviderConnection } from "./utils/api.js";
+import {
+  getProviderConfig,
+  providerConfigFromProfile,
+  resolveProviderApiKey,
+  storageKeyFor,
+} from "./utils/providerSettings";
 import { resolveManualMeetTab } from "./meetingTabs";
 import { startPopupAudioCapture } from "./popupCapture";
 
@@ -54,7 +60,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (success) {
       updatePassphraseStatus();
       const creds = await getApiCredentials();
-      if (creds.openai_api_key || creds.elevenlabs_api_key) {
+      if (creds.openai_api_key) {
         setupView.style.display = "none";
         mainView.style.display = "block";
       }
@@ -74,10 +80,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     pendingUnlock = handlePassphraseUnlock();
   });
 
-  // ——— Check if API key is configured ———
+  // ——— Check whether first-run setup is still needed ———
+  // Setup is done when the legacy OpenAI vault key exists OR any AI provider
+  // block was saved (transcription itself works keyless against a local
+  // Whisper server, so a key is never a hard requirement).
   const config = await getApiCredentials();
+  const providerBlocks = await chrome.storage.local.get([
+    storageKeyFor("transcription"),
+    storageKeyFor("summary"),
+  ]);
+  const setupDone =
+    Boolean(config.openai_api_key) ||
+    Boolean(providerBlocks[storageKeyFor("transcription")]) ||
+    Boolean(providerBlocks[storageKeyFor("summary")]);
 
-  if (!config.openai_api_key && !config.elevenlabs_api_key) {
+  if (!setupDone) {
     setupView.style.display = "block";
     mainView.style.display = "none";
   } else {
@@ -112,7 +129,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     saveBtn.disabled = true;
     saveBtn.textContent = "Validating...";
 
-    const isValid = await validateOpenAIKey(apiKey);
+    const isValid = await validateProviderConnection(providerConfigFromProfile("openai", apiKey));
     if (!isValid) {
       saveBtn.disabled = false;
       saveBtn.textContent = originalText;
@@ -137,8 +154,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       errorEl.remove();
     }
 
-    // Since the popup only has one input currently, we'll save it as openai_api_key
-    // Users can configure ElevenLabs in the options page.
+    // Since the popup only has one input currently, we'll save it as the
+    // encrypted vault OpenAI key. Other providers are configured in the
+    // options page under "AI Providers".
 
     await saveApiCredentials({ openai_api_key: apiKey });
     setupView.style.display = "none";
@@ -154,6 +172,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ——— Settings ———
   document.getElementById("settings-btn")?.addEventListener("click", () => {
+    chrome.runtime.openOptionsPage();
+  });
+
+  // ——— AI Providers setup shortcut (setup view) ———
+  document.getElementById("open-providers")?.addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
   });
 
@@ -286,31 +309,23 @@ document.addEventListener("DOMContentLoaded", async () => {
     const textEl = btn.querySelector(".copilot-btn-text");
     const originalText = textEl?.textContent || "Start";
 
-    // --- Pre-flight Check for API Keys ---
-    const keys = await getApiCredentials();
-    if (!keys.openai_api_key) {
-      alert("Please configure your OpenAI API Key in the Settings before starting.");
-      chrome.runtime.openOptionsPage();
-      return;
-    }
-
     if (lastState?.audioActive) {
       console.log("[LateMeet] Audio already active, skipping capture request.");
       return;
     }
 
-    // Check if ElevenLabs API key exists before starting
-    const creds = await getApiCredentials();
-    if (!creds.elevenlabs_api_key) {
+    // Soft pre-flight: transcription works without any key (e.g. a local
+    // Whisper server), but summaries need the summary provider's API key.
+    // Warn without blocking the zero-cost local flow.
+    const summaryProvider = await getProviderConfig("summary");
+    if (!(await resolveProviderApiKey(summaryProvider))) {
       if (textEl) {
-        textEl.textContent = "⚠️ Missing ElevenLabs Key";
+        textEl.textContent = "⚠️ No summary key — transcripts only";
         setTimeout(() => {
           if (textEl) textEl.textContent = originalText;
         }, 2000);
       }
-      return; // Stop here - don't start recording
     }
-    // ========== END OF ADDED CODE ==========
 
     try {
       // Show loading state

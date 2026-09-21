@@ -1,9 +1,6 @@
-// OpenAI and ElevenLabs API wrappers for Meeting Copilot
+// Provider-agnostic API helpers for Meeting Copilot
 
-import { getOpenAiApiKey } from "./credentials";
-
-const OPENAI_MODELS_URL = "https://api.openai.com/v1/models";
-const ELEVENLABS_USER_URL = "https://api.elevenlabs.io/v1/user";
+import type { ProviderConfig } from "./providerSettings";
 
 // ── Helper Functions ───────────────────────────────────────────────────────
 
@@ -23,7 +20,7 @@ const ELEVENLABS_USER_URL = "https://api.elevenlabs.io/v1/user";
  * @throws The last caught error if all retry attempts are exhausted.
  *
  * @example
- * const res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
+ * const res = await fetchWithRetry(`${providerBaseUrl}/chat/completions`, {
  *   method: "POST",
  *   headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
  *   body: JSON.stringify(payload),
@@ -50,121 +47,51 @@ export async function fetchWithRetry(
   }
 }
 
-// ── Types ──────────────────────────────────────────────────────────────────
-
-/** A single time-stamped segment returned by the Whisper transcription API. */
-export interface WhisperSegment {
-  /** Zero-based sequential segment index. */
-  id: number;
-  /** Segment start time in seconds relative to the audio start. */
-  start: number;
-  /** Segment end time in seconds relative to the audio start. */
-  end: number;
-  /** Transcribed text for this segment. */
-  text: string;
-}
-
-/** Full transcription result returned by the Whisper API (`verbose_json` format). */
-export interface TranscriptionResult {
-  /** Complete transcribed text of the audio. */
-  text: string;
-  /** Detected language of the audio (ISO 639-1 code, e.g. `"en"`). */
-  language: string;
-  /** Fine-grained time-stamped segments. */
-  segments: WhisperSegment[];
-  /** Total audio duration in seconds. */
-  duration: number;
-}
-
-/** A single message in an OpenAI chat completion conversation. */
-export interface ChatMessage {
-  /** Conversation role: `"system"` for instructions, `"user"` for input, `"assistant"` for model output. */
-  role: "system" | "user" | "assistant";
-  /** Text content of the message. */
-  content: string;
-}
-
-/** Minimal shape of the OpenAI chat completion response used by this extension. */
-export interface ChatCompletionResponse {
-  choices: Array<{
-    message: {
-      /** Generated text from the model. */
-      content: string;
-    };
-  }>;
-}
-
 // ── API Functions ──────────────────────────────────────────────────────────
 
 /**
- * Retrieves the stored OpenAI API key from secure credential storage.
+ * Validates a provider connection by probing the provider's
+ * `GET {baseUrl}/models` endpoint (OpenAI wire format). The request times out
+ * after 5 seconds.
  *
- * @returns The OpenAI API key string, or `null` if none is saved.
+ * Works for every provider configured in the AI Providers settings — local
+ * Whisper servers, Z.ai GLM, OpenAI, or any OpenAI-compatible endpoint. Any
+ * HTTP response counts as reachable: some minimal self-hosted servers do not
+ * implement `/models` and answer 404, but the transport still works. Only
+ * network failures (DNS, refused, timeout) return `false`. The
+ * `Authorization` header is only sent when an API key is configured, since
+ * self-hosted servers usually require no auth.
  *
- * @example
- * const key = await getApiKey();
- * if (!key) throw new Error("OpenAI key not configured");
- */
-export async function getApiKey(): Promise<string | null> {
-  return getOpenAiApiKey();
-}
-
-/**
- * Validates an OpenAI API key by making a lightweight request to the
- * `/v1/models` endpoint. The request times out after 5 seconds.
- *
- * @param apiKey - The API key string to validate. Returns `false` immediately for empty values.
- * @returns `true` if the key is accepted by the OpenAI API, `false` otherwise.
+ * @param config - The provider block to probe (`baseUrl` + optional `apiKey`).
+ * @returns `true` if the endpoint answers with any HTTP response, `false`
+ *   otherwise.
  *
  * @example
- * const isValid = await validateOpenAIKey("sk-...");
- * if (!isValid) showError("Invalid OpenAI key");
+ * const ok = await validateProviderConnection({ ...zaiConfig, apiKey });
+ * if (!ok) showError("Could not reach the summarization provider");
  */
-export async function validateOpenAIKey(apiKey: string): Promise<boolean> {
-  if (!apiKey) return false;
+export async function validateProviderConnection(config: ProviderConfig): Promise<boolean> {
+  if (!config.baseUrl) return false;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-  try {
-    const response = await fetchWithRetry(OPENAI_MODELS_URL, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: controller.signal,
-    });
-    return response.ok;
-  } catch (error: any) {
-    console.error("OpenAI validation failed after retries:", error);
-    return false;
-  } finally {
-    clearTimeout(timeoutId);
+  const headers: Record<string, string> = {};
+  if (config.apiKey) {
+    headers.Authorization = `Bearer ${config.apiKey}`;
   }
-}
-
-/**
- * Validates an ElevenLabs API key by making a lightweight request to the
- * `/v1/user` endpoint. The request times out after 5 seconds.
- *
- * @param apiKey - The API key string to validate. Returns `false` immediately for empty values.
- * @returns `true` if the key is accepted by the ElevenLabs API, `false` otherwise.
- *
- * @example
- * const isValid = await validateElevenLabsKey("xi-...");
- * if (!isValid) showError("Invalid ElevenLabs key");
- */
-export async function validateElevenLabsKey(apiKey: string): Promise<boolean> {
-  if (!apiKey) return false;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5000);
 
   try {
-    const response = await fetchWithRetry(ELEVENLABS_USER_URL, {
+    // Any HTTP status means the host answered — including 404 from minimal
+    // whisper servers without a /models route. fetchWithRetry only throws on
+    // network-level errors.
+    await fetchWithRetry(`${config.baseUrl.replace(/\/+$/, "")}/models`, {
       method: "GET",
-      headers: { "xi-api-key": apiKey },
+      headers,
       signal: controller.signal,
     });
-    return response.ok;
-  } catch (error: any) {
-    console.error("ElevenLabs validation failed after retries:", error);
+    return true;
+  } catch (error: unknown) {
+    console.error("Provider connection validation failed after retries:", error);
     return false;
   } finally {
     clearTimeout(timeoutId);
