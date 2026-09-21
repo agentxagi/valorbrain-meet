@@ -43,7 +43,7 @@ copy** of each when resolving:
 No real keys live in this repo. Run from a shell, substituting your own values:
 
 ```bash
-BASE_URL="https://memory.valor.digital"   # your ValorBrain engine
+BASE_URL="https://valorbrain-api.valor.digital"   # ValorBrain engine API (valor.digital deployment)
 TOKEN="<tenant api token>"
 TENANT="<tenant uuid>"
 
