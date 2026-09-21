@@ -22,6 +22,7 @@ import { renderApiUsageDashboard } from "./apiUsageDashboard";
 import { MIN_PASSPHRASE_LENGTH, evaluatePassphraseStrength } from "./passphraseStrength";
 import { getSettings } from "./settings";
 import { normalizeVbSettings, resolveAutoSend } from "./vbClient";
+import { connectValorBrain, VB_API_BASE_URL } from "./vbConnect";
 
 /**
  * Strongly-typed map of all recognized extension settings keys and their
@@ -209,6 +210,38 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (vbApiTokenInput && settings["vb.apiToken"]) vbApiTokenInput.value = settings["vb.apiToken"];
   if (vbTenantIdInput && settings["vb.tenantId"]) vbTenantIdInput.value = settings["vb.tenantId"];
   if (vbAutoSendInput) vbAutoSendInput.checked = resolveAutoSend(normalizeVbSettings(settings));
+
+  // ——— Conectar com ValorBrain (OAuth authorization-code + PKCE) ———
+  const vbConnectBtn = document.getElementById("vb-connect") as HTMLButtonElement | null;
+  const vbConnectStatus = document.getElementById("vb-connect-status");
+  vbConnectBtn?.addEventListener("click", async () => {
+    if (vbConnectStatus) {
+      vbConnectStatus.className = "passphrase-status";
+      vbConnectStatus.textContent = "Abrindo a autorização no navegador…";
+    }
+    vbConnectBtn.disabled = true;
+    try {
+      const base = vbBaseUrlInput?.value.trim() || VB_API_BASE_URL;
+      const { accessToken } = await connectValorBrain(base);
+      settings["vb.baseUrl"] = base;
+      settings["vb.apiToken"] = accessToken;
+      await chrome.storage.local.set({ settings });
+      if (vbBaseUrlInput) vbBaseUrlInput.value = base;
+      if (vbApiTokenInput) vbApiTokenInput.value = accessToken;
+      if (vbAutoSendInput) vbAutoSendInput.checked = resolveAutoSend(normalizeVbSettings(settings));
+      if (vbConnectStatus) {
+        vbConnectStatus.className = "passphrase-status status-success";
+        vbConnectStatus.textContent = "Conectado — token salvo. Auto-send ativo.";
+      }
+    } catch (err) {
+      if (vbConnectStatus) {
+        vbConnectStatus.className = "passphrase-status status-danger";
+        vbConnectStatus.textContent = err instanceof Error ? err.message : "Falha na conexão.";
+      }
+    } finally {
+      vbConnectBtn.disabled = false;
+    }
+  });
 
   function readVbFields(): Pick<
     KnownSettings,

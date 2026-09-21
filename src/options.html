@@ -633,9 +633,14 @@
           ValorBrain
         </h2>
         <p class="form-hint">
-          Push saved sessions to your tenant's ValorBrain memory. All fields are per-tenant and
-          stored only in this browser.
+          Envia sessões salvas para a memória do seu tenant ValorBrain. Tudo é por tenant e fica só
+          neste navegador.
         </p>
+
+        <div class="input-row">
+          <button id="vb-connect" class="save-btn" type="button">Conectar com ValorBrain</button>
+        </div>
+        <div id="vb-connect-status" class="passphrase-status"></div>
 
         <div class="form-group">
           <label class="form-label" for="vb-base-url">Base URL</label>
@@ -706,9 +711,9 @@
             <div>
               <div class="toggle-label">Auto-send to ValorBrain</div>
               <div class="toggle-hint">
-                ON by default once Base URL + API token + Tenant ID are set. Sends each saved
-                session automatically when the meeting ends; local export is never blocked by send
-                failures. Uncheck to send only manually.
+                Ligado por padrão quando Base URL + token + Tenant ID estão definidos. Envia cada
+                sessão salva ao fim da reunião; a exportação local nunca é bloqueada por falhas de
+                envio. Desmarque para enviar só manualmente.
               </div>
             </div>
             <label class="toggle-switch">

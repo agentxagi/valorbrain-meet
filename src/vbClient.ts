@@ -67,7 +67,9 @@ export async function getVbSettings(): Promise<VbSettings> {
 }
 
 export function isVbConfigured(settings: VbSettings): boolean {
-  return Boolean(settings.baseUrl && settings.apiToken && settings.tenantId);
+  // Tenant ID is optional: OAuth-issued `vbm_` tokens resolve the tenant
+  // server-side, so only the engine URL and a credential are required.
+  return Boolean(settings.baseUrl && settings.apiToken);
 }
 
 /**
@@ -334,13 +336,16 @@ export async function sendToValorBrain(
     return failure("config", `Invalid ValorBrain Base URL: ${settings.baseUrl}`);
   }
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${settings.apiToken}`,
+  };
+  // Tenant ID is optional with OAuth-issued tokens; never send an empty header.
+  if (settings.tenantId) headers["X-Tenant-ID"] = settings.tenantId;
+
   const init: RequestInit = {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.apiToken}`,
-      "X-Tenant-ID": settings.tenantId,
-    },
+    headers,
     body: JSON.stringify(buildValorBrainPayload(session)),
   };
 
@@ -388,13 +393,15 @@ export async function testValorBrainConnection(
     return { ok: false, message: `Invalid Base URL: ${settings.baseUrl}` };
   }
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${settings.apiToken}`,
+  };
+  if (settings.tenantId) headers["X-Tenant-ID"] = settings.tenantId;
+
   const init: RequestInit = {
     method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.apiToken}`,
-      "X-Tenant-ID": settings.tenantId,
-    },
+    headers,
   };
   const outcome = await attemptRequest(url, init, options);
   if (outcome.failure) return { ok: false, message: outcome.failure.error };

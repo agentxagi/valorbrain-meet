@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-09-21
+
+### 🚀 Features
+
+- **"Conectar com ValorBrain"** — OAuth 2.1 authorization-code + PKCE contra o authorization server do engine (que já estava em produção): registro dinâmico de cliente, `chrome.identity.launchWebAuthFlow` sobre `/oauth/authorize` com consentimento no navegador, troca de código por token `vbm_` — e a conexão fica salva (Base URL + token), sem colar nada nas configurações ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+- Novo escopo `identity` no manifest para o fluxo de autorização
+
+### 🔧 Engine (valorbrain-saas)
+
+- `resolveShadowAuth` agora aceita tokens OAuth-emitidos `vbm_*` nas rotas REST (resolvidos a tenant via `mcp_tokens`), ponte necessária para o ingest funcionar com o token do fluxo OAuth
+
 ## [1.6.0] - 2026-09-21
 
 ### 🚀 Features
