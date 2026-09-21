@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-09-21
+
+### 🚀 Features
+
+- **Auto-send to ValorBrain is ON by default once the connection is configured** (Base URL + API token + Tenant ID). An explicit opt-out in Settings always wins; without configuration nothing is sent ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+- Settings toggle now reflects the effective value and its hint explains the default-on behavior
+
 ## [1.4.0] - 2026-09-21
 
 ### 🚀 Features

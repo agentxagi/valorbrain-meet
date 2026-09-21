@@ -42,6 +42,7 @@ import { updateUsageStats, calculateDeltaCost, UsageDelta } from "./usageTracker
 import {
   getVbSettings,
   normalizeVbSettings,
+  resolveAutoSend,
   recordVbSyncStatus,
   sendToValorBrain,
   testValorBrainConnection,
@@ -1549,13 +1550,13 @@ let isProcessingSession = false;
 let inMemoryPendingSession: StoredSession | null = null;
 
 /**
- * Best-effort push of a saved session to ValorBrain when `vb.autoSend` is on.
+ * Best-effort push of a saved session to ValorBrain when auto-send is on (default once configured).
  * Never throws — failures are recorded for the sync badge and logged only.
  */
 async function autoSendSavedSessionToValorBrain(session: StoredSession) {
   try {
     const vbSettings = await getVbSettings();
-    if (!vbSettings.autoSend) return;
+    if (!resolveAutoSend(vbSettings)) return;
     const result = await sendToValorBrain(session, vbSettings);
     await recordVbSyncStatus(result, session.id);
     if (!result.ok) {

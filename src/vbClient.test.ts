@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  resolveAutoSend,
   buildValorBrainContent,
   buildValorBrainPayload,
   buildValorBrainTitle,
@@ -86,13 +87,33 @@ test("normalizeVbSettings trims strings, strips trailing slash, and reads autoSe
   assert.equal(settings.autoSend, true);
 });
 
-test("normalizeVbSettings treats non-boolean autoSend as off and ignores non-strings", () => {
+test("normalizeVbSettings treats non-boolean autoSend as on (intent default) and ignores non-strings", () => {
   const settings = normalizeVbSettings({
     "vb.baseUrl": 42,
     "vb.autoSend": "yes",
   });
   assert.equal(settings.baseUrl, "");
-  assert.equal(settings.autoSend, false);
+  assert.equal(settings.autoSend, true);
+});
+
+test("resolveAutoSend is on by default once configured", () => {
+  assert.equal(resolveAutoSend(configuredSettings({ autoSend: true })), true);
+});
+
+test("resolveAutoSend honors an explicit opt-out even when configured", () => {
+  assert.equal(resolveAutoSend(configuredSettings({ autoSend: false })), false);
+});
+
+test("resolveAutoSend is off when the connection is not configured", () => {
+  assert.equal(
+    resolveAutoSend({
+      baseUrl: "",
+      apiToken: "",
+      tenantId: "",
+      autoSend: true,
+    }),
+    false,
+  );
 });
 
 // ---------------------------------------------------------------------------

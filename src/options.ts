@@ -21,6 +21,7 @@ import { renderStorageDashboard } from "./storageDashboard";
 import { renderApiUsageDashboard } from "./apiUsageDashboard";
 import { MIN_PASSPHRASE_LENGTH, evaluatePassphraseStrength } from "./passphraseStrength";
 import { getSettings } from "./settings";
+import { normalizeVbSettings, resolveAutoSend } from "./vbClient";
 
 /**
  * Strongly-typed map of all recognized extension settings keys and their
@@ -207,7 +208,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (vbBaseUrlInput && settings["vb.baseUrl"]) vbBaseUrlInput.value = settings["vb.baseUrl"];
   if (vbApiTokenInput && settings["vb.apiToken"]) vbApiTokenInput.value = settings["vb.apiToken"];
   if (vbTenantIdInput && settings["vb.tenantId"]) vbTenantIdInput.value = settings["vb.tenantId"];
-  if (vbAutoSendInput) vbAutoSendInput.checked = settings["vb.autoSend"] === true;
+  if (vbAutoSendInput) vbAutoSendInput.checked = resolveAutoSend(normalizeVbSettings(settings));
 
   function readVbFields(): Pick<
     KnownSettings,

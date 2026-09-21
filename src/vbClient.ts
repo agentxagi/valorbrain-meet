@@ -26,7 +26,9 @@ export interface VbSettings {
   apiToken: string;
   /** Tenant UUID. */
   tenantId: string;
-  /** Auto-send saved sessions to ValorBrain (default OFF). */
+  /** Auto-send saved sessions to ValorBrain once the connection is configured.
+   *  Stored as an intent flag: unset/invalid counts as ON (the default), an
+   *  explicit `false` wins. Gate through {@link resolveAutoSend}. */
   autoSend: boolean;
 }
 
@@ -35,7 +37,7 @@ export const DEFAULT_VB_SETTINGS: VbSettings = {
   baseUrl: "",
   apiToken: "",
   tenantId: "",
-  autoSend: false,
+  autoSend: true,
 };
 
 /**
@@ -54,7 +56,7 @@ export function normalizeVbSettings(raw: unknown): VbSettings {
     baseUrl: rawBaseUrl.trim().replace(/\/+$/, ""),
     apiToken: rawToken.trim(),
     tenantId: rawTenant.trim(),
-    autoSend: source[VB_AUTO_SEND_KEY] === true,
+    autoSend: source[VB_AUTO_SEND_KEY] !== false,
   };
 }
 
@@ -66,6 +68,15 @@ export async function getVbSettings(): Promise<VbSettings> {
 
 export function isVbConfigured(settings: VbSettings): boolean {
   return Boolean(settings.baseUrl && settings.apiToken && settings.tenantId);
+}
+
+/**
+ * Effective auto-send switch: ON by default once the connection is configured
+ * (Base URL + token + tenant), OFF otherwise. An explicit stored `false`
+ * always wins — the user asked not to auto-send.
+ */
+export function resolveAutoSend(settings: VbSettings): boolean {
+  return isVbConfigured(settings) && settings.autoSend !== false;
 }
 
 // ---------------------------------------------------------------------------
