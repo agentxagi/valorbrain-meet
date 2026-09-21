@@ -19,7 +19,7 @@
   --text-danger: #dc2626;
 
   --shadow-main: rgba(0, 0, 0, 0.1);
-  --accent-color: 210, 100%, 50%; /* Default Dynamic Accent HSL */
+  --accent-color: 161, 84%, 25%; /* Verde Valor #047857 — accent padrão ValorBrain */
 }
 
 [data-theme="dark"] {

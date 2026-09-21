@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Meeting Dashboard — AI Copilot</title>
+    <title>ValorBrain Meet — Dashboard</title>
     <link rel="stylesheet" href="fonts/fonts.css" />
     <link rel="stylesheet" href="dashboard.css" />
     <link rel="stylesheet" href="apiUsageDashboard.css" />
@@ -42,10 +42,10 @@
           </svg>
         </span>
         <div>
-          <div class="dash-title">Meeting Intelligence</div>
+          <div class="dash-title">Inteligência da reunião</div>
           <div id="dash-status" class="dash-status">
             <span class="dash-status-dot active"></span>
-            <span id="dash-status-text">Connecting...</span>
+            <span id="dash-status-text">Conectando...</span>
           </div>
         </div>
       </div>
@@ -144,7 +144,7 @@
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
             <line x1="12" x2="12" y1="19" y2="22"></line>
           </svg>
-          Start Audio
+          Iniciar áudio
         </button>
         <div id="dash-timer" class="dash-timer">00:00:00</div>
       </div>
@@ -161,7 +161,7 @@
         aria-selected="true"
         tabindex="0"
       >
-        Overview
+        Visão geral
       </button>
       <button
         class="dash-tab"
@@ -172,7 +172,7 @@
         aria-selected="false"
         tabindex="-1"
       >
-        Transcript
+        Transcrição
       </button>
       <button
         class="dash-tab"
@@ -183,7 +183,7 @@
         aria-selected="false"
         tabindex="-1"
       >
-        Topics
+        Tópicos
       </button>
       <button
         class="dash-tab"
@@ -194,7 +194,7 @@
         aria-selected="false"
         tabindex="-1"
       >
-        Decisions
+        Decisões
       </button>
       <button
         class="dash-tab"
@@ -205,7 +205,7 @@
         aria-selected="false"
         tabindex="-1"
       >
-        Actions
+        Ações
       </button>
       <button
         class="dash-tab"
@@ -216,7 +216,7 @@
         aria-selected="false"
         tabindex="-1"
       >
-        People
+        Pessoas
       </button>
       <button
         class="dash-tab"
@@ -227,7 +227,7 @@
         aria-selected="false"
         tabindex="-1"
       >
-        Timeline
+        Linha do tempo
       </button>
       <button
         class="dash-tab"
@@ -238,7 +238,7 @@
         aria-selected="false"
         tabindex="-1"
       >
-        Usage
+        Uso
       </button>
       <button
         class="dash-tab"
@@ -249,7 +249,7 @@
         aria-selected="false"
         tabindex="-1"
       >
-        History
+        Histórico
       </button>
     </nav>
 
@@ -284,8 +284,8 @@
                 <line x1="12" x2="12" y1="19" y2="22"></line>
               </svg>
             </span>
-            <span class="dash-card-title">Audio Input</span>
-            <span id="waveform-status" class="waveform-status-badge">IDLE</span>
+            <span class="dash-card-title">Entrada de áudio</span>
+            <span id="waveform-status" class="waveform-status-badge"> PARADO </span>
           </div>
           <canvas id="waveform-canvas" class="waveform-canvas"></canvas>
         </div>
@@ -311,16 +311,16 @@
                 <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
               </svg>
             </span>
-            <span class="dash-card-title">Live Session Usage</span>
-            <span class="usage-badge-live">TRACKING</span>
+            <span class="dash-card-title">Uso da sessão ao vivo</span>
+            <span class="usage-badge-live">ATIVO</span>
           </div>
           <div class="usage-metric-row">
             <div class="usage-metric">
-              <span class="usage-metric-label">Tokens Consumed</span>
+              <span class="usage-metric-label">Tokens consumidos</span>
               <span class="usage-metric-value" id="live-tokens">0</span>
             </div>
             <div class="usage-metric" style="text-align: right">
-              <span class="usage-metric-label">Est. Cost (USD)</span>
+              <span class="usage-metric-label">Custo estimado (USD)</span>
               <span class="usage-metric-value accent" id="live-cost">$0.0000</span>
             </div>
           </div>
@@ -352,7 +352,7 @@
                 <line x1="10" x2="8" y1="9" y2="9"></line>
               </svg>
             </span>
-            <span class="dash-card-title">Live Summary</span>
+            <span class="dash-card-title">Resumo ao vivo</span>
             <button
               type="button"
               id="copy-summary-btn"
@@ -392,11 +392,9 @@
                 ></path>
               </svg>
             </button>
-            <span class="live-indicator"> <span class="live-dot"></span>LIVE </span>
+            <span class="live-indicator"> <span class="live-dot"></span> AO VIVO </span>
           </div>
-          <div id="dash-summary" class="dash-summary-text">
-            Waiting for conversation to begin...
-          </div>
+          <div id="dash-summary" class="dash-summary-text">Aguardando a conversa começar...</div>
         </div>
 
         <!-- Current Topic -->
@@ -421,9 +419,9 @@
                 <circle cx="12" cy="12" r="2"></circle>
               </svg>
             </span>
-            <span class="dash-card-title">Current Topic</span>
+            <span class="dash-card-title">Tópico atual</span>
           </div>
-          <div id="dash-current-topic" class="current-topic-box">Detecting...</div>
+          <div id="dash-current-topic" class="current-topic-box">Detectando...</div>
         </div>
 
         <!-- Quick Stats Grid -->
@@ -447,7 +445,7 @@
               </svg>
             </div>
             <div class="stat-card-value" id="dash-topic-count">0</div>
-            <div class="stat-card-label">Topics</div>
+            <div class="stat-card-label">Tópicos</div>
           </div>
           <div class="stat-card" id="stat-decisions">
             <div class="stat-card-icon">
@@ -469,7 +467,7 @@
               </svg>
             </div>
             <div class="stat-card-value" id="dash-decision-count">0</div>
-            <div class="stat-card-label">Decisions</div>
+            <div class="stat-card-label">Decisões</div>
           </div>
           <div class="stat-card" id="stat-actions">
             <div class="stat-card-icon">
@@ -497,7 +495,7 @@
               </svg>
             </div>
             <div class="stat-card-value" id="dash-action-count">0</div>
-            <div class="stat-card-label">Actions</div>
+            <div class="stat-card-label">Ações</div>
           </div>
           <div class="stat-card" id="stat-people">
             <div class="stat-card-icon">
@@ -521,7 +519,7 @@
               </svg>
             </div>
             <div class="stat-card-value" id="dash-people-count">0</div>
-            <div class="stat-card-label">People</div>
+            <div class="stat-card-label">Pessoas</div>
           </div>
         </div>
 
@@ -545,17 +543,17 @@
                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
               </svg>
             </span>
-            <span class="dash-card-title">Meeting Sentiment</span>
+            <span class="dash-card-title">Sentimento da reunião</span>
           </div>
           <div class="sentiment-bar">
             <div id="dash-sentiment-fill" class="sentiment-fill" style="width: 50%"></div>
           </div>
           <div class="sentiment-labels">
-            <span>Negative</span>
+            <span>Negativo</span>
             <span id="dash-sentiment-label" style="font-weight: 700; color: var(--text-main)"
-              >Neutral</span
+              >Neutro</span
             >
-            <span>Positive</span>
+            <span>Positivo</span>
           </div>
         </div>
 
@@ -579,10 +577,10 @@
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
               </svg>
             </span>
-            <span class="dash-card-title">Key Insights</span>
+            <span class="dash-card-title">Insights principais</span>
           </div>
           <ul id="dash-insights-list" class="insight-list">
-            <li class="empty-msg">Insights will appear as the conversation progresses</li>
+            <li class="empty-msg">Os insights aparecem conforme a conversa avança</li>
           </ul>
         </div>
 
@@ -608,10 +606,10 @@
                 <line x1="12" x2="12.01" y1="17" y2="17"></line>
               </svg>
             </span>
-            <span class="dash-card-title">Unresolved Discussions</span>
+            <span class="dash-card-title">Assuntos não resolvidos</span>
           </div>
           <ul id="dash-unresolved-list" class="insight-list">
-            <li class="empty-msg">No unresolved discussions yet</li>
+            <li class="empty-msg">Nenhum assunto em aberto ainda</li>
           </ul>
         </div>
 
@@ -639,10 +637,10 @@
                 <line x1="12" x2="12.01" y1="17" y2="17"></line>
               </svg>
             </span>
-            <span class="dash-card-title">Contradictions</span>
+            <span class="dash-card-title">Contradições</span>
           </div>
           <ul id="dash-contradictions-list" class="insight-list">
-            <li class="empty-msg">No contradictions detected</li>
+            <li class="empty-msg">Nenhuma contradição detectada</li>
           </ul>
         </div>
       </section>
@@ -668,10 +666,10 @@
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
               </svg>
             </span>
-            <span class="dash-card-title">Discussion Topics</span>
+            <span class="dash-card-title">Tópicos da discussão</span>
           </div>
           <div id="dash-topics-full" class="topics-full-list">
-            <div class="empty-msg">No topics detected yet</div>
+            <div class="empty-msg">Nenhum tópico detectado ainda</div>
           </div>
         </div>
       </section>
@@ -703,10 +701,10 @@
                 <polyline points="22 4 12 14.01 9 11.01"></polyline>
               </svg>
             </span>
-            <span class="dash-card-title">Decisions Made</span>
+            <span class="dash-card-title">Decisões tomadas</span>
           </div>
           <div id="dash-decisions-list" class="decisions-full-list">
-            <div class="empty-msg">No decisions detected yet</div>
+            <div class="empty-msg">Nenhuma decisão detectada ainda</div>
           </div>
         </div>
       </section>
@@ -739,10 +737,10 @@
                 <path d="M8 16h.01"></path>
               </svg>
             </span>
-            <span class="dash-card-title">Action Items</span>
+            <span class="dash-card-title">Itens de ação</span>
           </div>
           <div id="dash-actions-list" class="actions-full-list">
-            <div class="empty-msg">No action items detected yet</div>
+            <div class="empty-msg">Nenhum item de ação detectado ainda</div>
           </div>
         </div>
       </section>
@@ -771,10 +769,10 @@
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
               </svg>
             </span>
-            <span class="dash-card-title">Participants</span>
+            <span class="dash-card-title">Participantes</span>
           </div>
           <div id="dash-participants-list" class="participants-list">
-            <div class="empty-msg">No participants detected</div>
+            <div class="empty-msg">Nenhum participante detectado</div>
           </div>
         </div>
         <div class="dash-card" id="late-joiners-card" style="display: none">
@@ -798,7 +796,7 @@
                 <line x1="15" x2="3" y1="12" y2="12"></line>
               </svg>
             </span>
-            <span class="dash-card-title">Late Joiners</span>
+            <span class="dash-card-title">Atrasados</span>
           </div>
           <div id="dash-late-joiners" class="late-joiner-list"></div>
         </div>
@@ -831,10 +829,10 @@
                 <polyline points="12 6 12 12 16 14"></polyline>
               </svg>
             </span>
-            <span class="dash-card-title">Meeting Timeline</span>
+            <span class="dash-card-title">Linha do tempo da reunião</span>
           </div>
           <div id="dash-timeline" class="timeline-list">
-            <div class="empty-msg">Timeline will build as the meeting progresses</div>
+            <div class="empty-msg">A linha do tempo se constrói conforme a reunião avança</div>
           </div>
         </div>
       </section>
@@ -867,8 +865,8 @@
                 <line x1="12" x2="12" y1="19" y2="22" />
               </svg>
             </span>
-            <span class="dash-card-title">Live Transcript</span>
-            <span class="live-indicator"> <span class="live-dot"></span>LIVE </span>
+            <span class="dash-card-title"> Transcrição ao vivo </span>
+            <span class="live-indicator"> <span class="live-dot"></span> AO VIVO </span>
           </div>
 
           <!-- Transcript Search Header -->
@@ -990,7 +988,7 @@
             transcription.
           </div>
           <div id="dash-transcript-list" class="transcript-list">
-            <div class="empty-msg">No transcript yet. Start audio to begin capturing speech.</div>
+            <div class="empty-msg">Sem transcrição ainda. Inicie o áudio para capturar a fala.</div>
           </div>
         </div>
       </section>
@@ -1018,10 +1016,10 @@
                 <path d="M7 3v4a1 1 0 0 0 1 1h7"></path>
               </svg>
             </span>
-            <span class="dash-card-title">Meeting History</span>
+            <span class="dash-card-title">Histórico de reuniões</span>
           </div>
           <div id="dash-history-list" class="sessions-list">
-            <div class="empty-msg">No history exists yet.</div>
+            <div class="empty-msg">Nenhum histórico ainda.</div>
           </div>
         </div>
       </section>
@@ -1053,7 +1051,7 @@
             <polyline points="7 10 12 15 17 10"></polyline>
             <line x1="12" x2="12" y1="15" y2="3"></line>
           </svg>
-          Export Summary
+          Exportar resumo
         </button>
 
         <div class="export-dropdown" id="export-dropdown" role="menu" hidden>
@@ -1178,13 +1176,13 @@
               <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
             </svg>
           </span>
-          <span class="dash-card-title" style="color: #fca5a5">Delete Session</span>
+          <span class="dash-card-title" style="color: #fca5a5">Excluir sessão</span>
         </div>
         <div class="modal-body">
-          <p>Are you sure you want to delete this session? This action cannot be undone.</p>
+          <p>Excluir esta sessão? Esta ação não pode ser desfeita.</p>
         </div>
         <div class="modal-actions">
-          <button id="cancel-delete-btn" class="dash-tab">Cancel</button>
+          <button id="cancel-delete-btn" class="dash-tab">Cancelar</button>
           <button
             id="confirm-delete-btn"
             class="session-delete-btn"

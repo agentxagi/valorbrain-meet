@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Settings — AI Meeting Copilot</title>
+    <title>ValorBrain Meet — Configurações</title>
     <link rel="stylesheet" href="fonts/fonts.css" />
     <link rel="stylesheet" href="options.css" />
     <link rel="stylesheet" href="storageDashboard.css" />
@@ -42,14 +42,14 @@
           </svg>
         </div>
         <div>
-          <h1 class="options-title">AI Meeting Copilot</h1>
-          <p class="options-subtitle">Settings & Configuration</p>
+          <h1 class="options-title">ValorBrain Meet</h1>
+          <p class="options-subtitle">Configurações</p>
         </div>
       </header>
       <div id="onboarding-root" hidden></div>
       <div class="options-actions">
         <button id="view-onboarding" class="btn" aria-label="View onboarding">
-          View Onboarding
+          Ver onboarding
         </button>
       </div>
       <!-- Theme Section-->
@@ -72,34 +72,32 @@
                 d="m12 3-1.912 5.886a1 1 0 0 1-.951.691H2.918l4.909 3.567a1 1 0 0 1 .364 1.118L6.28 20.151l4.91-3.567a1 1 0 0 1 1.12 0l4.91 3.567-1.911-5.889a1 1 0 0 1 .364-1.118l4.909-3.567h-6.22a1 1 0 0 1-.951-.691Z"
               />
             </svg>
-            <span>Appearance Personalization</span>
+            <span>Aparência</span>
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="theme-select">Interface Theme</label>
-            <div class="form-hint">
-              Choose how the Copilot interface handles background lighting profiles.
-            </div>
+            <label class="form-label" for="theme-select">Tema da interface</label>
+            <div class="form-hint">Escolha como a interface lida com temas claros e escuros.</div>
             <select id="theme-select" class="form-select">
-              <option value="system">System Default</option>
-              <option value="light">Light Mode</option>
-              <option value="dark">Dark Mode</option>
+              <option value="system">Padrão do sistema</option>
+              <option value="light">Claro</option>
+              <option value="dark">Escuro</option>
             </select>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Accent Focus Color</label>
+            <label class="form-label">Cor de destaque</label>
             <div class="form-hint">
-              Pick a custom highlight token for active components, key metric fields, and buttons.
+              Escolha a cor de destaque de botões, campos e componentes ativos.
             </div>
             <div class="accent-picker-grid">
               <button
                 type="button"
                 class="color-dot"
-                data-color="210, 100%, 50%"
-                aria-label="Accent color: Blue"
+                data-color="161, 84%, 25%"
+                aria-label="Accent color: Verde Valor"
                 aria-pressed="false"
-                style="background-color: hsl(210, 100%, 50%)"
+                style="background-color: hsl(161, 84%, 25%)"
               ></button>
               <!-- Blue -->
               <button
@@ -142,7 +140,7 @@
           </div>
         </div>
 
-        <!-- Encryption Passphrase Section -->
+        <!-- Frase de criptografia Section -->
         <section class="options-section">
           <h2 class="section-title">
             <svg
@@ -160,12 +158,13 @@
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
-            Encryption Passphrase
+            Frase de criptografia
           </h2>
           <div class="form-group">
-            <label class="form-label" for="passphrase-input">Passphrase</label>
+            <label class="form-label" for="passphrase-input">Frase</label>
             <p class="form-hint">
-              Required to encrypt API keys at rest. Enter it each browser session to unlock.
+              Necessária para criptografar chaves salvas. Digite a cada sessão do navegador para
+              desbloquear.
             </p>
             <div class="input-row">
               <input
@@ -233,14 +232,14 @@
           AI Providers
         </h2>
         <p class="form-hint">
-          Transcription and summarization can use different OpenAI-compatible providers. Picking a
-          profile fills the fields below — everything stays editable for custom endpoints.
+          Transcrição e resumo podem usar providers diferentes compatíveis com o formato OpenAI.
+          Escolher um perfil preenche os campos — tudo continua editável para endpoints custom.
         </p>
 
         <div class="provider-block">
-          <h3 class="provider-block-title">Transcription (Speech-to-Text)</h3>
+          <h3 class="provider-block-title">Transcrição (fala → texto)</h3>
           <div class="form-group">
-            <label class="form-label" for="transcription-profile">Profile</label>
+            <label class="form-label" for="transcription-profile">Perfil</label>
             <select id="transcription-profile" class="form-select">
               <option value="whisper-local">Local Whisper (faster-whisper)</option>
               <option value="zai">Z.ai GLM</option>
@@ -259,8 +258,8 @@
             />
           </div>
           <div class="form-group">
-            <label class="form-label" for="transcription-api-key">API Key</label>
-            <p class="form-hint">Leave empty for a local server without authentication.</p>
+            <label class="form-label" for="transcription-api-key">Chave de API</label>
+            <p class="form-hint">Deixe vazio para um servidor local sem autenticação.</p>
             <div class="input-row">
               <input
                 type="password"
@@ -296,7 +295,7 @@
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="transcription-model">Model</label>
+            <label class="form-label" for="transcription-model">Modelo</label>
             <input
               type="text"
               id="transcription-model"
@@ -305,14 +304,14 @@
               spellcheck="false"
             />
           </div>
-          <button id="transcription-test" class="btn" type="button">Test connection</button>
+          <button id="transcription-test" class="btn" type="button">Testar conexão</button>
           <div id="transcription-test-status" class="passphrase-status"></div>
         </div>
 
         <div class="provider-block">
-          <h3 class="provider-block-title">Summary (Chat)</h3>
+          <h3 class="provider-block-title">Resumo (LLM)</h3>
           <div class="form-group">
-            <label class="form-label" for="summary-profile">Profile</label>
+            <label class="form-label" for="summary-profile">Perfil</label>
             <select id="summary-profile" class="form-select">
               <option value="whisper-local">Local Whisper (faster-whisper)</option>
               <option value="zai">Z.ai GLM</option>
@@ -331,7 +330,7 @@
             />
           </div>
           <div class="form-group">
-            <label class="form-label" for="summary-api-key">API Key</label>
+            <label class="form-label" for="summary-api-key">Chave de API</label>
             <div class="input-row">
               <input
                 type="password"
@@ -367,7 +366,7 @@
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" for="summary-model">Model</label>
+            <label class="form-label" for="summary-model">Modelo</label>
             <input
               type="text"
               id="summary-model"
@@ -376,12 +375,12 @@
               spellcheck="false"
             />
           </div>
-          <button id="summary-test" class="btn" type="button">Test connection</button>
+          <button id="summary-test" class="btn" type="button">Testar conexão</button>
           <div id="summary-test-status" class="passphrase-status"></div>
         </div>
       </section>
 
-      <!-- API Keys Section -->
+      <!-- Chaves de API (legado) Section -->
       <section class="options-section">
         <h2 class="section-title">
           <svg
@@ -400,14 +399,14 @@
             <path d="m21 2-9.6 9.6" />
             <circle cx="7.5" cy="15.5" r="5.5" />
           </svg>
-          API Keys
+          Chaves de API (legado)
         </h2>
 
         <div class="form-group">
-          <label class="form-label">OpenAI API Key</label>
+          <label class="form-label">Chave de API da OpenAI</label>
           <p class="form-hint">
-            Legacy encrypted vault key. The OpenAI profile in AI Providers falls back to it when its
-            own API key field is empty.
+            Chave legada no cofre criptografado. O perfil OpenAI em AI Providers usa esta chave
+            quando o próprio campo está vazio.
           </p>
           <div class="input-row">
             <input type="password" id="openai-key" class="form-input" placeholder="sk-..." />
@@ -458,14 +457,12 @@
               d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"
             />
           </svg>
-          AI Processing
+          Processamento de IA
         </h2>
 
         <div class="form-group">
-          <label class="form-label">Summarization Interval</label>
-          <p class="form-hint">
-            Choose how often AI summarizes the meeting transcript (5–15 minutes)
-          </p>
+          <label class="form-label">Intervalo do resumo</label>
+          <p class="form-hint">Com que frequência a IA resume a transcrição (5–15 minutos)</p>
           <div class="slider-row">
             <input
               type="range"
@@ -482,9 +479,9 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Voice Activity Threshold</label>
+          <label class="form-label">Limiar de detecção de voz</label>
           <p class="form-hint">
-            Lower values detect quieter voices. Higher values filter more silence.
+            Valores baixos detectam vozes mais baixas; altos filtram mais silêncio.
           </p>
 
           <div class="slider-row">
@@ -502,7 +499,7 @@
         </div>
       </section>
 
-      <!-- Features Section -->
+      <!-- Funcionalidades Section -->
       <section class="options-section">
         <h2 class="section-title">
           <svg
@@ -521,15 +518,15 @@
             <circle cx="12" cy="12" r="6" />
             <circle cx="12" cy="12" r="2" />
           </svg>
-          Features
+          Funcionalidades
         </h2>
 
         <div class="toggle-group">
           <div class="toggle-item">
             <div>
-              <div class="toggle-label">Late Joiner Briefing</div>
+              <div class="toggle-label">Briefing de atrasados</div>
               <div class="toggle-hint">
-                Automatically generate a private local context brief when someone joins late
+                Gera automaticamente um briefing privado quando alguém entra atrasado
               </div>
             </div>
             <label class="toggle-switch">
@@ -540,16 +537,16 @@
 
           <div class="toggle-item">
             <div>
-              <div class="toggle-label">Public Chat Briefings</div>
+              <div class="toggle-label">Briefings no chat público</div>
               <div class="toggle-hint">
-                Also post late-joiner briefs into Google Meet chat for everyone to see
+                Também envia o briefing para o chat do Google Meet (visível a todos)
               </div>
             </div>
             <label class="toggle-switch">
               <input
                 type="checkbox"
                 id="public-late-joiner-chat-toggle"
-                aria-label="Public Chat Briefings"
+                aria-label="Briefings no chat público"
               />
               <span class="toggle-slider"></span>
             </label>
@@ -557,8 +554,8 @@
 
           <div class="toggle-item">
             <div>
-              <div class="toggle-label">Topic Detection</div>
-              <div class="toggle-hint">Automatically detect and track discussion topics</div>
+              <div class="toggle-label">Detecção de tópicos</div>
+              <div class="toggle-hint">Detecta e acompanha os tópicos da discussão</div>
             </div>
             <label class="toggle-switch">
               <input type="checkbox" id="topic-toggle" checked />
@@ -568,8 +565,8 @@
 
           <div class="toggle-item">
             <div>
-              <div class="toggle-label">Decision Detection</div>
-              <div class="toggle-hint">Extract decisions made during the meeting</div>
+              <div class="toggle-label">Detecção de decisões</div>
+              <div class="toggle-hint">Extrai decisões tomadas na reunião</div>
             </div>
             <label class="toggle-switch">
               <input type="checkbox" id="decision-toggle" checked />
@@ -579,8 +576,8 @@
 
           <div class="toggle-item">
             <div>
-              <div class="toggle-label">Action Item Extraction</div>
-              <div class="toggle-hint">Detect tasks, owners, and deadlines</div>
+              <div class="toggle-label">Extração de itens de ação</div>
+              <div class="toggle-hint">Detecta tarefas, responsáveis e prazos</div>
             </div>
             <label class="toggle-switch">
               <input type="checkbox" id="action-toggle" checked />
@@ -590,8 +587,8 @@
 
           <div class="toggle-item">
             <div>
-              <div class="toggle-label">Sentiment Analysis</div>
-              <div class="toggle-hint">Track meeting mood and engagement</div>
+              <div class="toggle-label">Análise de sentimento</div>
+              <div class="toggle-hint">Acompanha o clima e o engajamento da reunião</div>
             </div>
             <label class="toggle-switch">
               <input type="checkbox" id="sentiment-toggle" checked />
@@ -601,14 +598,14 @@
 
           <div class="toggle-item">
             <div>
-              <div class="toggle-label">Transcript Refinement</div>
+              <div class="toggle-label">Refino da transcrição</div>
               <div class="toggle-hint">
-                Use AI to clean up filler words and correct transcription errors (uses an additional
-                API call per audio chunk)
+                Usa IA para limpar vícios de fala e corrigir erros de transcrição (uma chamada extra
+                de API por trecho de áudio)
               </div>
             </div>
             <label class="toggle-switch">
-              <input type="checkbox" id="refinement-toggle" aria-label="Transcript Refinement" />
+              <input type="checkbox" id="refinement-toggle" aria-label="Refino da transcrição" />
               <span class="toggle-slider"></span>
             </label>
           </div>
@@ -642,7 +639,7 @@
 
         <div class="form-group">
           <label class="form-label" for="vb-base-url">Base URL</label>
-          <p class="form-hint">e.g. https://memory.valor.digital — leave empty to disable</p>
+          <p class="form-hint">ex.: https://valorbrain-api.valor.digital — vazio desativa</p>
           <input
             type="text"
             id="vb-base-url"
@@ -655,7 +652,7 @@
 
         <div class="form-group">
           <label class="form-label" for="vb-api-token">API Token</label>
-          <p class="form-hint">Bearer token issued to your tenant</p>
+          <p class="form-hint">Token Bearer emitido para seu tenant</p>
           <div class="input-row">
             <input
               type="password"
@@ -693,7 +690,7 @@
 
         <div class="form-group">
           <label class="form-label" for="vb-tenant-id">Tenant ID</label>
-          <p class="form-hint">UUID of your ValorBrain tenant</p>
+          <p class="form-hint">UUID do seu tenant ValorBrain</p>
           <input
             type="text"
             id="vb-tenant-id"
@@ -723,7 +720,7 @@
 
         <div class="form-group">
           <button id="vb-test-connection-btn" class="btn" aria-label="Test ValorBrain connection">
-            Test connection
+            Testar conexão
           </button>
           <div id="vb-test-status" class="form-hint" style="margin-top: 8px"></div>
         </div>
@@ -750,7 +747,7 @@
           </svg>
           Storage
         </h2>
-        <p class="form-hint">View and manage local storage used by Late Meet.</p>
+        <p class="form-hint">Veja e gerencie o armazenamento local do ValorBrain Meet.</p>
         <div id="storage-dashboard-container"></div>
       </section>
 
@@ -772,7 +769,7 @@
             <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
             <line x1="1" y1="10" x2="23" y2="10" />
           </svg>
-          API Cost & Token Usage
+          Custo de API e uso de tokens
         </h2>
         <p class="form-hint">
           Track and estimate AI token usage and transcription audio seconds. Costs are estimated
@@ -781,7 +778,7 @@
         <div id="api-usage-dashboard-container"></div>
       </section>
 
-      <!-- Data Management Section -->
+      <!-- Dados Section -->
       <section class="options-section">
         <h2 class="section-title">
           <svg
@@ -799,19 +796,19 @@
             <path d="M3 5V19A9 3 0 0 0 21 19V5"></path>
             <path d="M3 12A9 3 0 0 0 21 12"></path>
           </svg>
-          Data Management
+          Dados
         </h2>
         <div class="form-group">
-          <div class="form-label">Clear Local Storage</div>
+          <div class="form-label">Limpar armazenamento local</div>
           <p class="form-hint">
-            Permanently delete all saved sessions, API keys, and settings from this browser.
+            Apaga definitivamente sessões salvas, chaves e configurações deste navegador.
           </p>
           <button
             id="clear-data-btn"
             class="save-btn"
             style="background-color: #ef4444; margin-top: 10px"
           >
-            <span class="save-text">Clear All Data</span>
+            <span class="save-text">Apagar todos os dados</span>
             <span class="save-icon">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -862,7 +859,7 @@
       </div>
 
       <footer class="options-footer">
-        <p>AI Meeting Copilot v<span id="version-display">1.1.0</span> — Built with Precision</p>
+        <p>ValorBrain Meet v<span id="version-display">1.1.0</span> — pela Valor Digital</p>
       </footer>
     </div>
 

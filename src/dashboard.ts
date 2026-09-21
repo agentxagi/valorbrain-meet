@@ -359,7 +359,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return new Promise((resolve, reject) => {
       chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
         if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message || "Unknown tab capture error"));
+          reject(new Error(chrome.runtime.lastError.message || "Erro de captura da aba"));
           return;
         }
 
@@ -433,7 +433,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         setTimeout(() => {
           if (audioBtn) {
             audioBtn.innerHTML =
-              '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" style="margin-right: 6px;"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Start Audio';
+              '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" style="margin-right: 6px;"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Iniciar áudio';
           }
         }, 3000);
       }
@@ -451,7 +451,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       audioBtn.classList.remove("active");
       audioBtn.disabled = false;
       audioBtn.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" style="margin-right: 6px;"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Start Audio';
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" style="margin-right: 6px;"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Iniciar áudio';
     }
   }
 
@@ -480,7 +480,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       setAudioBtnActive(state.audioActive || false);
     } else {
       if (statusDot) statusDot.classList.remove("active");
-      if (statusText) statusText.textContent = "No active meeting";
+      if (statusText) statusText.textContent = "Nenhuma reunião ativa";
       setAudioBtnActive(false);
       if (timerInterval) {
         window.clearInterval(timerInterval);
@@ -501,7 +501,7 @@ document.addEventListener("DOMContentLoaded", async () => {
               const timestampChunk = item.chunkId
                 ? `<button type="button" class="timestamp-link" data-chunk-id="${escapeHtml(
                     item.chunkId,
-                  )}" aria-label="Jump to transcript at ${label}">${label}</button>`
+                  )}" aria-label="Ir para a transcrição em ${label}">${label}</button>`
                 : `<span class="timestamp-text">${label}</span>`;
               return `
               <div class="summary-item">
@@ -512,7 +512,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             })
             .join("");
       } else {
-        summaryEl.textContent = state.summary || "Waiting for conversation to begin...";
+        summaryEl.textContent = state.summary || "Aguardando a conversa começar...";
       }
     }
 
@@ -607,10 +607,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const list = document.getElementById("dash-insights-list");
     if (!list) return;
     if (!insights || insights.length === 0) {
-      list.innerHTML = getEmptyStateHTML(
-        "Insights will appear as the conversation progresses",
-        true,
-      );
+      list.innerHTML = getEmptyStateHTML("Os insights aparecem conforme a conversa avança", true);
       return;
     }
     list.innerHTML = insights
@@ -638,7 +635,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const list = document.getElementById("dash-unresolved-list");
     if (!list) return;
     if (!discussions || discussions.length === 0) {
-      list.innerHTML = getEmptyStateHTML("No unresolved discussions yet", true);
+      list.innerHTML = getEmptyStateHTML("Nenhum assunto em aberto ainda", true);
       return;
     }
     list.innerHTML = discussions.map((d) => `<li>${escapeHtml(d || "")}</li>`).join("");
@@ -648,7 +645,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const list = document.getElementById("dash-contradictions-list");
     if (!list) return;
     if (!contradictions || contradictions.length === 0) {
-      list.innerHTML = getEmptyStateHTML("No contradictions detected", true);
+      list.innerHTML = getEmptyStateHTML("Nenhuma contradição detectada", true);
       return;
     }
     list.innerHTML = contradictions
@@ -696,7 +693,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const container = document.getElementById("dash-decisions-list");
     if (!container) return;
     if (!decisions || decisions.length === 0) {
-      container.innerHTML = getEmptyStateHTML("No decisions detected yet");
+      container.innerHTML = getEmptyStateHTML("Nenhuma decisão detectada ainda");
       return;
     }
     container.innerHTML = "";
@@ -770,7 +767,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const copyBtn = document.createElement("button");
       copyBtn.type = "button";
       copyBtn.className = "copy-btn";
-      copyBtn.setAttribute("aria-label", "Copy decision to clipboard");
+      copyBtn.setAttribute("aria-label", "Copiar decisão");
       copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>`;
       copyBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -780,10 +777,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
         navigator.clipboard
           .writeText(copyText)
-          .then(() => showToast("Copied to clipboard!", "success"))
+          .then(() => showToast("Copiado!", "success"))
           .catch((err) => {
-            console.error("Failed to copy decision: ", err);
-            showToast("Failed to copy!", "error");
+            console.error("Falha ao copiar decisão: ", err);
+            showToast("Falha ao copiar!", "error");
           });
       });
 
@@ -798,7 +795,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const container = document.getElementById("dash-actions-list");
     if (!container) return;
     if (!actions || actions.length === 0) {
-      container.innerHTML = getEmptyStateHTML("No action items detected yet");
+      container.innerHTML = getEmptyStateHTML("Nenhum item de ação detectado ainda");
       return;
     }
 
@@ -828,7 +825,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       checkbox.className = "action-checkbox";
       checkbox.id = cbId;
       checkbox.checked = done;
-      checkbox.setAttribute("aria-label", "Mark task complete");
+      checkbox.setAttribute("aria-label", "Marcar tarefa como concluída");
       checkbox.dataset.task = task;
       checkbox.dataset.meetingId = currentMeetingId;
 
@@ -910,7 +907,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const copyBtn = document.createElement("button");
       copyBtn.type = "button";
       copyBtn.className = "copy-btn";
-      copyBtn.setAttribute("aria-label", "Copy action item to clipboard");
+      copyBtn.setAttribute("aria-label", "Copiar item de ação");
       copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>`;
       copyBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -924,10 +921,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
         navigator.clipboard
           .writeText(copyText)
-          .then(() => showToast("Copied to clipboard!", "success"))
+          .then(() => showToast("Copiado!", "success"))
           .catch((err) => {
-            console.error("Failed to copy action item: ", err);
-            showToast("Failed to copy!", "error");
+            console.error("Falha ao copiar item de ação: ", err);
+            showToast("Falha ao copiar!", "error");
           });
       });
 
@@ -943,7 +940,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const container = document.getElementById("dash-participants-list");
     if (!container) return;
     if (!participants || participants.length === 0) {
-      container.innerHTML = getEmptyStateHTML("No participants detected");
+      container.innerHTML = getEmptyStateHTML("Nenhum participante detectado");
       return;
     }
 
@@ -1011,7 +1008,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!container) return;
     if (!timeline || timeline.length === 0) {
       container.innerHTML = container.innerHTML = getEmptyStateHTML(
-        "Timeline will build as the meeting progresses",
+        "A linha do tempo se constrói conforme a reunião avança",
       );
       return;
     }
@@ -1099,8 +1096,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 data-speaker="${speaker}" 
                 data-time="${timeStr}" 
                 data-message="${text}" 
-                title="Copy message to clipboard" 
-                aria-label="Copy message to clipboard">
+                title="Copiar mensagem" 
+                aria-label="Copiar mensagem">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
         </button>
       </div>
@@ -1514,14 +1511,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("export-md-btn")?.addEventListener("click", async () => {
     try {
       const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-      if (!state) throw new Error("No meeting data available");
+      if (!state) throw new Error("Sem dados de reunião");
       const markdown = generateMarkdown(state);
       const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.md`;
       downloadFile(markdown, filename, "text/markdown");
-      showToast("Downloaded as .md file", "success");
+      showToast("Baixado como .md", "success");
     } catch (err) {
       const e = err as Error;
-      showToast("Failed to export: " + (e.message || String(e)), "error");
+      showToast("Falha ao exportar: " + (e.message || String(e)), "error");
     } finally {
       exportDropdown?.setAttribute("hidden", "");
       exportBtn?.setAttribute("aria-expanded", "false");
@@ -1532,14 +1529,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("export-txt-btn")?.addEventListener("click", async () => {
     try {
       const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-      if (!state) throw new Error("No meeting data available");
+      if (!state) throw new Error("Sem dados de reunião");
       const textContent = generatePlainText(state);
       const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.txt`;
       downloadFile(textContent, filename, "text/plain");
-      showToast("Downloaded as .txt file", "success");
+      showToast("Baixado como .txt", "success");
     } catch (err) {
       const e = err as Error;
-      showToast("Failed to export: " + (e.message || String(e)), "error");
+      showToast("Falha ao exportar: " + (e.message || String(e)), "error");
     } finally {
       exportDropdown?.setAttribute("hidden", "");
       exportBtn?.setAttribute("aria-expanded", "false");
@@ -1550,12 +1547,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
       if (!state) {
-        showToast("No meeting data available", "error");
+        showToast("Sem dados de reunião", "error");
         return;
       }
       const markdown = generateMarkdown(state);
       await navigator.clipboard.writeText(markdown);
-      showToast("Copied to clipboard", "success");
+      showToast("Copiado para a área de transferência", "success");
     } catch (err) {
       console.error(err);
       showToast("Failed to copy to clipboard", "error");
@@ -1568,7 +1565,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("export-json-btn")?.addEventListener("click", async () => {
     try {
       const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-      if (!state) throw new Error("No meeting data available");
+      if (!state) throw new Error("Sem dados de reunião");
       const sessionData = {
         exportedAt: new Date().toISOString(),
         meetingId: state.meetingId || "unknown",
@@ -1588,7 +1585,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       showToast("Downloaded as .json backup", "success");
     } catch (err) {
       const e = err as Error;
-      showToast("Failed to export: " + (e.message || String(e)), "error");
+      showToast("Falha ao exportar: " + (e.message || String(e)), "error");
     } finally {
       exportDropdown?.setAttribute("hidden", "");
       exportBtn?.setAttribute("aria-expanded", "false");
@@ -1630,32 +1627,32 @@ document.addEventListener("DOMContentLoaded", async () => {
             <div class="session-item-header">
               <div>
                 <div class="session-item-date">${escapeHtml(date)} at ${escapeHtml(time)}</div>
-                <div class="session-item-id" title="${escapeHtml(s.meetingUrl || "")}">${escapeHtml(s.meetingUrl || s.meetingId || "Unknown Meeting")}</div>
+                <div class="session-item-id" title="${escapeHtml(s.meetingUrl || "")}">${escapeHtml(s.meetingUrl || s.meetingId || "Reunião desconhecida")}</div>
               </div>
               <div class="session-item-meta">
                 <span>${formatDuration((s as State & { duration?: number }).duration || 0)}</span>
               </div>
             </div>
-            <div class="session-item-summary" style="cursor: pointer;" title="Click to expand/collapse summary">${escapeHtml(s.summary || "No summary available")}</div>
+            <div class="session-item-summary" style="cursor: pointer;" title="Click to expand/collapse summary">${escapeHtml(s.summary || "Sem resumo disponível")}</div>
             <div class="session-item-stats">
               <span>${topicCount} topics</span>
               <span>${decisionCount} decisions</span>
               <span>${actionCount} actions</span>
             </div>
             <div class="session-item-actions">
-              <button class="session-export-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Export as Markdown">
+              <button class="session-export-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Exportar como Markdown">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
                 Export
               </button>
-              <button class="session-export-btn session-download-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Download as Markdown File">
+              <button class="session-export-btn session-download-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Baixar arquivo Markdown">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
                 Download
               </button>
-              <button class="session-export-btn vb-send-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Send this session to ValorBrain">
+              <button class="session-export-btn vb-send-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Enviar esta sessão para o ValorBrain">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m16 16-4-4-4 4"></path></svg>
                 <span class="vb-send-label">Send to ValorBrain</span>
               </button>
-              <button class="session-delete-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Delete session">
+              <button class="session-delete-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Excluir sessão">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
                 Delete
               </button>
@@ -1694,20 +1691,20 @@ document.addEventListener("DOMContentLoaded", async () => {
         btn.classList.remove("vb-state-sending", "vb-state-sent", "vb-state-error");
         if (state === "idle") {
           btn.disabled = false;
-          if (label) label.textContent = "Send to ValorBrain";
+          if (label) label.textContent = "Enviar para o ValorBrain";
         } else if (state === "sending") {
           btn.disabled = true;
           btn.classList.add("vb-state-sending");
-          if (label) label.textContent = "Sending...";
+          if (label) label.textContent = "Enviando...";
         } else if (state === "sent") {
           btn.disabled = true;
           btn.classList.add("vb-state-sent");
-          if (label) label.textContent = message || "Sent ✓";
+          if (label) label.textContent = message || "Enviado ✓";
         } else {
           // Error keeps the button clickable as an explicit retry.
           btn.disabled = false;
           btn.classList.add("vb-state-error");
-          if (label) label.textContent = "Retry send";
+          if (label) label.textContent = "Tentar novamente";
         }
       };
 
@@ -1734,7 +1731,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             result = {
               ok: false,
               kind: "network",
-              error: e.message || "Send failed",
+              error: e.message || "Falha no envio",
               retryable: true,
             };
           }
@@ -1742,13 +1739,13 @@ document.addEventListener("DOMContentLoaded", async () => {
           if (result?.ok) {
             setVbButtonState(btn, "sent");
             showToast(
-              result.docRef ? `Sent to ValorBrain (${result.docRef})` : "Sent to ValorBrain",
+              result.docRef ? `Sent to ValorBrain (${result.docRef})` : "Enviado ao ValorBrain",
               "success",
             );
           } else {
             setVbButtonState(btn, "error");
             showToast(
-              `ValorBrain error: ${(result as VbSendResult & { error?: string })?.error || "Send failed"}`,
+              `ValorBrain error: ${(result as VbSendResult & { error?: string })?.error || "Falha no envio"}`,
               "error",
             );
           }
@@ -1821,7 +1818,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     navigator.clipboard
       .writeText(md)
       .then(() => {
-        showToast("Session exported to clipboard", "success");
+        showToast("Sessão copiada para a área de transferência", "success");
       })
       .catch((err) => {
         const e = err as Error;
@@ -1835,7 +1832,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const dateVal = session.savedAt || session.startTime || Date.now();
     const filename = `meeting-summary-${new Date(dateVal).toISOString().slice(0, 10)}.md`;
     downloadFile(md, filename, "text/markdown");
-    showToast("Downloaded as .md file", "success");
+    showToast("Baixado como .md", "success");
   }
 
   // ——— Transcript Search ———
@@ -2155,10 +2152,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     navigator.clipboard
       .writeText(copyText)
-      .then(() => showToast("Copied to clipboard!", "success"))
+      .then(() => showToast("Copiado!", "success"))
       .catch((err) => {
         console.error("Failed to copy transcript message:", err);
-        showToast("Failed to copy!", "error");
+        showToast("Falha ao copiar!", "error");
       });
   });
 
@@ -2167,12 +2164,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       const summaryEl = document.getElementById("dash-summary");
       const text = summaryEl?.textContent?.trim() || "";
-      if (!text || text === "Waiting for conversation to begin...") {
-        showToast("No summary available to copy", "error");
+      if (!text || text === "Aguardando a conversa começar...") {
+        showToast("Sem resumo para copiar", "error");
         return;
       }
       await navigator.clipboard.writeText(text);
-      showToast("Summary copied to clipboard!", "success");
+      showToast("Resumo copiado!", "success");
     } catch {
       showToast("Failed to copy summary", "error");
     }
@@ -2186,16 +2183,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     headerMdBtn.addEventListener("click", async () => {
       try {
         const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-        if (!state) throw new Error("No meeting data available");
+        if (!state) throw new Error("Sem dados de reunião");
 
         const markdown = generateMarkdown(state);
         const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.md`;
 
         downloadFile(markdown, filename, "text/markdown");
-        showToast("Downloaded as .md file", "success");
+        showToast("Baixado como .md", "success");
       } catch (err) {
         showToast(
-          "Failed to export: " + (err instanceof Error ? err.message : String(err)),
+          "Falha ao exportar: " + (err instanceof Error ? err.message : String(err)),
           "error",
         );
       }

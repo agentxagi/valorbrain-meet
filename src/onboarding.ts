@@ -11,7 +11,7 @@ export async function renderOnboarding(container: HTMLElement) {
   container.hidden = false;
   container.innerHTML = `
     <div class="onboard">
-      <div class="onboard-card" role="dialog" aria-modal="true" aria-label="Late Meet Onboarding">
+      <div class="onboard-card" role="dialog" aria-modal="true" aria-label="Onboarding do ValorBrain Meet">
         <div id="onboard-content"></div>
         <div class="onboard-footer">
           <button id="onboard-skip" class="btn">Skip</button>
@@ -32,37 +32,37 @@ export async function renderOnboarding(container: HTMLElement) {
   const steps = [
     {
       id: "welcome",
-      title: "Welcome to Late Meet",
+      title: "Bem-vindo ao ValorBrain Meet",
       html: `
-        <h2>Welcome to Late Meet</h2>
-        <p>Catch up instantly when joining meetings late. Local-first, privacy-focused, and easy to use.</p>
+        <h2>Bem-vindo ao ValorBrain Meet</h2>
+        <p>Para quem entra atrasado: local-first, focado em privacidade e simples de usar.</p>
       `,
     },
     {
       id: "how-it-works",
-      title: "How it works",
+      title: "Como funciona",
       html: `
-        <h2>How it works</h2>
+        <h2>Como funciona</h2>
         <ol>
-          <li>Join Google Meet</li>
-          <li>Start the Copilot to capture audio</li>
-          <li>Get real-time transcripts and summaries</li>
-          <li>Use "Catch Me Up" to get a quick briefing</li>
+          <li>Entre no Google Meet</li>
+          <li>Inicie o Copilot para capturar o áudio</li>
+          <li>Receba transcrição e resumos em tempo real</li>
+          <li>Use o "Catch Me Up" para um briefing rápido</li>
         </ol>
       `,
     },
     {
       id: "api-keys",
-      title: "API Keys",
+      title: "Chaves e providers",
       html: `
-        <h2>API Keys</h2>
-        <p>Provide your OpenAI API key to enable summarization features. Other providers (local Whisper, Z.ai GLM, custom endpoints) are configured in Settings → AI Providers.</p>
+        <h2>Chaves e providers</h2>
+        <p>Configure seus AI Providers em Configurações (Whisper local, Z.ai GLM, OpenAI ou custom). A chave OpenAI abaixo é opcional e fica no cofre criptografado.</p>
         <div class="form-group">
-          <label for="onb-passphrase">Encryption Passphrase</label>
-          <input id="onb-passphrase" type="password" class="form-input" placeholder="Create or enter passphrase..." />
+          <label for="onb-passphrase">Frase de criptografia</label>
+          <input id="onb-passphrase" type="password" class="form-input" placeholder="Crie ou digite sua frase..." />
         </div>
         <div class="form-group">
-          <label for="onb-openai">OpenAI API Key</label>
+          <label for="onb-openai">Chave de API da OpenAI (opcional)</label>
           <input id="onb-openai" class="form-input" placeholder="sk-xxxx" />
           <button id="onb-validate-openai" class="btn">Validate</button>
           <div id="onb-openai-status" class="form-note"></div>
@@ -71,10 +71,10 @@ export async function renderOnboarding(container: HTMLElement) {
     },
     {
       id: "permissions",
-      title: "Permissions",
+      title: "Permissões",
       html: `
-        <h2>Permissions</h2>
-        <p>Late Meet requires permission to capture tab audio and store data locally. All data stays on your device.</p>
+        <h2>Permissões</h2>
+        <p>O ValorBrain Meet captura o áudio da aba e guarda tudo localmente. Nenhum dado sai do seu dispositivo sem um provider configurado.</p>
         <ul>
           <li>Tab capture: available</li>
           <li>Local storage: available</li>
@@ -83,22 +83,22 @@ export async function renderOnboarding(container: HTMLElement) {
     },
     {
       id: "quick-start",
-      title: "Quick Start",
+      title: "Começo rápido",
       html: `
-        <h2>Quick Start</h2>
+        <h2>Começo rápido</h2>
         <ol>
-          <li>Join a Google Meet</li>
-          <li>Open the Late Meet popup and start Copilot</li>
-          <li>Use "Catch Me Up" for summaries</li>
+          <li>Entre em um Google Meet</li>
+          <li>Abra o popup do ValorBrain Meet e inicie o Copilot</li>
+          <li>Use o "Catch Me Up" para resumos rápidos</li>
         </ol>
       `,
     },
     {
       id: "complete",
-      title: "All set!",
+      title: "Tudo pronto!",
       html: `
-        <h2>You're ready</h2>
-        <p>You're all set. Open the dashboard to get started.</p>
+        <h2>Tudo pronto</h2>
+        <p>Configuração concluída. Abra o dashboard para começar.</p>
         <div class="onboard-actions">
           <button id="onb-open-dashboard" class="btn btn-primary">Open Dashboard</button>
           <button id="onb-finish" class="btn">Finish</button>
@@ -139,12 +139,12 @@ export async function renderOnboarding(container: HTMLElement) {
 
       function unlockFailureMessage(reason: "missing" | "wrong"): string {
         return reason === "missing"
-          ? "Enter an encryption passphrase to save this API key."
-          : "Incorrect passphrase — please try again.";
+          ? "Digite a frase de criptografia para salvar esta chave."
+          : "Frase incorreta — tente novamente.";
       }
 
       valOpenBtn.addEventListener("click", async () => {
-        openaiStatus.textContent = "Validating...";
+        openaiStatus.textContent = "Validando...";
         const key = openaiInput.value.trim();
         try {
           const ok = await validateProviderConnection(providerConfigFromProfile("openai", key));
@@ -155,12 +155,12 @@ export async function renderOnboarding(container: HTMLElement) {
               return;
             }
             await saveApiCredentials({ openai_api_key: key });
-            openaiStatus.textContent = "Valid OpenAI key — saved.";
+            openaiStatus.textContent = "Chave OpenAI válida — salva.";
           } else {
-            openaiStatus.textContent = "Invalid OpenAI key.";
+            openaiStatus.textContent = "Chave OpenAI inválida.";
           }
         } catch {
-          openaiStatus.textContent = "Validation error.";
+          openaiStatus.textContent = "Erro de validação.";
         }
       });
     }
@@ -199,7 +199,7 @@ export async function renderOnboarding(container: HTMLElement) {
   });
 
   skipBtn.addEventListener("click", async () => {
-    if (confirm("Skip the onboarding? You can always view it later in Settings.")) {
+    if (confirm("Pular o onboarding? Você pode vê-lo depois em Configurações.")) {
       await chrome.storage.local.set({ onboardingCompleted: true });
       container.hidden = true;
       location.href = "options.html";

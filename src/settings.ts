@@ -11,7 +11,7 @@ export interface Settings {
 
 const DEFAULT_SETTINGS: Settings = {
   theme: "system",
-  accent: "210, 100%, 50%",
+  accent: "161, 84%, 25%",
 };
 
 function isValidHslComponent(hue: string, sat: string, light: string): boolean {

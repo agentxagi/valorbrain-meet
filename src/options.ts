@@ -68,7 +68,7 @@ type BooleanSettingKey = {
  * giving users instant visual feedback as they interact with the theme controls.
  * When `theme` is `"system"`, the active theme is resolved from the OS preference.
  * @param theme - The desired theme: `"system"`, `"light"`, or `"dark"`.
- * @param accent - A CSS HSL string (e.g. `"210, 100%, 50%"`) for the accent color.
+ * @param accent - A CSS HSL string (e.g. `"161, 84%, 25%"`) for the accent color.
  */
 function applyThemePreview(theme: "system" | "light" | "dark", accent: string) {
   const root = document.documentElement;
@@ -260,12 +260,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ——— Clear Data ———
   document.getElementById("clear-data-btn")?.addEventListener("click", async () => {
-    if (confirm("Are you sure you want to clear all data? This cannot be undone.")) {
+    if (confirm("Apagar todos os dados? Esta ação não pode ser desfeita.")) {
       await chrome.storage.local.clear();
       if (typeof chrome !== "undefined" && chrome.storage?.session) {
         await chrome.storage.session.clear();
       }
-      alert("All data cleared successfully. The page will now reload.");
+      alert("Dados apagados. A página vai recarregar.");
       globalThis.location.reload();
     }
   });
@@ -293,7 +293,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  let selectedAccentColor = settings.accent || "210, 100%, 50%";
+  let selectedAccentColor = settings.accent || "161, 84%, 25%";
 
   // ——— NEW: Theme & Color Initializations ———
   const themeSelect = document.getElementById("theme-select") as HTMLSelectElement | null;
@@ -400,13 +400,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       setStatusMessage(
         passphraseStatus,
         "success",
-        "Unlocked — encryption key is active in memory",
+        "Desbloqueado — chave de criptografia ativa na memória",
       );
     } else {
       setStatusMessage(
         passphraseStatus,
         "danger",
-        "Locked — enter passphrase to unlock credential encryption",
+        "Bloqueado — digite a frase para desbloquear a criptografia",
       );
     }
   }
@@ -422,7 +422,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (isUnlocked()) return;
     const typed = passphraseInput?.value ?? "";
     if (!typed) {
-      setStatusMessage(passphraseStatus, "danger", "Please enter a passphrase");
+      setStatusMessage(passphraseStatus, "danger", "Digite a frase de criptografia");
       return;
     }
 
@@ -440,7 +440,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       setStatusMessage(
         passphraseStatus,
         "danger",
-        "Wrong passphrase — could not decrypt stored credentials",
+        "Frase incorreta — não foi possível descriptografar as credenciais",
       );
       return;
     }
@@ -547,7 +547,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (!isOpenAIValid) {
           if (status) {
             status.style.color = "red";
-            status.textContent = "Invalid OpenAI API key. Please check and try again.";
+            status.textContent = "Chave da OpenAI inválida. Verifique e tente novamente.";
             status.classList.add("visible");
             setTimeout(() => status.classList.remove("visible"), 4000);
           }
@@ -568,8 +568,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (status) {
         status.style.color = credentialsSaved ? "" : "var(--accent-color, #22C55E)";
         status.textContent = credentialsSaved
-          ? "Settings saved successfully!"
-          : "Settings saved. Unlock credential encryption to update API keys.";
+          ? "Configurações salvas com sucesso!"
+          : "Configurações salvas. Desbloqueie a criptografia para atualizar as chaves.";
         status.classList.add("visible");
 
         setTimeout(() => {
@@ -580,7 +580,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       console.error("Error saving settings:", error);
       if (status) {
         status.style.color = "red";
-        status.textContent = "An error occurred while saving. Please try again.";
+        status.textContent = "Erro ao salvar. Tente novamente.";
         status.classList.add("visible");
         setTimeout(() => status.classList.remove("visible"), 4000);
       }

@@ -42,10 +42,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!passphraseStatus) return;
     if (isUnlocked()) {
       passphraseStatus.className = "status-text status-success";
-      passphraseStatus.textContent = "Unlocked — encryption key is active";
+      passphraseStatus.textContent = "Desbloqueado — criptografia ativa";
     } else {
       passphraseStatus.className = "status-text status-danger";
-      passphraseStatus.textContent = "Locked — enter passphrase to unlock encryption";
+      passphraseStatus.textContent = "Bloqueado — digite a frase para desbloquear";
     }
   }
 
@@ -53,7 +53,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (isUnlocked()) return true;
     const passphrase = passphraseInput?.value ?? "";
     if (!passphrase) {
-      if (passphraseStatus) passphraseStatus.textContent = "Please enter a passphrase";
+      if (passphraseStatus) passphraseStatus.textContent = "Digite a frase de criptografia";
       return false;
     }
     const success = await unlockCredentials(passphrase);
@@ -68,7 +68,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (passphraseStatus) {
       passphraseStatus.className = "status-text status-danger";
-      passphraseStatus.textContent = "Wrong passphrase — could not decrypt stored credentials";
+      passphraseStatus.textContent =
+        "Frase incorreta — não foi possível descriptografar as credenciais";
     }
     return false;
   }
@@ -145,7 +146,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         errorEl.style.textAlign = "left";
         apiKeyInput.parentNode?.appendChild(errorEl);
       }
-      errorEl.textContent = "Invalid API Key. Please verify and try again.";
+      errorEl.textContent = "Chave inválida. Verifique e tente novamente.";
       return;
     }
     //Cleaning up.
@@ -214,8 +215,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       },
       {
         selector: "#start-copilot-btn",
-        title: "Start Copilot",
-        body: "Join a Google Meet, then use Start Copilot to begin audio capture and live summaries.",
+        title: "Iniciar Copilot",
+        body: "Entre em um Google Meet e use Iniciar Copilot para começar a captura de áudio e os resumos ao vivo.",
         placement: "bottom",
       },
     ];
@@ -320,7 +321,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const summaryProvider = await getProviderConfig("summary");
     if (!(await resolveProviderApiKey(summaryProvider))) {
       if (textEl) {
-        textEl.textContent = "⚠️ No summary key — transcripts only";
+        textEl.textContent = "⚠️ Sem chave de resumo — só transcrição";
         setTimeout(() => {
           if (textEl) textEl.textContent = originalText;
         }, 2000);
@@ -363,7 +364,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (badge) {
         badge.className = "status-badge active";
         const statusText = badge.querySelector(".status-text");
-        if (statusText) statusText.textContent = "Recording...";
+        if (statusText) statusText.textContent = "Gravando...";
       }
       startDurationTimer(Date.now());
     } catch (err: any) {
@@ -381,7 +382,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       btn.classList.remove("loading");
       if (textEl) {
         textEl.textContent =
-          err.message?.length > 40 ? "Error — Check Console" : err.message || "Unknown error";
+          err.message?.length > 40 ? "Erro — veja o console" : err.message || "Erro desconhecido";
         setTimeout(() => {
           if (textEl) textEl.textContent = originalText;
         }, 3000);
@@ -418,7 +419,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (active) {
       copilotBtn.classList.remove("loading");
       copilotBtn.classList.add("active");
-      if (textEl) textEl.textContent = "Recording...";
+      if (textEl) textEl.textContent = "Gravando...";
       if (iconEl)
         iconEl.innerHTML =
           '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
@@ -432,7 +433,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     } else {
       copilotBtn.classList.remove("active");
-      if (textEl) textEl.textContent = "Start Copilot";
+      if (textEl) textEl.textContent = "Iniciar Copilot";
       if (iconEl)
         iconEl.innerHTML =
           '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>';
@@ -651,7 +652,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         badge.className = "status-badge active";
         const statusText = badge.querySelector(".status-text");
         if (statusText)
-          statusText.textContent = state.audioActive ? "Recording..." : "Meeting active";
+          statusText.textContent = state.audioActive ? "Gravando..." : "Reunião ativa";
       }
 
       const meetingIdEl = document.getElementById("meeting-id");
@@ -660,7 +661,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (state.startTime) startDurationTimer(state.startTime);
 
       const summaryEl = document.getElementById("summary-text");
-      if (summaryEl) summaryEl.textContent = state.summary || "Waiting for conversation...";
+      if (summaryEl) summaryEl.textContent = state.summary || "Aguardando a conversa...";
 
       const topicEl = document.getElementById("current-topic");
       if (topicEl) topicEl.textContent = state.currentTopic || "Detecting...";

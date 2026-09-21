@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Late Meet — AI Copilot</title>
+    <title>ValorBrain Meet</title>
     <link rel="stylesheet" href="fonts/fonts.css" />
     <link rel="stylesheet" href="popup.css" />
   </head>
@@ -29,25 +29,25 @@
             <polyline points="2 12 12 17 22 12"></polyline>
           </svg>
         </div>
-        <h1 class="setup-title">Initialize Copilot</h1>
+        <h1 class="setup-title">Configurar o ValorBrain Meet</h1>
         <p class="setup-subtitle">
-          Configure your AI Providers (local Whisper, Z.ai GLM, OpenAI or custom) in Settings —
-          transcription works without any key. The OpenAI vault key below is optional (legacy).
+          Configure seus AI Providers (Whisper local, Z.ai GLM, OpenAI ou custom) nas Configurações
+          — a transcrição funciona sem nenhuma chave. A chave OpenAI abaixo é opcional (legado).
         </p>
 
         <button id="open-providers" class="setup-btn" style="margin-bottom: 14px">
-          <span>Open Settings — AI Providers</span>
+          <span>Abrir Configurações — AI Providers</span>
           <span class="btn-icon">→</span>
         </button>
 
         <div class="setup-form">
-          <label class="setup-label" for="passphrase-input">Encryption Passphrase</label>
+          <label class="setup-label" for="passphrase-input">Frase de criptografia</label>
           <div class="input-group">
             <input
               type="password"
               id="passphrase-input"
               class="setup-input"
-              placeholder="Passphrase to unlock encryption..."
+              placeholder="Frase para desbloquear a criptografia..."
             />
           </div>
           <div
@@ -57,7 +57,7 @@
             Locked — enter passphrase first
           </div>
 
-          <label class="setup-label">OpenAI API Key</label>
+          <label class="setup-label">Chave de API da OpenAI (opcional)</label>
           <div class="input-group">
             <input type="password" id="api-key-input" class="setup-input" placeholder="sk-..." />
             <button
@@ -71,7 +71,7 @@
           </div>
 
           <button id="save-keys" class="setup-btn">
-            <span>Save Configuration</span>
+            <span>Salvar configuração</span>
             <span class="btn-icon">→</span>
           </button>
         </div>
@@ -102,10 +102,10 @@
             </svg>
           </span>
           <div>
-            <div class="header-title">Meeting Copilot</div>
+            <div class="header-title">ValorBrain Meet</div>
             <div id="status-badge" class="status-badge inactive">
               <span class="status-dot"></span>
-              <span class="status-text">No active meeting</span>
+              <span class="status-text">Nenhuma reunião ativa</span>
             </div>
           </div>
         </div>
@@ -136,7 +136,7 @@
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" x2="12" y1="19" y2="22" />
             </svg>
-            Start Audio
+            Iniciar áudio
           </button>
         </div>
 
@@ -144,19 +144,19 @@
         <div class="card summary-card">
           <div class="card-header">
             <span class="card-icon">📄</span>
-            <span class="card-title">Live Summary</span>
-            <span class="live-badge">LIVE</span>
+            <span class="card-title">Resumo ao vivo</span>
+            <span class="live-badge">AO VIVO</span>
           </div>
-          <div id="summary-text" class="card-body">Waiting for conversation...</div>
+          <div id="summary-text" class="card-body">Aguardando a conversa...</div>
         </div>
 
         <!-- Current Topic -->
         <div class="card">
           <div class="card-header">
             <span class="card-icon">🎯</span>
-            <span class="card-title">Current Topic</span>
+            <span class="card-title">Tópico atual</span>
           </div>
-          <div id="current-topic" class="topic-highlight">Detecting...</div>
+          <div id="current-topic" class="topic-highlight">Detectando...</div>
         </div>
 
         <!-- Stats Grid -->
@@ -164,22 +164,22 @@
           <div class="stat-item">
             <div class="stat-icon">👥</div>
             <div id="participant-count" class="stat-value">0</div>
-            <div class="stat-label">People</div>
+            <div class="stat-label">Pessoas</div>
           </div>
           <div class="stat-item">
             <div class="stat-icon">✅</div>
             <div id="decision-count" class="stat-value">0</div>
-            <div class="stat-label">Decisions</div>
+            <div class="stat-label">Decisões</div>
           </div>
           <div class="stat-item">
             <div class="stat-icon">📝</div>
             <div id="action-count" class="stat-value">0</div>
-            <div class="stat-label">Actions</div>
+            <div class="stat-label">Ações</div>
           </div>
           <div class="stat-item">
             <div class="stat-icon" id="sentiment-icon">😐</div>
-            <div class="stat-value">Mood</div>
-            <div class="stat-label">Sentiment</div>
+            <div class="stat-value">Clima</div>
+            <div class="stat-label">Sentimento</div>
           </div>
         </div>
 
@@ -187,10 +187,10 @@
         <div class="card">
           <div class="card-header">
             <span class="card-icon">📑</span>
-            <span class="card-title">Agenda & Topics</span>
+            <span class="card-title">Pauta e tópicos</span>
           </div>
           <div id="topics-list" class="topics-list">
-            <div class="empty-state">No topics detected yet</div>
+            <div class="empty-state">Nenhum tópico detectado ainda</div>
           </div>
         </div>
 
@@ -198,7 +198,7 @@
         <div id="late-joiners-section" class="card" style="display: none">
           <div class="card-header">
             <span class="card-icon">🚪</span>
-            <span class="card-title">Late Joiners</span>
+            <span class="card-title">Atrasados</span>
           </div>
           <div id="late-joiners-list"></div>
         </div>
@@ -210,7 +210,7 @@
           <div class="empty-icon">🎥</div>
           <h2 class="empty-title">No Active Meeting</h2>
           <p class="empty-text">
-            Join a Google Meet to activate AI Copilot — it will start automatically
+            Entre em um Google Meet para ativar — o copilot inicia automaticamente
           </p>
           <div class="supported-platforms">
             <span class="platform-tag active">Google Meet</span>
@@ -234,13 +234,13 @@
                 <line x1="12" x2="12" y1="19" y2="22" />
               </svg>
             </span>
-            <span class="copilot-btn-text">Start Copilot</span>
+            <span class="copilot-btn-text">Iniciar Copilot</span>
           </button>
         </div>
       </div>
 
       <button id="open-dashboard" class="dashboard-btn">
-        <span>Open Full Dashboard</span>
+        <span>Abrir dashboard completo</span>
         <span class="btn-arrow">↗</span>
       </button>
     </div>
@@ -257,14 +257,14 @@
       <div class="session-modal-backdrop"></div>
       <div class="session-modal-content">
         <div class="session-modal-icon">💾</div>
-        <h2 id="session-modal-title" class="session-modal-title">Meeting Ended</h2>
+        <h2 id="session-modal-title" class="session-modal-title">Reunião encerrada</h2>
         <p class="session-modal-text">
           Would you like to save the intelligence and transcript for this session?
         </p>
         <p id="session-modal-error" class="session-modal-error" hidden></p>
         <div class="session-modal-actions">
-          <button id="discard-session-btn" class="session-btn discard">Discard</button>
-          <button id="save-session-btn" class="session-btn save">Save Session</button>
+          <button id="discard-session-btn" class="session-btn discard">Descartar</button>
+          <button id="save-session-btn" class="session-btn save">Salvar sessão</button>
         </div>
       </div>
     </div>

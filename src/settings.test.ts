@@ -6,7 +6,7 @@ import { isValidAccent, normalizeSettings } from "./settings.ts";
 test("normalizeSettings fills defaults for empty/invalid input", () => {
   const result = normalizeSettings(undefined);
   assert.equal(result.theme, "system");
-  assert.equal(result.accent, "210, 100%, 50%");
+  assert.equal(result.accent, "161, 84%, 25%");
 });
 
 test("normalizeSettings keeps a valid theme and accent", () => {
@@ -18,7 +18,7 @@ test("normalizeSettings keeps a valid theme and accent", () => {
 test("normalizeSettings rejects an invalid theme and accent, falling back to defaults", () => {
   const result = normalizeSettings({ theme: "neon", accent: "not-a-color" });
   assert.equal(result.theme, "system");
-  assert.equal(result.accent, "210, 100%, 50%");
+  assert.equal(result.accent, "161, 84%, 25%");
 });
 
 test("normalizeSettings preserves unrelated persisted keys", () => {
@@ -31,7 +31,7 @@ test("normalizeSettings preserves unrelated persisted keys", () => {
 test("isValidAccent accepts hex and HSL component formats", () => {
   assert.equal(isValidAccent("#fff"), true);
   assert.equal(isValidAccent("#1a2b3c"), true);
-  assert.equal(isValidAccent("210, 100%, 50%"), true);
+  assert.equal(isValidAccent("161, 84%, 25%"), true);
   assert.equal(isValidAccent("210 100% 50%"), true);
   assert.equal(isValidAccent("rgb(0,0,0)"), false);
   assert.equal(isValidAccent("400, 100%, 50%"), false);

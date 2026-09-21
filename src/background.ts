@@ -1390,7 +1390,7 @@ async function generateLateJoinerMessage(joinerName: string) {
     decisions: state.decisions,
   };
 
-  const fallback = `Hi ${joinerName}, welcome to the meeting! We are currently discussing ${context.currentTopic || "project updates"}.`;
+  const fallback = `Olá, ${joinerName}! Bem-vindo à reunião. Estamos falando sobre ${context.currentTopic || "atualizações do projeto"}.`;
 
   try {
     const { config: summaryProvider, apiKey } = await getSummaryProvider();
@@ -2298,7 +2298,7 @@ function createContextMenu() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "transcribe-tab",
-      title: "🎙️ Transcribe current tab with Late-Meet",
+      title: "🎙️ Transcrever esta aba com ValorBrain Meet",
       contexts: ["page"],
     });
   });

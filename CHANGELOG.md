@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-21
+
+### 🚀 Features
+
+- **Identidade ValorBrain em toda a extensão**: copy 100% em PT-BR no popup, dashboard, configurações e onboarding; verde Valor (#047857) como cor de destaque padrão (ainda ajustável no seletor de accent); naming "ValorBrain Meet" em todos os títulos, menus e notificações ([#1](https://github.com/agentxagi/valorbrain-meet/pull/1))
+
 ## [1.5.0] - 2026-09-21
 
 ### 🚀 Features
