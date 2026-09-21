@@ -117,6 +117,8 @@ export interface MeetingStorageInfo {
 /** Aggregated statistics about extension storage usage across all saved meetings. */
 export interface StorageStats {
   totalBytes: number;
+  /** true quando o manifest pede unlimitedStorage (sem teto de 10 MB). */
+  unlimited: boolean;
   quotaBytes: number;
   percentUsed: number;
   transcriptBytes: number;

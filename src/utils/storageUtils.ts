@@ -1,6 +1,19 @@
 import { StorageStats, MeetingStorageInfo } from "../types";
 
-const DEFAULT_QUOTA_BYTES = 10 * 1024 * 1024; // 10MB — chrome.storage.local default
+const DEFAULT_QUOTA_BYTES = 10 * 1024 * 1024; // 10MB — chrome.storage.local default (sem unlimitedStorage)
+
+/**
+ * `unlimitedStorage` remove o teto de 10 MB do chrome.storage.local — o que
+ * sobra de limite é o disco. Quando o permission está presente no manifest,
+ * a cota efetiva é nula (ilimitado).
+ */
+function hasUnlimitedStorage(): boolean {
+  try {
+    return chrome.runtime.getManifest().permissions?.includes("unlimitedStorage") ?? false;
+  } catch {
+    return false;
+  }
+}
 const DEFAULT_WARNING_THRESHOLD = 80;
 
 /**
@@ -146,12 +159,16 @@ export async function getStorageStats(): Promise<StorageStats> {
     }
   });
 
-  const quotaBytes = DEFAULT_QUOTA_BYTES;
+  const unlimited = hasUnlimitedStorage();
+  const quotaBytes = unlimited ? 0 : DEFAULT_QUOTA_BYTES;
+
+  const percentUsed = unlimited ? 0 : Math.min(100, Math.round((totalBytes / quotaBytes) * 100));
 
   return {
     totalBytes,
+    unlimited,
     quotaBytes,
-    percentUsed: Math.min(100, Math.round((totalBytes / quotaBytes) * 100)),
+    percentUsed,
     transcriptBytes,
     summaryBytes,
     actionItemBytes,

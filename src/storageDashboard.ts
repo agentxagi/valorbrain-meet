@@ -30,8 +30,11 @@ export async function renderStorageDashboard(container: HTMLElement): Promise<vo
 }
 
 function buildDashboardHTML(stats: StorageStats): string {
-  const isWarning = stats.percentUsed >= stats.warningThreshold;
+  const isWarning = !stats.unlimited && stats.percentUsed >= stats.warningThreshold;
   const progressColor = isWarning ? "var(--color-text-danger)" : "var(--color-text-success)";
+  const usageValue = stats.unlimited
+    ? `${formatBytes(stats.totalBytes)} <span class="storage-unlimited">• ilimitado</span>`
+    : `${formatBytes(stats.totalBytes)} / ${formatBytes(stats.quotaBytes)}`;
 
   return `
     <div class="storage-dashboard">
@@ -49,12 +52,16 @@ function buildDashboardHTML(stats: StorageStats): string {
       <div class="storage-card">
         <div class="storage-card-header">
           <span class="storage-label">Total storage used</span>
-          <span class="storage-value">${formatBytes(stats.totalBytes)} / ${formatBytes(stats.quotaBytes)}</span>
+          <span class="storage-value">${usageValue}</span>
         </div>
         <div class="storage-progress-track">
-          <div class="storage-progress-bar" style="width: ${stats.percentUsed}%; background: ${progressColor}"></div>
+          <div class="storage-progress-bar" style="width: ${stats.unlimited ? 100 : stats.percentUsed}%; background: ${progressColor}"></div>
         </div>
-        <div class="storage-percent">${stats.percentUsed}% used • ${stats.meetingCount} meetings stored</div>
+        <div class="storage-percent">${
+          stats.unlimited
+            ? "ilimitado (unlimitedStorage) • " + stats.meetingCount + " reuniões armazenadas"
+            : stats.percentUsed + "% used • " + stats.meetingCount + " meetings stored"
+        }</div>
       </div>
 
       <div class="storage-breakdown">

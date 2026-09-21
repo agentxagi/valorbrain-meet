@@ -218,3 +218,8 @@
 .storage-meeting-select input[type="checkbox"] {
   margin-right: 8px;
 }
+.storage-unlimited {
+  font-size: 11px;
+  color: var(--text-success);
+  font-weight: 600;
+}
