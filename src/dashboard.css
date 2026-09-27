@@ -59,8 +59,8 @@ body::-webkit-scrollbar-thumb,
 }
 
 .dash-logo {
+  color: var(--vb-brand);
   font-size: 28px;
-  color: var(--text-main);
   display: flex;
   align-items: center;
 }
@@ -127,7 +127,7 @@ body::-webkit-scrollbar-thumb,
 
 .dash-audio-btn {
   padding: 8px 14px;
-  background: var(--text-main);
+  background: var(--vb-brand);
   border: none;
   border-radius: 8px;
   color: var(--text-invert);
@@ -196,9 +196,9 @@ body::-webkit-scrollbar-thumb,
 }
 
 .dash-tab.active {
-  color: var(--text-main);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-main);
+  color: var(--vb-brand);
+  background: var(--vb-brand-tint);
+  border: 1px solid var(--vb-brand-border);
 }
 
 /* ——— Content ——— */
@@ -277,7 +277,7 @@ body::-webkit-scrollbar-thumb,
   font-size: 9px;
   font-weight: 700;
   color: var(--text-invert);
-  background: var(--text-main);
+  background: var(--text-danger);
   padding: 3px 8px;
   border-radius: 4px;
   letter-spacing: 0.5px;
@@ -375,7 +375,7 @@ body::-webkit-scrollbar-thumb,
 
 .sentiment-fill {
   height: 100%;
-  background: var(--text-main);
+  background: var(--vb-brand);
   border-radius: 6px;
   transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -1129,9 +1129,21 @@ body::-webkit-scrollbar-thumb,
   cursor: progress;
 }
 
+.vb-send-btn {
+  background: var(--vb-brand);
+  border-color: var(--vb-brand);
+  color: var(--text-invert);
+  font-weight: 600;
+}
+.vb-send-btn:hover {
+  background: var(--vb-brand-hover);
+  border-color: var(--vb-brand-hover);
+  color: var(--text-invert);
+}
 .vb-send-btn.vb-state-sent {
   border-color: rgba(34, 197, 94, 0.45);
   color: #86efac;
+  background: transparent;
   cursor: default;
 }
 

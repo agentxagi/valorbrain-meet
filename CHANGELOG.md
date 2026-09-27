@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-09-21
+
+### 🚀 Features
+
+- **Brand system aplicado ao dashboard e popup**: Verde Valor (#047857) no CTA principal (Iniciar áudio), aba ativa, barra de sentimento, botão Enviar para o ValorBrain e logos (ícone brain nos headers); badge AO VIVO em vermelho (convenção de "ao vivo")
+- Tokens de marca no tema (`--vb-brand`, `--vb-brand-hover`, `--vb-brand-tint`, `--vb-brand-border`) reutilizados por todas as telas
+
 ## [1.8.0] - 2026-09-21
 
 ### 🐛 Bug Fixes

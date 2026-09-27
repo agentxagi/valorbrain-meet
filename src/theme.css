@@ -20,6 +20,10 @@
 
   --shadow-main: rgba(0, 0, 0, 0.1);
   --accent-color: 161, 84%, 25%; /* Verde Valor #047857 — accent padrão ValorBrain */
+  --vb-brand: #047857;
+  --vb-brand-hover: #036c4e;
+  --vb-brand-tint: rgba(4, 120, 87, 0.08);
+  --vb-brand-border: rgba(4, 120, 87, 0.25);
 }
 
 [data-theme="dark"] {

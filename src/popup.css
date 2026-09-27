@@ -144,9 +144,9 @@ body::-webkit-scrollbar-thumb {
 }
 
 .setup-logo {
+  color: var(--vb-brand);
   font-size: 32px;
   margin-bottom: 24px;
-  color: var(--text-main);
   animation: float 4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
   display: flex;
   justify-content: center;
