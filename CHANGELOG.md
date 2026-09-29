@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-29
+
+A partir das duas primeiras reuniões reais gravadas com a 2.0 ("D-Brain" em vez de gbrain, todas as falas como "Participante", cortes a cada 25 s).
+
+### 🚀 Features
+
+- **Sua voz e a dos outros transcritas separadas.** O microfone (você) e a aba (as outras pessoas) são gravados e cortados cada um no seu ritmo. Toda fala do microfone sai com o seu nome (novo campo **Seu nome nas transcrições**, em Configurações → Microfone). Fala sobreposta dos dois lados não se perde mais
+- **Quem falou na aba**: a pessoa que o Meet mostrou falando durante o trecho; numa reunião a dois, a outra pessoa. Os nomes vêm também dos botões "Mais opções para …" e da conta Google do Meet
+- **Revisão final de termos**: antes do resumo final, a transcrição inteira passa por uma revisão de grafia de nomes, marcas e termos em inglês (D-Brain → gbrain, Rapplet → Replit, SuperBase → Supabase). O modelo só propõe; a extensão aceita a troca só quando o texto errado está na transcrição e se parece com o certo, e nunca troca uma pessoa por outra. As trocas aparecem em **Detalhes** no ValorBrain
+- **Cortes nas pausas**: um trecho termina na próxima pausa, e a pausa exigida diminui conforme o trecho cresce (limite de 28 s). O limiar se ajusta ao ruído de fundo, então palavras não são mais cortadas ao meio a cada 25 s
+- **Vocabulário**: ValorBrain e ValorBrain Meet entram sempre, mesmo com o campo vazio; o prompt do Whisper tem orçamento para o vocabulário nunca ser cortado
+- **Microfone mudo no Meet não é gravado**: nada do que você diz com o microfone desligado na reunião entra na transcrição
+- Servidor whisper-local com **large-v3-turbo na GPU** (queda automática para a CPU). No benchmark com frases das reuniões reais: erro por palavra de 12,6% para 7,8% e termos certos de 17/30 para 24/30
+
+### 🐛 Bug Fixes
+
+- Loops do Whisper ("Ah, entendi. Ah, entendi. …") ficam uma vez só
+- Eco do alto-falante no microfone (sem fone) é descartado em vez de duplicar a fala
+- Cota de 5 horas do GLM Coding Plan esgotada (erro 1308): aviso com a hora de renovação e sem novas tentativas até lá; a transcrição continua
+- Nomes de participantes com texto de ícone do Meet ("Ana Souza ⋮", "more_vert")
+
 ## [2.0.0] - 2026-09-29
 
 ### ⚠️ Mudanças que quebram compatibilidade
