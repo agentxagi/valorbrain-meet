@@ -12,6 +12,7 @@ import {
   speakerLabel,
 } from "./ui/format";
 import { getMeetingIdFromUrl } from "./meetingTabs";
+import { shortcutKeys } from "./ui/shortcut";
 import { getMicPermission, getSetupStatus, isSetupComplete, type SetupItem } from "./setupStatus";
 
 void initTheme();
@@ -452,11 +453,11 @@ async function renderShortcut() {
   const shortcut = commands.find((command) => command.name === "toggle-recording")?.shortcut ?? "";
   host.replaceChildren();
   if (shortcut) {
-    shortcut.split("+").forEach((key, index) => {
+    shortcutKeys(shortcut).forEach((key, index) => {
       if (index > 0) host.append(" + ");
       const kbd = document.createElement("span");
       kbd.className = "vb-kbd";
-      kbd.textContent = key.trim();
+      kbd.textContent = key;
       host.append(kbd);
     });
     host.append(" inicia ou encerra");

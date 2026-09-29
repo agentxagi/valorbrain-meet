@@ -21,6 +21,12 @@ import { validateApiUrl } from "./utils/urlValidator";
 import { probeChat, probeTranscription } from "./providerClient";
 import { describeProviderError } from "./providerErrors";
 import { getMicPermission, getSetupStatus, isSetupComplete, type SetupItem } from "./setupStatus";
+import {
+  microphoneErrorCode,
+  platformOs,
+  SYSTEM_DENIED,
+  systemMicrophoneHelp,
+} from "./microphoneErrors";
 import { isVbConfigured, normalizeVbSettings, testValorBrainConnection } from "./vbClient";
 import { connectValorBrain, VB_API_BASE_URL } from "./vbConnect";
 import { renderStorageDashboard } from "./storageDashboard";
@@ -331,7 +337,9 @@ async function renderMic() {
   const [cls, label, iconName] = map[permission];
   chip.className = `vb-chip ${cls}`;
   chip.innerHTML = `${icon(iconName)}${label}`;
-  button.hidden = permission === "granted";
+  // Once Chrome allows it, the same button checks the device for real: on
+  // macOS the system can still block Chrome even with the Chrome grant.
+  button.innerHTML = `${icon("mic")}${permission === "granted" ? "Testar microfone" : "Permitir microfone"}`;
   if (permission === "granted") {
     setStatus("mic-help", "success", "Sua voz entra na gravação junto com o áudio da reunião.");
   } else if (permission === "denied") {
@@ -346,14 +354,32 @@ async function renderMic() {
 }
 
 async function grantMic() {
+  const permissionBefore = getMicPermission();
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     stream.getTracks().forEach((track) => track.stop());
-    toast("Microfone liberado.");
+    toast(
+      (await permissionBefore) === "granted" ? "Microfone funcionando." : "Microfone liberado.",
+    );
   } catch (err) {
-    const name = (err as DOMException)?.name;
-    if (name === "NotFoundError") {
+    const code = microphoneErrorCode(err);
+    if (code === SYSTEM_DENIED) {
+      // Chrome allows it, the operating system does not: renderMic() would
+      // overwrite this with the (Chrome-level) "granted" state.
+      setStatus("mic-help", "error", systemMicrophoneHelp(await platformOs()));
+      void refreshChecklist();
+      return;
+    }
+    if (code === "NotFoundError") {
       setStatus("mic-help", "error", "Nenhum microfone encontrado neste computador.");
+      return;
+    }
+    if (code === "NotReadableError" || code === "AbortError") {
+      setStatus(
+        "mic-help",
+        "error",
+        "O microfone está ocupado ou falhou ao abrir. Feche outros apps que o usam e tente de novo.",
+      );
       return;
     }
   }

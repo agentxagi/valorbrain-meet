@@ -14,6 +14,7 @@ import {
   VbDeliveryStatus,
 } from "./types";
 import { audioFileExtensionForMimeType, isChunkViable } from "./audioProcessing";
+import { microphoneNotice, platformOs, SYSTEM_DENIED } from "./microphoneErrors";
 import {
   deleteSavedMeetingSession,
   discardPendingMeetingSession,
@@ -1551,10 +1552,12 @@ async function startAudioCapture(
     addTimeline("Captura de áudio iniciada");
     if (!state.micActive) {
       addTimeline("Microfone indisponível: gravando só o áudio da aba");
+      // A system-level block has OS-specific instructions (macOS / Windows).
+      const os = response.microphoneError === SYSTEM_DENIED ? await platformOs() : null;
       setNotice(
         "capture",
         "warning",
-        microphoneNotice(includeMicrophone, response.microphoneError),
+        microphoneNotice(includeMicrophone, response.microphoneError, os),
       );
     }
     await broadcastStateUpdate(true);
@@ -1568,21 +1571,6 @@ async function startAudioCapture(
   } finally {
     isStartingAudio = false;
   }
-}
-
-/** Explains why the microphone is not part of the recording. */
-function microphoneNotice(requested: boolean, errorName: unknown): string {
-  const tail = " A gravação segue só com o áudio da reunião, sem a sua voz.";
-  if (!requested || errorName === "NotAllowedError" || errorName === "SecurityError") {
-    return `O microfone ainda não foi liberado para o ValorBrain Meet. Libere em Configurações → Microfone e reinicie a gravação.${tail}`;
-  }
-  if (errorName === "NotFoundError" || errorName === "OverconstrainedError") {
-    return `Nenhum microfone foi encontrado neste computador.${tail}`;
-  }
-  if (errorName === "NotReadableError" || errorName === "AbortError") {
-    return `O microfone está ocupado ou falhou ao abrir. Feche outros apps que o usam e reinicie a gravação.${tail}`;
-  }
-  return `Seu microfone não entrou na gravação.${tail}`;
 }
 
 async function scanForMeetTabs() {

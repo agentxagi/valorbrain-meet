@@ -6,6 +6,7 @@ import {
   participantNameFromCandidate,
   type ParticipantNameCandidate,
 } from "./participantDetection.ts";
+import { shortcutKeys } from "./ui/shortcut.ts";
 
 (() => {
   const LOG = "[ValorBrainMeet]";
@@ -398,12 +399,11 @@ import {
   let recordShortcut = "";
 
   function shortcutMarkup(shortcut: string): string {
-    return shortcut
-      .split("+")
+    return shortcutKeys(shortcut)
       .map((key) => {
         const kbd = document.createElement("span");
         kbd.className = "vbm-kbd";
-        kbd.textContent = key.trim();
+        kbd.textContent = key;
         return kbd.outerHTML;
       })
       .join("+");

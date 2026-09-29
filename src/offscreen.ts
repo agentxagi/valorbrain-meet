@@ -4,6 +4,7 @@
 // (issue #678), then handed to the service worker for transcription.
 
 import { isChunkViable } from "./audioProcessing";
+import { microphoneErrorCode } from "./microphoneErrors";
 import { computeRms } from "./vadTuning";
 import {
   MAX_BUFFER_MS,
@@ -401,7 +402,8 @@ async function getMicrophoneStream() {
     });
   } catch (err) {
     const e = err as DOMException;
-    microphoneError = e?.name || "Error";
+    // "SystemDenied" when macOS/Windows privacy settings block Chrome itself.
+    microphoneError = microphoneErrorCode(err);
     relay(`microphone unavailable — ${e?.name}: ${e?.message}`);
     return null;
   }
