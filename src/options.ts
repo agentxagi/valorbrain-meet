@@ -434,9 +434,8 @@ async function loadForm() {
     typeof settings.transcriptionLanguage === "string" ? settings.transcriptionLanguage : "pt";
   $<HTMLSelectElement>("transcription-language").value = language;
   $<HTMLTextAreaElement>("transcription-vocabulary").value =
-    typeof settings.transcriptionVocabulary === "string"
-      ? settings.transcriptionVocabulary
-      : "ValorBrain";
+    typeof settings.transcriptionVocabulary === "string" ? settings.transcriptionVocabulary : "";
+  input("self-name").value = typeof settings.selfName === "string" ? settings.selfName : "";
 
   const interval = Number(settings.summarizationInterval);
   const intervalValue =
@@ -529,6 +528,7 @@ async function save() {
       transcriptionVocabulary: $<HTMLTextAreaElement>("transcription-vocabulary")
         .value.trim()
         .slice(0, 600),
+      selfName: input("self-name").value.replace(/\s+/g, " ").trim().slice(0, 80),
       summarizationInterval: Number(input("summary-interval").value) || 180,
       vadThreshold: Number(input("vad-threshold").value) || 0.012,
       theme: $<HTMLSelectElement>("theme-select").value,

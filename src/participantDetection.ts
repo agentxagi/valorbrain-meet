@@ -30,8 +30,16 @@ function cleanText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Meet draws its icons with Material Symbols ligatures, so an element's text
+ * holds words like "more_vert" or "mic_off" next to the name, plus menu glyphs.
+ */
+function stripIconText(value: string): string {
+  return value.replace(/\b[a-z]+(?:_[a-z0-9]+)+\b/g, " ").replace(/[⋮⋯•·▾▸►◂◀✕×]/g, " ");
+}
+
 function stripExcludedLabels(value: string): string {
-  let cleaned = cleanText(value);
+  let cleaned = cleanText(stripIconText(value));
   if (!cleaned) return "";
 
   for (const regex of EXCLUDED_REGEXES) {

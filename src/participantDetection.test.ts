@@ -101,3 +101,15 @@ test("case-insensitive control labels are rejected", () => {
   assert.equal(participantNameFromCandidate({ selfName: "mute" }), null);
   assert.equal(participantNameFromCandidate({ selfName: "Camera Off" }), null);
 });
+
+test("Meet icon ligatures and menu glyphs never end up in a name", () => {
+  // A tile's text: the name, the "more options" glyph and icon ligatures.
+  assert.equal(participantNameFromCandidate({ text: "Ana Souza ⋮" }), "Ana Souza");
+  assert.equal(
+    participantNameFromCandidate({ text: "Bruno Lima more_vert mic_off" }),
+    "Bruno Lima",
+  );
+  assert.equal(participantNameFromCandidate({ text: "keep_outline" }), null);
+  // Real names with underscores are not Meet icons only when capitalised.
+  assert.equal(participantNameFromCandidate({ text: "Maria_Silva" }), "Maria_Silva");
+});

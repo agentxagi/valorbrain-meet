@@ -73,6 +73,8 @@ function createStorageArea(store: AnyRecord) {
 }
 
 const sttResponses: AnyRecord[] = [];
+/** What the model answers to the final spelling pass (no corrections by default). */
+let correctionResponse: AnyRecord = { correcoes: [] };
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -81,11 +83,26 @@ function jsonResponse(status: number, body: unknown) {
   });
 }
 
+function chatSystemPrompt(init: RequestInit): string {
+  return String(JSON.parse(String(init.body)).messages?.[0]?.content ?? "");
+}
+
 globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
   const url = String(input);
   fetchCalls.push({ url, init });
   if (url === "http://127.0.0.1:8394/v1/audio/transcriptions") {
     return jsonResponse(200, sttResponses.shift() ?? { text: "", segments: [] });
+  }
+  if (
+    url === "https://api.z.ai/api/coding/paas/v4/chat/completions" &&
+    /revisa a grafia/.test(chatSystemPrompt(init))
+  ) {
+    return jsonResponse(200, {
+      choices: [
+        { finish_reason: "stop", message: { content: JSON.stringify(correctionResponse) } },
+      ],
+      usage: { prompt_tokens: 400, completion_tokens: 40, total_tokens: 440 },
+    });
   }
   if (url === "https://api.z.ai/api/coding/paas/v4/chat/completions") {
     return jsonResponse(200, {
@@ -336,12 +353,20 @@ test("a recording is transcribed, summarized in PT-BR, saved and delivered to Va
   assert.equal(lastResult.vb.docRef, "meetings/reuniao.md");
 
   // Final summary pass used the PT-BR prompt with GLM thinking disabled.
-  const chatCall = fetchCalls.find((c) => c.url.endsWith("/chat/completions"))!;
+  const chatCall = fetchCalls.find(
+    (c) =>
+      c.url.endsWith("/chat/completions") && /motor de inteligência/.test(chatSystemPrompt(c.init)),
+  )!;
   const chatBody = JSON.parse(String(chatCall.init.body));
   assert.deepEqual(chatBody.thinking, { type: "disabled" });
   assert.match(chatBody.messages[0].content, /português do Brasil/);
   assert.match(chatBody.messages[0].content, /passagem final/);
   assert.match(chatBody.messages[1].content, /changelog/);
+  // The spelling pass ran before it.
+  const correctionIndex = fetchCalls.findIndex(
+    (c) => c.url.endsWith("/chat/completions") && /revisa a grafia/.test(chatSystemPrompt(c.init)),
+  );
+  assert.ok(correctionIndex >= 0 && correctionIndex < fetchCalls.indexOf(chatCall));
 
   // Saved locally with the summary and the delivery status.
   const index = localStore.savedSessionIndex as AnyRecord[];
@@ -443,4 +468,148 @@ test("a transcription outage is reported to the user in PT-BR", async () => {
       "stop",
     );
   }
+});
+
+test("the microphone is the user, echoes are dropped and misheard terms are fixed before saving", async () => {
+  localStore.settings = {
+    ...localStore.settings,
+    selfName: "Gustavo",
+    transcriptionVocabulary: "gbrain, Resend",
+  };
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  fetchCalls.length = 0;
+
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId: "stream-4",
+    includeMicrophone: true,
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+
+  // One-to-one call: Meet shows the user and Ricardo.
+  const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+  await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: ["Gustavo", "Ricardo"] }, sender);
+
+  const t0 = Date.now() - 20_000;
+  const say = (text: string) => ({
+    text,
+    duration: 5,
+    segments: [{ text: ` ${text}`, no_speech_prob: 0.02, avg_logprob: -0.3 }],
+  });
+  sttResponses.push(
+    say("Na Resend eles usam o D-Brain e o Rapplet para os agentes."),
+    say("Olha, o D-Brain já resolve uma parte disso pra gente."),
+    // The same sentence picked up by the microphone from the speakers.
+    say("Na Resend eles usam o D-Brain e o Rapplet para os agentes"),
+  );
+  const chunk = (source: string, startOffset: number) =>
+    sendMessage({
+      type: "OFFSCREEN_AUDIO_CHUNK",
+      audioBase64: fakeChunk(),
+      mimeType: "audio/webm;codecs=opus",
+      source,
+      startedAt: t0 + startOffset,
+      endedAt: t0 + startOffset + 5000,
+    });
+  // The tab segment ends (and arrives) first, but the user started speaking earlier.
+  await chunk("tab", 3000);
+  await chunk("mic", 0);
+  await chunk("mic", 3500);
+
+  const live = await waitFor(async () => {
+    const s = await sendMessage({ type: "GET_STATE" });
+    return s.stats?.chunksTranscribed + s.stats?.chunksFiltered === 3 ? s : null;
+  }, "3 chunks processed");
+  assert.deepEqual(
+    live.transcript.map((e: AnyRecord) => [e.source, e.speaker]),
+    [
+      ["mic", "Gustavo"],
+      ["tab", "Ricardo"],
+    ],
+    "in time order, the echo dropped",
+  );
+
+  const sttPrompts = fetchCalls
+    .filter((c) => c.url.endsWith("/audio/transcriptions"))
+    .map((c) => String((c.init.body as FormData).get("prompt")));
+  assert.match(sttPrompts[0], /^Termos: ValorBrain, ValorBrain Meet, gbrain, Resend\. /);
+  assert.match(sttPrompts[0], /Participantes: Gustavo, Ricardo\./);
+
+  correctionResponse = {
+    correcoes: [
+      { de: "D-Brain", para: "gbrain" },
+      { de: "Rapplet", para: "Replit" },
+      { de: "Ricardo", para: "Roberto" }, // one person for another: rejected
+    ],
+  };
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  const index = await waitFor(
+    () =>
+      (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
+        ? (localStore.savedSessionIndex as AnyRecord[])
+        : null,
+    "session saved",
+  );
+  const saved = localStore[`savedSession:${index[0].id}`];
+  assert.equal(saved.transcript[0].text, "Olha, o gbrain já resolve uma parte disso pra gente.");
+  assert.equal(
+    saved.transcript[1].text,
+    "Na Resend eles usam o gbrain e o Replit para os agentes.",
+  );
+  assert.equal(saved.transcript[1].speaker, "Ricardo");
+  assert.deepEqual(saved.termCorrections, [
+    { from: "D-Brain", to: "gbrain", count: 2 },
+    { from: "Rapplet", to: "Replit", count: 1 },
+  ]);
+
+  // The final summary knows who recorded and reads the corrected text.
+  const summaryCall = fetchCalls.find(
+    (c) =>
+      c.url.endsWith("/chat/completions") && /motor de inteligência/.test(chatSystemPrompt(c.init)),
+  )!;
+  const summaryUser = JSON.parse(String(summaryCall.init.body)).messages[1].content;
+  assert.match(summaryUser, /Quem gravou a reunião: Gustavo\./);
+  assert.match(summaryUser, /Gustavo: Olha, o gbrain já resolve/);
+
+  const store = await waitFor(
+    () => fetchCalls.find((c) => c.url.endsWith("/api/v1/memory/store")),
+    "ValorBrain delivery",
+  );
+  const payload = JSON.parse(String(store.init.body));
+  assert.match(
+    payload.content,
+    /- Termos corrigidos na transcrição: D-Brain → gbrain, Rapplet → Replit/,
+  );
+  assert.match(payload.content, /\] Gustavo: Olha, o gbrain/);
+  correctionResponse = { correcoes: [] };
+});
+
+test("muting the microphone in Meet reaches the recorder", async () => {
+  runtimeMessages.length = 0;
+  await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId: "stream-5",
+  });
+  const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+  const muted = await sendMessage({ type: "MEET_MIC_STATE", muted: true }, sender);
+  assert.equal(muted.muted, true);
+  assert.ok(runtimeMessages.some((m) => m.type === "OFFSCREEN_SET_MIC_MUTED" && m.muted === true));
+  const ignored = await sendMessage(
+    { type: "MEET_MIC_STATE", muted: false },
+    {
+      tab: { id: 99, url: "https://meet.google.com/xyz-abcd-efg" },
+    },
+  );
+  assert.equal(ignored.ignored, true, "another tab cannot unmute the recording");
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  await waitFor(
+    async () => ((await sendMessage({ type: "GET_STATE" })).audioActive === false ? true : null),
+    "stop",
+  );
 });

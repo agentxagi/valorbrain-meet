@@ -224,6 +224,15 @@ export function buildValorBrainContent(session: State): string {
   }
   if (session.meetingUrl) lines.push(`- Reunião: ${session.meetingUrl}`);
   else if (session.meetingId) lines.push(`- Reunião: ${session.meetingId}`);
+  const corrections = (session.termCorrections ?? []).filter((c) => c?.from && c?.to);
+  if (corrections.length > 0) {
+    lines.push(
+      `- Termos corrigidos na transcrição: ${corrections
+        .slice(0, 20)
+        .map((c) => `${c.from} → ${c.to}`)
+        .join(", ")}`,
+    );
+  }
   lines.push("- Registrado pelo ValorBrain Meet (transcrição automática, pode conter erros)");
   lines.push("");
 

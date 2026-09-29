@@ -222,18 +222,44 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     );
   }
 
+  /** "Mais opções para Ana Souza" (tile menu), in the languages Meet ships. */
+  const MORE_OPTIONS_FOR =
+    /^(?:Mais opções para|More options for|Más opciones para|Plus d'options pour)\s+(.{1,80})$/i;
+  /** "Conta do Google: Nome Sobrenome (email)" (account button in the header). */
+  const GOOGLE_ACCOUNT =
+    /^(?:Conta do Google|Google Account|Cuenta de Google|Compte Google):\s*(.+?)\s*(?:\(|$)/i;
+  /** "Nome (você)" / "Name (you)" marks the local user. */
+  const YOU_SUFFIX = /\s*\((?:você|voce|you|tú|vous)\)\s*$/i;
+  let accountName: string | null = null;
+
   function participantNameFromTile(tile: HTMLElement): string | null {
-    const direct = participantNameFromCandidate({
-      ariaLabel: tile.getAttribute("aria-label"),
-      selfName: tile.getAttribute("data-self-name"),
-      text: getTextValue(tile),
-    });
-    if (direct) return direct;
+    // Most reliable first: the tile's own menu ("Mais opções para Ana Souza"),
+    // the self-name attribute, the name element; the tile text only last
+    // (it also holds icon ligatures and button labels).
+    for (const labelled of tile.querySelectorAll<HTMLElement>("[aria-label]")) {
+      const fromMenu = MORE_OPTIONS_FOR.exec(labelled.getAttribute("aria-label") || "")?.[1];
+      if (fromMenu) {
+        const name = participantNameFromCandidate({ text: fromMenu.replace(YOU_SUFFIX, "") });
+        if (name) return name;
+      }
+    }
+    const selfAttr =
+      tile.getAttribute("data-self-name") ||
+      tile.querySelector("[data-self-name]")?.getAttribute("data-self-name");
+    if (selfAttr) {
+      const name = participantNameFromCandidate({ selfName: selfAttr });
+      if (name && !/^(you|você|voce)$/i.test(name)) return name;
+    }
     const nameElement = queryFirst(SELECTORS.participantNodes, tile);
-    return participantNameFromCandidate({
+    const fromElement = participantNameFromCandidate({
       ariaLabel: nameElement?.getAttribute("aria-label"),
-      selfName: nameElement?.getAttribute("data-self-name"),
+      selfName: null,
       text: getTextValue(nameElement),
+    });
+    if (fromElement) return fromElement;
+    return participantNameFromCandidate({
+      ariaLabel: tile.getAttribute("aria-label"),
+      text: getTextValue(tile),
     });
   }
 
@@ -255,7 +281,27 @@ import { shortcutKeys } from "./ui/shortcut.ts";
         text: getTextValue(element),
       });
     }
-    return { participants: collectParticipantNames(candidates), selfName };
+    // Every video tile has a "Mais opções para <Nome>" button; the local user's
+    // own name comes from the Google account button or a "(você)" label.
+    for (const labelled of document.querySelectorAll<HTMLElement>("[aria-label]")) {
+      const label = labelled.getAttribute("aria-label") || "";
+      const tileName = MORE_OPTIONS_FOR.exec(label)?.[1];
+      if (tileName) candidates.push({ text: tileName.replace(YOU_SUFFIX, "") });
+      if (!accountName) {
+        const account = GOOGLE_ACCOUNT.exec(label)?.[1];
+        if (account) accountName = participantNameFromCandidate({ text: account });
+      }
+      if (!selfName && YOU_SUFFIX.test(label) && label.length < 90) {
+        selfName = participantNameFromCandidate({ text: label.replace(YOU_SUFFIX, "") });
+      }
+    }
+    const names = collectParticipantNames(candidates).map((name) =>
+      name.replace(YOU_SUFFIX, "").trim(),
+    );
+    return {
+      participants: Array.from(new Set(names.filter(Boolean))),
+      selfName: selfName || accountName,
+    };
   }
 
   let participantTimer: ReturnType<typeof setInterval> | null = null;
@@ -380,6 +426,44 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     leaveTimer = null;
   }
 
+  // ——— Meet microphone mute state ———
+  // While the user is muted in Meet nobody hears them, so the recording drops
+  // the microphone. Only a button clearly labelled as the microphone counts:
+  // the camera toggle carries the same data-is-muted attribute.
+
+  const MIC_LABEL = /micro(?:fone|phone|́fono|fono)/i;
+  let micTimer: ReturnType<typeof setInterval> | null = null;
+  let lastMicMuted: boolean | null = null;
+
+  function meetMicMuted(): boolean | null {
+    for (const button of document.querySelectorAll<HTMLElement>("[data-is-muted]")) {
+      const label = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("data-tooltip") || ""}`;
+      if (MIC_LABEL.test(label)) return button.getAttribute("data-is-muted") === "true";
+    }
+    return null;
+  }
+
+  function startMicStateReporting() {
+    if (micTimer) return;
+    lastMicMuted = null;
+    const tick = () => {
+      const muted = meetMicMuted();
+      if (muted === null || muted === lastMicMuted) return;
+      lastMicMuted = muted;
+      chrome.runtime.sendMessage({ type: "MEET_MIC_STATE", muted }).catch(() => {
+        lastMicMuted = null; // service worker asleep: resend next tick
+      });
+    };
+    tick();
+    micTimer = setInterval(tick, 1000);
+  }
+
+  function stopMicStateReporting() {
+    if (micTimer) clearInterval(micTimer);
+    micTimer = null;
+    lastMicMuted = null;
+  }
+
   // ——— Status pill ———
 
   interface ContentState {
@@ -485,6 +569,11 @@ import { shortcutKeys } from "./ui/shortcut.ts";
 
     if (state.isActive || recordingHere) startParticipantPolling();
     else stopParticipantPolling();
+
+    // Mute state is reported while this tab is the meeting (so the recording
+    // starts with the right state) and while it records.
+    if (state.isActive || recordingHere) startMicStateReporting();
+    else stopMicStateReporting();
 
     if (recordingHere) {
       recordingStart = state.startTime || recordingStart || Date.now();

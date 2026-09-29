@@ -15,6 +15,19 @@ export interface TranscriptEntry {
   text: string;
   timestamp: number;
   timestampLabel?: string;
+  /** Which capture channel said it: the microphone (recording user) or the tab. */
+  source?: "tab" | "mic";
+  /** Segment start/end (ms since epoch), used for ordering and echo checks. */
+  startedAt?: number;
+  endedAt?: number;
+}
+
+/** A spelling fix applied to the whole transcript before saving ("D-Brain" → "gbrain"). */
+export interface TermCorrectionRecord {
+  from: string;
+  to: string;
+  /** Times it was replaced in the transcript. */
+  count: number;
 }
 
 /** A timestamped event recorded on the meeting timeline. */
@@ -138,6 +151,8 @@ export interface State {
   vb?: VbDeliveryStatus;
   /** Why the session ended (saved sessions only). */
   endReason?: string;
+  /** Spelling fixes applied to the transcript at the end of the meeting. */
+  termCorrections?: TermCorrectionRecord[];
 }
 
 /** Storage metadata summary for a single saved meeting, used in storage usage reports. */

@@ -3,10 +3,50 @@ import assert from "node:assert/strict";
 
 import {
   cleanTranscription,
+  collapseRepeatedPhrases,
   isHardHallucination,
   isNonSpeechMarker,
   normalizeForMatch,
 } from "./transcriptFilter.ts";
+
+test("Whisper loops from the real meetings are kept once", () => {
+  assert.equal(
+    collapseRepeatedPhrases("Ah, entendi. Ah, entendi. Ah, entendi. Ah, entendi. Ah, entendi."),
+    "Ah, entendi.",
+  );
+  assert.equal(
+    collapseRepeatedPhrases(
+      "Ele foi selecionado na live de 2007. De sete? De sete. De sete. De sete. De sete. Mas é isso.",
+    ),
+    "Ele foi selecionado na live de 2007. De sete? Mas é isso.",
+  );
+  assert.equal(collapseRepeatedPhrases("ok ok ok ok ok ok"), "ok");
+});
+
+test("real repetitions and emphasis are not collapsed", () => {
+  assert.equal(collapseRepeatedPhrases("Não, não, não, espera."), "Não, não, não, espera.");
+  assert.equal(collapseRepeatedPhrases("Sim, sim. Fechado."), "Sim, sim. Fechado.");
+  assert.equal(
+    collapseRepeatedPhrases("Eu acho que sim, eu acho que sim, vamos nessa."),
+    "Eu acho que sim, eu acho que sim, vamos nessa.",
+  );
+  assert.equal(collapseRepeatedPhrases("1, 2, 3, 4"), "1, 2, 3, 4");
+});
+
+test("a looping chunk reaches the transcript collapsed", () => {
+  const result = cleanTranscription({
+    text: "Tô louco. Ah, entendi. Ah, entendi. Ah, entendi. Ah, entendi.",
+    segments: [
+      {
+        text: " Tô louco. Ah, entendi. Ah, entendi. Ah, entendi. Ah, entendi.",
+        no_speech_prob: 0.05,
+        avg_logprob: -0.4,
+        compression_ratio: 1.9,
+      },
+    ],
+  });
+  assert.equal(result.text, "Tô louco. Ah, entendi.");
+});
 
 test("normalizeForMatch lower-cases, keeps accents and drops punctuation", () => {
   assert.equal(
@@ -42,6 +82,20 @@ test("keeps real speech from a verbose_json response", () => {
   assert.equal(result.text, "Bom dia. A decisão é lançar na sexta.");
   assert.equal(result.durationSec, 6.2);
   assert.equal(result.reason, undefined);
+});
+
+test("speech start is the first kept segment, not a dropped hallucination", () => {
+  const result = cleanTranscription({
+    text: "Obrigado. Vamos começar.",
+    duration: 20,
+    segments: [
+      { text: " Obrigado.", start: 0.4, no_speech_prob: 0.7, avg_logprob: -1.2 },
+      { text: " Vamos começar.", start: 6.5, no_speech_prob: 0.02, avg_logprob: -0.2 },
+    ],
+  });
+  assert.equal(result.text, "Vamos começar.");
+  assert.equal(result.speechStartSec, 6.5);
+  assert.equal(cleanTranscription({ text: "Oi." }).speechStartSec, undefined);
 });
 
 test("drops credits glued to real speech but keeps the speech", () => {

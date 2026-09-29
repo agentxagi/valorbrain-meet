@@ -150,12 +150,13 @@
                   class="vb-input op-textarea"
                   rows="2"
                   spellcheck="false"
-                  placeholder="ValorBrain, Valor Digital, nomes de clientes e produtos"
+                  placeholder="gbrain, Resend, Replit, nomes de clientes e produtos"
                   data-dirty
                 ></textarea>
                 <p class="vb-hint">
-                  Nomes próprios, produtos e siglas separados por vírgula. Ajudam a transcrição e o
-                  resumo a escrever certo.
+                  Nomes próprios, produtos, siglas e termos em inglês, separados por vírgula.
+                  ValorBrain e ValorBrain Meet já entram sempre. No fim da reunião, a transcrição é
+                  revisada com essa lista antes de ir para o ValorBrain.
                 </p>
               </div>
             </div>
@@ -365,7 +366,9 @@
             </div>
             <p class="vb-muted">
               O áudio da aba traz as outras pessoas. A sua voz vem do microfone, que precisa ser
-              liberado uma vez para o ValorBrain Meet.
+              liberado uma vez para o ValorBrain Meet. As duas são transcritas separadas: tudo o que
+              vem do microfone sai com o seu nome. Quando você fica mudo no Meet, o microfone não é
+              gravado.
             </p>
             <div class="op-actions">
               <button id="mic-grant" class="vb-btn vb-btn--primary" type="button">
@@ -373,6 +376,22 @@
               </button>
             </div>
             <p id="mic-help" class="op-test-status" role="status" aria-live="polite"></p>
+            <div class="vb-field">
+              <label class="vb-label" for="self-name">Seu nome nas transcrições</label>
+              <input
+                id="self-name"
+                class="vb-input"
+                type="text"
+                autocomplete="name"
+                maxlength="80"
+                placeholder="Ex.: Gustavo"
+                data-dirty
+              />
+              <p class="vb-hint">
+                Aparece nas falas do seu microfone e ajuda o resumo a dizer quem assumiu cada
+                tarefa. Em branco, a extensão usa o nome da sua conta no Meet ou "Você".
+              </p>
+            </div>
             <div class="vb-field">
               <label class="vb-label" for="vad-threshold"
                 >Sensibilidade à fala: <span id="vad-value" class="vb-mono"></span

@@ -11,6 +11,7 @@ import {
   MeetingNotice,
   MeetingStats,
   State,
+  TranscriptEntry,
   VbDeliveryStatus,
 } from "./types";
 import { audioFileExtensionForMimeType, isChunkViable } from "./audioProcessing";
@@ -27,7 +28,14 @@ import {
 } from "./sessionStorage";
 import { AudioChunkQueue, AudioChunkQueueItem } from "./audioChunkQueue";
 import { getSettings } from "./settings";
-import { normalizeActiveSpeakerName, resolveTranscriptSpeaker } from "./speakerAttribution";
+import {
+  isEchoOf,
+  normalizeActiveSpeakerName,
+  rangesOverlap,
+  resolveTabSpeaker,
+  SELF_SPEAKER_FALLBACK,
+  type SpeakerEvent,
+} from "./speakerAttribution";
 import { getMeetingIdFromUrl } from "./meetingTabs";
 import { isMessageFromActiveMeeting } from "./activeMeetingMessages";
 import { findParticipant, namesMatch, normalizeName } from "./utils/nameUtils";
@@ -70,7 +78,9 @@ import {
   describeProviderError,
   isRetryableProviderError,
   ProviderConfigError,
+  ProviderHttpError,
   ProviderPayloadError,
+  quotaResetAt,
 } from "./providerErrors";
 import { requestChatCompletion, requestTranscription } from "./providerClient";
 import { cleanTranscription, type CleanTranscription } from "./transcriptFilter";
@@ -79,11 +89,19 @@ import {
   buildSummaryMessages,
   formatTimestampLabel,
   mergeSummaryResult,
-  parseVocabulary,
   sanitizePromptText,
   selectTranscriptWindow,
   type SummaryFeatures,
 } from "./meetingSummary";
+import { buildTranscriptionPrompt, mergeVocabulary } from "./transcriptionPrompt";
+import {
+  applyTermCorrections,
+  buildTermCorrectionMessages,
+  chunkLines,
+  mergeCorrections,
+  parseTermCorrections,
+  type TermCorrection,
+} from "./termCorrection";
 
 const OFFSCREEN_DOCUMENT_PATH = "src/offscreen.html";
 const OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
@@ -94,8 +112,14 @@ const LOG_PREFIX = "[ValorBrainMeet]";
 const SUMMARY_RETRY_MS = 60_000;
 /** Upper bound for transcribing the tail of a meeting after "stop". */
 const STOP_TRANSCRIPTION_TIMEOUT_MS = 150_000;
+/** Upper bound for the final spelling pass over the transcript after "stop". */
+const STOP_CORRECTION_TIMEOUT_MS = 75_000;
 /** Upper bound for the final summary pass after "stop". */
 const STOP_SUMMARY_TIMEOUT_MS = 90_000;
+/** Active-speaker changes kept for attributing tab segments (well above any segment). */
+const SPEAKER_EVENT_WINDOW_MS = 10 * 60_000;
+/** Echo checks look this many lines back. */
+const ECHO_LOOKBACK_LINES = 12;
 /** Minimum spacing between two notifications of the same kind. */
 const NOTIFICATION_THROTTLE_MS = 5 * 60_000;
 
@@ -211,10 +235,42 @@ const state: State = {
 };
 
 let selfParticipantName: string | null = null;
+/** Meet's active-speaker changes in this recording (transient, recent window). */
+let speakerEvents: SpeakerEvent[] = [];
+/** Mute state of the user's microphone in Meet, as reported by the content script. */
+let meetMicMuted = false;
 let isStartingAudio = false;
 let isStoppingAudio = false;
 let isProcessingSession = false;
 let summaryInFlight: Promise<void> | null = null;
+/**
+ * Set when the summary provider says its quota is exhausted: no summary or
+ * spelling request is sent to the same provider/key until it renews.
+ */
+let summaryQuotaPause: { until: number; provider: string } | null = null;
+
+function providerKey(config: ProviderConfig, apiKey: string | null): string {
+  return `${config.baseUrl}|${config.model}|${apiKey ?? ""}`;
+}
+
+function summaryQuotaExhausted(config: ProviderConfig, apiKey: string | null): boolean {
+  if (!summaryQuotaPause) return false;
+  if (Date.now() >= summaryQuotaPause.until) {
+    summaryQuotaPause = null;
+    return false;
+  }
+  return summaryQuotaPause.provider === providerKey(config, apiKey);
+}
+
+function pauseSummaryOnQuota(err: unknown, config: ProviderConfig, apiKey: string | null) {
+  if (!(err instanceof ProviderHttpError)) return;
+  if (describeProviderError("summary", err).kind !== "quota") return;
+  const resetAt = quotaResetAt(err.providerMessage);
+  summaryQuotaPause = {
+    until: resetAt ? resetAt.getTime() : Date.now() + 30 * 60_000,
+    provider: providerKey(config, apiKey),
+  };
+}
 
 async function trackUsage(delta: UsageDelta) {
   const startTimeAtCall = state.startTime;
@@ -451,10 +507,12 @@ function resetState() {
   state.micActive = null;
   state.finalizing = false;
   state.stats = emptyStats();
+  state.termCorrections = [];
   pendingJoinersInFlight.clear();
   perTabParticipants.clear();
   audioChunkQueue.clear();
   selfParticipantName = null;
+  speakerEvents = [];
 }
 
 function addTimeline(event: string) {
@@ -506,6 +564,9 @@ function snapshot(): State {
     micActive: state.micActive ?? null,
     finalizing: state.finalizing === true,
     stats: { ...(state.stats ?? emptyStats()) },
+    ...(state.termCorrections && state.termCorrections.length > 0
+      ? { termCorrections: state.termCorrections.map((c) => ({ ...c })) }
+      : {}),
   };
 }
 
@@ -768,16 +829,27 @@ interface PipelineSettings {
   transcriptRefinement?: boolean;
   transcriptionLanguage?: string;
   transcriptionVocabulary?: string;
+  /** How the recording user is named on microphone lines ("Gustavo"). */
+  selfName?: string;
 }
 
-const DEFAULT_VOCABULARY = "ValorBrain";
-
 function vocabularyFrom(settings: PipelineSettings): string[] {
-  return parseVocabulary(
-    typeof settings.transcriptionVocabulary === "string"
-      ? settings.transcriptionVocabulary
-      : DEFAULT_VOCABULARY,
-  );
+  return mergeVocabulary(settings.transcriptionVocabulary);
+}
+
+/** Meet's placeholder labels for the local user, never a real name. */
+const SELF_PLACEHOLDER = /^(you|você|voce|tú|tu|vous)$/i;
+
+/** Names the recording user may appear under: the setting, then Meet's self tile. */
+function selfNameCandidates(settings: PipelineSettings): string[] {
+  return [settings.selfName, selfParticipantName]
+    .map((value) => (typeof value === "string" ? sanitizeParticipantName(value) : ""))
+    .filter((value) => value && !SELF_PLACEHOLDER.test(value));
+}
+
+/** Speaker label for microphone lines. */
+function selfSpeakerName(settings: PipelineSettings): string {
+  return selfNameCandidates(settings)[0] ?? SELF_SPEAKER_FALLBACK;
 }
 
 function isFeatureEnabled(settings: PipelineSettings, key: keyof PipelineSettings): boolean {
@@ -853,30 +925,25 @@ async function closeOffscreenDocumentIfPresent() {
 // ---------------------------------------------------------------------------
 
 /**
- * Context for Whisper: company vocabulary and participant names (spelling),
- * then the last words said. Kept under ~800 characters (Whisper reads at most
- * 224 prompt tokens).
+ * Context for Whisper: company vocabulary and names (spelling), then the last
+ * words said on the same side (microphone or tab) for continuity. Budgeted so
+ * Whisper never drops the glossary (see transcriptionPrompt.ts).
  */
-function getTranscriptionPrompt(vocabulary: string[]): string {
-  const names = state.participants
-    .filter((name) => name && name !== "You")
-    .slice(0, 12)
-    .map((name) => sanitizePromptText(name, 60))
-    .join(", ")
-    .slice(0, 200);
-  const recent = state.transcript
+function getTranscriptionPrompt(
+  vocabulary: string[],
+  source: "tab" | "mic",
+  settings: PipelineSettings,
+): string {
+  const sameSide = state.transcript.filter((entry) => (entry.source ?? "tab") === source);
+  const recent = (sameSide.length > 0 ? sameSide : state.transcript)
     .slice(-2)
     .map((entry) => entry.text)
-    .join(" ")
-    .slice(-240);
-  return [
-    vocabulary.length ? `Termos: ${vocabulary.join(", ")}.` : "",
-    names ? `Participantes: ${names}.` : "",
-    recent,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
+    .join(" ");
+  return buildTranscriptionPrompt({
+    vocabulary,
+    names: [...selfNameCandidates(settings), ...state.participants],
+    recentText: recent,
+  });
 }
 
 interface QueuedAudioChunk {
@@ -886,7 +953,10 @@ interface QueuedAudioChunk {
   receivedAt: number;
   startedAt: number;
   endedAt: number;
-  speaker: string;
+  /** Capture channel: the user's microphone or the meeting tab. */
+  source: "tab" | "mic";
+  /** Meet's active speaker when the chunk arrived (fallback attribution). */
+  speakerAtArrival: string | null;
 }
 
 async function transcribeChunk(item: QueuedAudioChunk): Promise<CleanTranscription | null> {
@@ -915,7 +985,7 @@ async function transcribeChunk(item: QueuedAudioChunk): Promise<CleanTranscripti
       audio: blob,
       filename: `audio.${extension}`,
       language,
-      prompt: getTranscriptionPrompt(vocabularyFrom(settings)),
+      prompt: getTranscriptionPrompt(vocabularyFrom(settings), item.source, settings),
       temperature: 0,
     }),
   );
@@ -931,7 +1001,10 @@ async function transcribeChunk(item: QueuedAudioChunk): Promise<CleanTranscripti
 
   return cleanTranscription(
     data,
-    state.transcript.slice(-2).map((entry) => entry.text),
+    state.transcript
+      .filter((entry) => (entry.source ?? "tab") === item.source)
+      .slice(-2)
+      .map((entry) => entry.text),
   );
 }
 
@@ -1006,19 +1079,49 @@ async function processQueuedAudioChunk({ id, item }: AudioChunkQueueItem<QueuedA
   if (state.startTime !== startTimeAtCall) return;
 
   // Timestamp = when the segment started (falls back to arrival minus duration).
-  const startedAt =
+  const segmentStartedAt =
     Number.isFinite(item.startedAt) && item.startedAt > 0
       ? item.startedAt
       : item.receivedAt - (result.durationSec ?? 0) * 1000;
+  const endedAt =
+    Number.isFinite(item.endedAt) && item.endedAt > segmentStartedAt
+      ? item.endedAt
+      : segmentStartedAt + (result.durationSec ?? 0) * 1000;
+  // A segment starts after the previous cut, often with silence first: the
+  // line is timed (and attributed) from where the speech really begins.
+  const speechOffsetMs = Math.max(0, (result.speechStartSec ?? 0) * 1000);
+  const startedAt = Math.min(segmentStartedAt + speechOffsetMs, endedAt);
   const offsetSeconds = Math.max(0, Math.floor((startedAt - startTimeAtCall) / 1000));
 
-  state.transcript.push({
+  const speaker =
+    item.source === "mic"
+      ? selfSpeakerName(settings)
+      : resolveTabSpeaker({
+          events: speakerEvents,
+          startedAt,
+          endedAt,
+          participants: state.participants,
+          selfNames: selfNameCandidates(settings),
+          currentSpeaker: item.speakerAtArrival,
+        });
+
+  const inserted = insertTranscriptEntry({
     id: `chunk_${id}`,
-    speaker: resolveTranscriptSpeaker(item.speaker || state.currentSpeaker),
+    speaker,
     text,
     timestamp: offsetSeconds,
     timestampLabel: formatTimestampLabel(offsetSeconds),
+    source: item.source,
+    startedAt,
+    endedAt,
   });
+  if (!inserted) {
+    // The meeting audio leaking into the microphone (speakers, no headphones).
+    if (state.stats) state.stats.chunksFiltered += 1;
+    if (DEBUG) console.log(`${LOG_PREFIX} chunk ${id} dropped (eco do alto-falante):`, text);
+    await broadcastStateUpdate();
+    return;
+  }
   if (state.stats) state.stats.chunksTranscribed += 1;
   clearNotice("transcription");
 
@@ -1026,6 +1129,53 @@ async function processQueuedAudioChunk({ id, item }: AudioChunkQueueItem<QueuedA
     console.warn(`${LOG_PREFIX} summary scheduling failed`, err),
   );
   await broadcastStateUpdate();
+}
+
+function sameMoment(a: TranscriptEntry, b: TranscriptEntry): boolean {
+  if (!a.startedAt || !b.startedAt) return false;
+  return rangesOverlap(
+    { startedAt: a.startedAt, endedAt: a.endedAt ?? a.startedAt },
+    { startedAt: b.startedAt, endedAt: b.endedAt ?? b.startedAt },
+  );
+}
+
+/**
+ * Adds a line in time order. Two channels are transcribed in the order their
+ * segments end, so a line may belong before the last one. A microphone line
+ * that repeats what the tab said at the same moment is the meeting audio
+ * leaking into the mic: it is dropped (or removed if it arrived first).
+ * Returns false when the line itself was an echo.
+ */
+function insertTranscriptEntry(entry: TranscriptEntry): boolean {
+  const transcript = state.transcript;
+  const lookbackStart = Math.max(0, transcript.length - ECHO_LOOKBACK_LINES);
+
+  if (entry.source === "mic") {
+    for (let i = lookbackStart; i < transcript.length; i += 1) {
+      const other = transcript[i];
+      if (other.source !== "mic" && sameMoment(entry, other) && isEchoOf(entry.text, other.text)) {
+        return false;
+      }
+    }
+  } else {
+    for (let i = transcript.length - 1; i >= lookbackStart; i -= 1) {
+      const other = transcript[i];
+      if (other.source === "mic" && sameMoment(entry, other) && isEchoOf(other.text, entry.text)) {
+        transcript.splice(i, 1);
+        if ((state.lastSummarizedIndex ?? 0) > i) {
+          state.lastSummarizedIndex = (state.lastSummarizedIndex ?? 1) - 1;
+        }
+      }
+    }
+  }
+
+  let index = transcript.length;
+  const startedAt = entry.startedAt ?? 0;
+  while (index > 0 && (transcript[index - 1].startedAt ?? 0) > startedAt) index -= 1;
+  transcript.splice(index, 0, entry);
+  // A line inserted before the summarized part is picked up by the next pass.
+  if ((state.lastSummarizedIndex ?? 0) > index) state.lastSummarizedIndex = index;
+  return true;
 }
 
 const audioChunkQueue = new AudioChunkQueue<QueuedAudioChunk>({
@@ -1095,6 +1245,7 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
   const startTimeAtCall = state.startTime;
   const features = summaryFeatures(settings);
   const { config, apiKey } = await getSummaryProvider();
+  if (summaryQuotaExhausted(config, apiKey)) return; // the notice already explains it
 
   if (requiresApiKey(config) && !apiKey) {
     setNotice(
@@ -1117,10 +1268,11 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     previousSummary: state.summary,
     transcriptLines: window.lines,
     features,
-    participants: state.participants,
+    participants: [...selfNameCandidates(settings), ...state.participants],
     known: { decisions: state.decisions, actionItems: state.actionItems, topics: state.topics },
     isFinal,
     vocabulary: vocabularyFrom(settings),
+    selfName: selfNameCandidates(settings)[0],
   });
 
   try {
@@ -1158,12 +1310,126 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     if (state.startTime !== startTimeAtCall) return;
     console.warn(`${LOG_PREFIX} Summarization failed:`, err);
     const described = describeProviderError("summary", err, config.baseUrl);
-    setNotice("summary", described.kind === "rateLimit" ? "warning" : "error", described.message);
+    pauseSummaryOnQuota(err, config, apiKey);
+    setNotice(
+      "summary",
+      described.kind === "rateLimit" || described.kind === "quota" ? "warning" : "error",
+      described.message,
+    );
     const intervalMs = summaryIntervalSeconds(settings) * 1000;
     state.lastSummarizedAt = Date.now() - intervalMs + SUMMARY_RETRY_MS;
     notify("summary-error", "ValorBrain Meet: resumo com problema", described.message, true);
   }
   await broadcastStateUpdate();
+}
+
+// ---------------------------------------------------------------------------
+// Final spelling pass
+// ---------------------------------------------------------------------------
+
+/** Applies the corrections to every text the summary produced so far. */
+function applyCorrectionsToSummary(corrections: TermCorrection[]) {
+  const fix = (value: string | undefined) =>
+    value ? applyTermCorrections(value, corrections).text : value;
+  state.summary = fix(state.summary) ?? "";
+  state.currentTopic = fix(state.currentTopic) ?? "";
+  for (const item of state.summaryItems) item.text = fix(item.text) ?? item.text;
+  for (const topic of state.topics) topic.name = fix(topic.name) ?? topic.name;
+  for (const decision of state.decisions) {
+    decision.text = fix(decision.text) ?? decision.text;
+    if (decision.by) decision.by = fix(decision.by);
+  }
+  for (const action of state.actionItems) {
+    action.task = fix(action.task) ?? action.task;
+    if (action.owner) action.owner = fix(action.owner);
+    if (action.deadline) action.deadline = fix(action.deadline);
+  }
+  for (const insight of state.keyInsights) insight.text = fix(insight.text) ?? insight.text;
+  for (const contradiction of state.contradictions) {
+    contradiction.issue = fix(contradiction.issue) ?? contradiction.issue;
+  }
+  state.unresolvedDiscussions = state.unresolvedDiscussions.map((item) => fix(item) ?? item);
+  state.questionsRaised = state.questionsRaised.map((item) => fix(item) ?? item);
+}
+
+/**
+ * Asks the summary model which names and terms were misheard ("D-Brain" for
+ * gbrain), keeps only safe, verifiable replacements (termCorrection.ts) and
+ * applies them to the transcript and the summary before the final pass.
+ * Best effort: any failure leaves the transcript as transcribed.
+ */
+async function correctTranscriptTerms(): Promise<void> {
+  if (state.transcript.length === 0) return;
+  const startTimeAtCall = state.startTime;
+  const { config, apiKey } = await getSummaryProvider();
+  if (requiresApiKey(config) && !apiKey) return;
+  if (summaryQuotaExhausted(config, apiKey)) return;
+
+  const settings = (await getSettings()) as PipelineSettings;
+  const vocabulary = vocabularyFrom(settings);
+  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const lines = state.transcript.map(
+    (entry) =>
+      `[${entry.timestampLabel || formatTimestampLabel(entry.timestamp || 0)}] ${sanitizePromptText(entry.speaker, 100)}: ${sanitizePromptText(entry.text)}`,
+  );
+  const transcriptText = state.transcript.map((entry) => entry.text).join("\n");
+
+  const proposals: TermCorrection[][] = [];
+  for (const chunk of chunkLines(lines)) {
+    let result;
+    try {
+      result = await llmQueue.enqueue("terms", () =>
+        requestChatCompletion(config, apiKey, {
+          messages: buildTermCorrectionMessages({ lines: chunk, vocabulary, participants }),
+          maxTokens: 1500,
+          temperature: 0,
+          json: true,
+          timeoutMs: 45_000,
+        }),
+      );
+    } catch (err) {
+      pauseSummaryOnQuota(err, config, apiKey);
+      throw err;
+    }
+    if (state.startTime !== startTimeAtCall) return;
+    if (result.usage) {
+      void trackUsage({
+        promptTokens: result.usage.prompt_tokens,
+        completionTokens: result.usage.completion_tokens,
+        totalTokens: result.usage.total_tokens,
+        model: config.model,
+      });
+    }
+    proposals.push(
+      parseTermCorrections(extractJsonObject(result.content), transcriptText, [
+        ...vocabulary,
+        ...participants,
+      ]),
+    );
+  }
+
+  const corrections = mergeCorrections(proposals);
+  if (corrections.length === 0) return;
+
+  const totals = new Map<string, number>();
+  for (const entry of state.transcript) {
+    const { text, counts } = applyTermCorrections(entry.text, corrections);
+    entry.text = text;
+    for (const [from, count] of counts) totals.set(from, (totals.get(from) ?? 0) + count);
+  }
+  applyCorrectionsToSummary(corrections);
+
+  state.termCorrections = corrections
+    .map((correction) => ({ ...correction, count: totals.get(correction.from) ?? 0 }))
+    .filter((correction) => correction.count > 0);
+  if (state.termCorrections.length > 0) {
+    addTimeline(
+      `Termos corrigidos na transcrição: ${state.termCorrections
+        .slice(0, 8)
+        .map((c) => `${c.from} → ${c.to}`)
+        .join(", ")}`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1542,6 +1808,7 @@ async function startAudioCapture(
       tabId,
       includeMicrophone,
       vadThreshold,
+      micMuted: meetMicMuted,
     });
     if (!response?.success) {
       throw new Error(response?.error || "Não foi possível iniciar a captura de áudio.");
@@ -1637,6 +1904,13 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
     if (wasRecording) {
       await withTimeout(audioChunkQueue.whenIdle(), STOP_TRANSCRIPTION_TIMEOUT_MS);
       if (state.transcript.length > 0) {
+        // Spelling first, so the final summary is written from the fixed text.
+        await withTimeout(
+          correctTranscriptTerms().catch((err) =>
+            console.warn(`${LOG_PREFIX} Term correction skipped:`, err),
+          ),
+          STOP_CORRECTION_TIMEOUT_MS,
+        );
         await withTimeout(
           summarizeTranscriptIfNeeded({ force: true, final: true }).catch(() => undefined),
           STOP_SUMMARY_TIMEOUT_MS,
@@ -1952,7 +2226,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           receivedAt,
           startedAt: Number(message.startedAt) || 0,
           endedAt: Number(message.endedAt) || receivedAt,
-          speaker: resolveTranscriptSpeaker(state.currentSpeaker),
+          source: message.source === "mic" ? "mic" : "tab",
+          speakerAtArrival: state.currentSpeaker ?? null,
         });
 
         if (!result.accepted) {
@@ -2042,8 +2317,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
         state.currentSpeaker = speaker;
+        const now = Date.now();
+        speakerEvents.push({ name: speaker, at: now });
+        // Keep the recent window, plus the event that was running when it began.
+        while (speakerEvents.length > 1 && speakerEvents[1].at < now - SPEAKER_EVENT_WINDOW_MS) {
+          speakerEvents.shift();
+        }
         await broadcastStateUpdate();
         sendResponse({ success: true, speaker });
+        return;
+      }
+
+      case "MEET_MIC_STATE": {
+        if (
+          !isMessageFromActiveMeeting({
+            senderTabId: sender?.tab?.id,
+            senderUrl: sender?.tab?.url || sender?.url,
+            targetTabId: state.targetTabId,
+            meetingId: state.meetingId,
+          })
+        ) {
+          sendResponse({ success: true, ignored: true });
+          return;
+        }
+        const muted = message.muted === true;
+        if (muted !== meetMicMuted) {
+          meetMicMuted = muted;
+          if (state.audioActive) {
+            addTimeline(
+              muted
+                ? "Microfone mudo no Meet: sua voz não está sendo gravada"
+                : "Microfone reativado no Meet",
+            );
+            chrome.runtime.sendMessage({ type: "OFFSCREEN_SET_MIC_MUTED", muted }).catch(() => {});
+          }
+        }
+        sendResponse({ success: true, muted });
         return;
       }
 

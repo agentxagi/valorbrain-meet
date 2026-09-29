@@ -37,6 +37,8 @@ export interface CleanTranscription {
   dropped: string[];
   /** Audio duration in seconds reported by the server, when present. */
   durationSec?: number;
+  /** Where speech starts inside the audio (first kept segment), when known. */
+  speechStartSec?: number;
 }
 
 /**
@@ -148,6 +150,44 @@ function collapseWhitespace(text: string): string {
 }
 
 /**
+ * Removes the loops Whisper falls into on hesitant speech ("Ah, entendi. Ah,
+ * entendi. Ah, entendi. …"): a phrase of 2–8 words repeated 3+ times in a row,
+ * or a single word repeated 4+ times, is kept once. Real emphasis ("não, não,
+ * não") stays.
+ */
+export function collapseRepeatedPhrases(text: string): string {
+  const tokens = collapseWhitespace(text).split(" ").filter(Boolean);
+  const keys = tokens.map((token) => normalizeForMatch(token));
+  let changed = true;
+  let words = tokens;
+  let norm = keys;
+  while (changed) {
+    changed = false;
+    for (let n = 1; n <= 8 && !changed; n += 1) {
+      const minRepeats = n === 1 ? 4 : 3;
+      for (let i = 0; i + n * minRepeats <= norm.length; i += 1) {
+        const phrase = norm.slice(i, i + n);
+        if (phrase.some((key) => !key)) continue;
+        let repeats = 1;
+        while (
+          i + (repeats + 1) * n <= norm.length &&
+          phrase.every((key, k) => norm[i + repeats * n + k] === key)
+        ) {
+          repeats += 1;
+        }
+        if (repeats >= minRepeats) {
+          words = [...words.slice(0, i + n), ...words.slice(i + repeats * n)];
+          norm = [...norm.slice(0, i + n), ...norm.slice(i + repeats * n)];
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  return words.join(" ");
+}
+
+/**
  * Cleans one STT response.
  *
  * @param response - Parsed JSON body (OpenAI `json` or `verbose_json` shape).
@@ -166,6 +206,7 @@ export function cleanTranscription(
 
   const segments = Array.isArray(response?.segments) ? response!.segments! : [];
   let kept: string[] = [];
+  let speechStartSec: number | undefined;
 
   if (segments.length > 0) {
     for (const segment of segments) {
@@ -180,6 +221,9 @@ export function cleanTranscription(
       ) {
         dropped.push(text);
         continue;
+      }
+      if (speechStartSec === undefined && typeof segment.start === "number" && segment.start >= 0) {
+        speechStartSec = segment.start;
       }
       kept.push(text);
     }
@@ -196,7 +240,7 @@ export function cleanTranscription(
     return true;
   });
 
-  const text = collapseWhitespace(sentences.join(" "));
+  const text = collapseRepeatedPhrases(collapseWhitespace(sentences.join(" ")));
   if (!text) {
     const reason: DropReason =
       dropped.length === 0
@@ -215,5 +259,5 @@ export function cleanTranscription(
     }
   }
 
-  return { text, dropped, durationSec };
+  return { text, dropped, durationSec, speechStartSec };
 }

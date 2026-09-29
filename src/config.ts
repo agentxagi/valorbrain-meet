@@ -47,14 +47,14 @@ export const WAVEFORM_BUCKETS = 32;
 /** Gain multiplier applied to raw audio amplitude values before rendering the waveform. */
 export const WAVEFORM_GAIN = 6;
 
-/** Milliseconds of silence after which an in-progress audio chunk is flushed for transcription. */
-export const SILENCE_FLUSH_MS = 1500;
+// Segments are cut at pauses, and the pause needed shrinks as a segment grows
+// (see requiredPauseMs in segmenter.ts).
 
 /** Maximum buffered audio duration in milliseconds before the buffer is force-flushed. */
-export const MAX_BUFFER_MS = 25000;
+export const MAX_BUFFER_MS = 28000;
 
 /** Speech segments shorter than this are extended instead of flushed on a pause. */
-export const MIN_SEGMENT_MS = 2500;
+export const MIN_SEGMENT_MS = 3000;
 
 /** A segment with no speech at all is discarded (not transcribed) after this long. */
 export const SILENT_SEGMENT_DISCARD_MS = 10000;

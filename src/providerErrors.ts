@@ -98,10 +98,29 @@ function roleNoun(role: ProviderRoleLabel): string {
   return role === "transcription" ? "de transcrição" : "de resumo";
 }
 
+/** Z.ai codes that no retry can fix: no balance (1113), usage window exhausted (1308). */
+const QUOTA_CODES = new Set(["1113", "1308"]);
+
+/**
+ * Z.ai reports when a usage window resets ("Your limit will reset at
+ * 2026-09-30 04:55:58", China Standard Time). Returns that instant or null.
+ */
+export function quotaResetAt(message: string | null | undefined): Date | null {
+  const match = /(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/.exec(String(message ?? ""));
+  if (!match) return null;
+  const date = new Date(`${match[1]}T${match[2].length === 5 ? `${match[2]}:00` : match[2]}+08:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isUsageWindowExhausted(err: ProviderHttpError): boolean {
+  return err.code === "1308" || /usage limit reached|使用上限/i.test(err.providerMessage ?? "");
+}
+
 /** True for failures worth retrying (network hiccups, 429, 5xx, cold start). */
 export function isRetryableProviderError(err: unknown): boolean {
   if (err instanceof ProviderHttpError) {
-    if (err.status === 429) return err.code !== "1113"; // Z.ai "no balance" never heals
+    // An exhausted quota never heals by retrying within minutes.
+    if (err.status === 429) return !QUOTA_CODES.has(err.code ?? "") && !isUsageWindowExhausted(err);
     return err.status >= 500 || err.status === 408;
   }
   if (err instanceof ProviderPayloadError) return false;
@@ -136,6 +155,17 @@ export function describeProviderError(
         retryable: false,
         message:
           "A Z.ai recusou por falta de saldo neste endpoint. Se a sua chave é do GLM Coding Plan, use o perfil “Z.ai GLM (GLM Coding Plan)”.",
+      };
+    }
+    if (err.status === 429 && isUsageWindowExhausted(err)) {
+      const resetAt = quotaResetAt(err.providerMessage);
+      const when = resetAt
+        ? ` Ela renova às ${resetAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}.`
+        : " Tente de novo mais tarde.";
+      return {
+        kind: "quota",
+        retryable: false,
+        message: `A cota do provedor ${noun} acabou (limite de uso de 5 horas do GLM Coding Plan).${when} A transcrição continua normalmente.`,
       };
     }
     if (err.status === 401 || err.status === 403) {

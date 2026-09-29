@@ -1,16 +1,19 @@
 // Offscreen document: owns the tab/microphone capture, voice-activity detection
-// and segment recording. Each speech segment is recorded by its own
+// and segment recording. The tab (everyone else) and the microphone (the person
+// recording) are separate channels: each is segmented at its own pauses and
+// transcribed on its own, so every microphone line is the recording user and
+// overlapping speech is not lost. Each segment is recorded by its own
 // MediaRecorder so every chunk is a complete, independently decodable file
 // (issue #678), then handed to the service worker for transcription.
 
 import { isChunkViable } from "./audioProcessing";
 import { microphoneErrorCode } from "./microphoneErrors";
 import { computeRms } from "./vadTuning";
+import { SpeechSegmenter } from "./segmenter";
 import {
   MAX_BUFFER_MS,
   MAX_PENDING_CHUNKS,
   MIN_SEGMENT_MS,
-  SILENCE_FLUSH_MS,
   SILENT_SEGMENT_DISCARD_MS,
   VAD_SAMPLE_MS,
   WAVEFORM_BUCKETS,
@@ -18,52 +21,56 @@ import {
   WAVEFORM_INTERVAL_MS,
 } from "./config";
 import {
-  connectMicrophoneToOffscreenAudioGraph,
-  createOffscreenAudioGraph,
+  createMicrophoneChannelGraph,
+  createTabChannelGraph,
   MICROPHONE_AUDIO_CONSTRAINTS,
+  type CaptureChannelGraph,
 } from "./offscreenAudioGraph";
+
+type ChannelId = "tab" | "mic";
 
 interface PendingChunk {
   blob: Blob;
+  source: ChannelId;
   startedAt: number;
   endedAt: number;
   attempts: number;
 }
 
+interface Channel {
+  id: ChannelId;
+  input: MediaStream;
+  graph: CaptureChannelGraph;
+  buffer: Uint8Array<ArrayBuffer>;
+  recorder: MediaRecorder | null;
+  segmenter: SpeechSegmenter;
+  rotation: Promise<void> | null;
+  /** Mic muted in Meet: its audio is not part of the meeting and is dropped. */
+  muted: boolean;
+}
+
 type SegmentMode = "send" | "discard";
 
 const DEFAULT_RMS_THRESHOLD = 0.012;
-const SILENCE_FLUSH_TICKS = Math.ceil(SILENCE_FLUSH_MS / VAD_SAMPLE_MS);
-/** A segment whose loudest tick stays below this fraction of the threshold is silence. */
-const NEAR_SPEECH_FACTOR = 0.6;
 /** Back-pressure: wait this long before re-offering a chunk the SW queue rejected. */
 const REJECTED_CHUNK_RETRY_MS = 1500;
 /** Give up on a chunk the SW keeps rejecting after this many offers (~45 s). */
 const MAX_CHUNK_OFFERS = 30;
 /** Upper bound for the final drain on stop, so a wedged SW can't hang the stop. */
 const STOP_DRAIN_TIMEOUT_MS = 90_000;
+/** While the mic is muted in Meet, its recording is restarted (dropped) this often. */
+const MUTED_DISCARD_MS = 2000;
 
-let mediaStream: MediaStream | null = null;
-let microphoneStream: MediaStream | null = null;
-let recorderStream: MediaStream | null = null;
-let mediaRecorder: MediaRecorder | null = null;
+let channels: Channel[] = [];
 let audioContext: AudioContext | null = null;
-let analyserNode: AnalyserNode | null = null;
-let analysisBuffer: Uint8Array<ArrayBuffer> | null = null;
 let vadTimer: ReturnType<typeof setInterval> | null = null;
 let waveformTimer: ReturnType<typeof setInterval> | null = null;
 let recorderMimeType = "";
 let rmsThreshold = DEFAULT_RMS_THRESHOLD;
-
-// Current segment bookkeeping (reset whenever a new recorder starts).
-let segmentStartedAt = 0;
-let segmentSpeechTicks = 0;
-let segmentPeakRms = 0;
-let silenceTicks = 0;
+let micMutedInMeet = false;
 
 let pendingChunks: PendingChunk[] = [];
 let drainPromise: Promise<void> | null = null;
-let rotationPromise: Promise<void> | null = null;
 let stopPromise: Promise<void> | null = null;
 let captureActive = false;
 let chunksSent = 0;
@@ -105,50 +112,43 @@ function pickSupportedMimeType(): string {
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
 }
 
-function getCurrentRms(): number {
-  if (!analyserNode || !analysisBuffer) return 0;
-  analyserNode.getByteTimeDomainData(analysisBuffer);
-  return computeRms(analysisBuffer);
+function channelLabel(channel: Channel): string {
+  return channel.id === "mic" ? "microfone" : "aba";
+}
+
+function readRms(channel: Channel): number {
+  channel.graph.analyser.getByteTimeDomainData(channel.buffer);
+  return computeRms(channel.buffer);
 }
 
 function sampleAndSendWaveform() {
-  if (!analyserNode || !analysisBuffer || !captureActive) return;
+  if (!captureActive || channels.length === 0) return;
 
-  const buffer = analysisBuffer;
-  analyserNode.getByteTimeDomainData(buffer);
-
-  const bucketSize = Math.floor(buffer.length / WAVEFORM_BUCKETS);
-  const buckets: number[] = [];
-  for (let i = 0; i < WAVEFORM_BUCKETS; i++) {
-    let sum = 0;
-    for (let j = 0; j < bucketSize; j++) {
-      sum += Math.abs((buffer[i * bucketSize + j] - 128) / 128);
+  // One bar graph for the meeting: the louder of the two channels per bucket.
+  const buckets = new Array<number>(WAVEFORM_BUCKETS).fill(0);
+  for (const channel of channels) {
+    if (channel.muted) continue;
+    const buffer = channel.buffer;
+    channel.graph.analyser.getByteTimeDomainData(buffer);
+    const bucketSize = Math.floor(buffer.length / WAVEFORM_BUCKETS);
+    for (let i = 0; i < WAVEFORM_BUCKETS; i++) {
+      let sum = 0;
+      for (let j = 0; j < bucketSize; j++) {
+        sum += Math.abs((buffer[i * bucketSize + j] - 128) / 128);
+      }
+      buckets[i] = Math.max(buckets[i], Math.min(1, (sum / bucketSize) * WAVEFORM_GAIN));
     }
-    buckets.push(Math.min(1, (sum / bucketSize) * WAVEFORM_GAIN));
   }
 
   chrome.runtime.sendMessage({ type: "WAVEFORM_DATA", buckets }).catch(() => {});
 }
 
-function resetSegmentCounters(startedAt = Date.now()) {
-  segmentStartedAt = startedAt;
-  segmentSpeechTicks = 0;
-  segmentPeakRms = 0;
-  silenceTicks = 0;
-}
-
-function segmentHasSpeech(): boolean {
-  return segmentSpeechTicks > 0 || segmentPeakRms >= rmsThreshold * NEAR_SPEECH_FACTOR;
-}
-
-/** Creates a recorder for the shared recorder stream (one per segment). */
-function createRecorder(): MediaRecorder {
-  if (!recorderStream) {
-    throw new Error("Cannot create recorder without an active stream");
-  }
+/** Creates a recorder for the channel's own recording stream (one per segment). */
+function createRecorder(channel: Channel): MediaRecorder {
+  const stream = channel.graph.destination.stream;
   const recorder = recorderMimeType
-    ? new MediaRecorder(recorderStream, { mimeType: recorderMimeType })
-    : new MediaRecorder(recorderStream);
+    ? new MediaRecorder(stream, { mimeType: recorderMimeType })
+    : new MediaRecorder(stream);
   recorder.addEventListener("error", handleRecorderError);
   return recorder;
 }
@@ -197,25 +197,25 @@ function stopRecorderAndCollect(recorder: MediaRecorder): Promise<Blob | null> {
 }
 
 /**
- * Ends the current segment and immediately starts the next one. The new
- * recorder starts before the old one stops, so consecutive segments overlap
- * by a few milliseconds instead of leaving a gap.
+ * Ends the channel's current segment and immediately starts the next one. The
+ * new recorder starts before the old one stops, so consecutive segments
+ * overlap by a few milliseconds instead of leaving a gap.
  */
-function rotateSegment(mode: SegmentMode, reason: string): Promise<void> {
-  if (rotationPromise) return rotationPromise;
-  rotationPromise = (async () => {
-    const previous = mediaRecorder;
-    const startedAt = segmentStartedAt;
+function rotateSegment(channel: Channel, mode: SegmentMode, reason: string): Promise<void> {
+  if (channel.rotation) return channel.rotation;
+  channel.rotation = (async () => {
+    const previous = channel.recorder;
+    const startedAt = channel.segmenter.segmentStartedAt;
     const endedAt = Date.now();
-    if (!previous || !recorderStream) return;
+    if (!previous) return;
 
     try {
-      mediaRecorder = createRecorder();
-      mediaRecorder.start();
-      resetSegmentCounters(endedAt);
+      channel.recorder = createRecorder(channel);
+      channel.recorder.start();
+      channel.segmenter.reset(endedAt);
     } catch (err) {
       relay(`recorder restart failed — ${(err as Error)?.message ?? "unknown error"}`);
-      mediaRecorder = null;
+      channel.recorder = null;
       void failCapture("O gravador de áudio parou de responder.");
       return;
     }
@@ -226,17 +226,17 @@ function rotateSegment(mode: SegmentMode, reason: string): Promise<void> {
       return;
     }
     if (!blob || !isChunkViable(blob)) {
-      relay(`segment skipped (${reason}) — ${blob?.size ?? 0} bytes`);
+      relay(`${channel.id} segment skipped (${reason}) — ${blob?.size ?? 0} bytes`);
       return;
     }
     relay(
-      `segment ready (${reason}) — ${blob.size} bytes, ${Math.round((endedAt - startedAt) / 1000)}s`,
+      `${channel.id} segment ready (${reason}) — ${blob.size} bytes, ${Math.round((endedAt - startedAt) / 1000)}s`,
     );
-    enqueueChunk({ blob, startedAt, endedAt, attempts: 0 });
+    enqueueChunk({ blob, source: channel.id, startedAt, endedAt, attempts: 0 });
   })().finally(() => {
-    rotationPromise = null;
+    channel.rotation = null;
   });
-  return rotationPromise;
+  return channel.rotation;
 }
 
 function enqueueChunk(chunk: PendingChunk) {
@@ -259,6 +259,7 @@ async function offerChunk(chunk: PendingChunk): Promise<OfferResult> {
       type: "OFFSCREEN_AUDIO_CHUNK",
       audioBase64,
       mimeType: chunk.blob.type || recorderMimeType || "audio/webm",
+      source: chunk.source,
       startedAt: chunk.startedAt,
       endedAt: chunk.endedAt,
     });
@@ -318,34 +319,25 @@ async function drainWithDeadline(ms: number): Promise<void> {
 }
 
 function vadTick() {
-  if (!captureActive || rotationPromise || !mediaRecorder) return;
-
-  const rms = getCurrentRms();
-  if (rms > segmentPeakRms) segmentPeakRms = rms;
-  if (rms >= rmsThreshold) {
-    segmentSpeechTicks += 1;
-    silenceTicks = 0;
-  } else {
-    silenceTicks += 1;
-  }
-
-  const age = Date.now() - segmentStartedAt;
-
-  if (segmentSpeechTicks > 0 && silenceTicks >= SILENCE_FLUSH_TICKS && age >= MIN_SEGMENT_MS) {
-    void rotateSegment("send", "pausa na fala");
-    return;
-  }
-  if (age >= MAX_BUFFER_MS) {
-    void rotateSegment(segmentHasSpeech() ? "send" : "discard", "limite de duração");
-    return;
-  }
-  if (segmentSpeechTicks === 0 && age >= SILENT_SEGMENT_DISCARD_MS && !segmentHasSpeech()) {
-    // Pure silence: restart the segment so it doesn't pile onto the next one.
-    void rotateSegment("discard", "silêncio");
+  if (!captureActive) return;
+  const now = Date.now();
+  for (const channel of channels) {
+    if (channel.rotation || !channel.recorder) continue;
+    if (channel.muted) {
+      // Muted in Meet: nobody in the call hears it, so it is not recorded.
+      if (now - channel.segmenter.segmentStartedAt >= MUTED_DISCARD_MS) {
+        void rotateSegment(channel, "discard", "microfone mudo no Meet");
+      }
+      continue;
+    }
+    const decision = channel.segmenter.tick(readRms(channel), now);
+    if (decision.action !== "continue") {
+      void rotateSegment(channel, decision.action, decision.reason);
+    }
   }
 }
 
-function stopTracks(stream: MediaStream | null) {
+function stopTracks(stream: MediaStream | null | undefined) {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
@@ -356,12 +348,11 @@ async function cleanupResources() {
   vadTimer = null;
   waveformTimer = null;
 
-  stopTracks(mediaStream);
-  stopTracks(microphoneStream);
-  stopTracks(recorderStream);
-  mediaStream = null;
-  microphoneStream = null;
-  recorderStream = null;
+  for (const channel of channels) {
+    stopTracks(channel.input);
+    stopTracks(channel.graph.destination.stream);
+  }
+  channels = [];
 
   if (audioContext) {
     try {
@@ -371,11 +362,6 @@ async function cleanupResources() {
     }
     audioContext = null;
   }
-
-  mediaRecorder = null;
-  analyserNode = null;
-  analysisBuffer = null;
-  resetSegmentCounters(0);
 }
 
 async function getTabAudioStream(streamId: string) {
@@ -421,9 +407,53 @@ async function failCapture(reason: string) {
   await chrome.runtime.sendMessage({ type: "UNEXPECTED_TRACK_END", reason }).catch(() => {});
 }
 
+function createChannel(id: ChannelId, input: MediaStream, graph: CaptureChannelGraph): Channel {
+  const now = Date.now();
+  const channel: Channel = {
+    id,
+    input,
+    graph,
+    // Sized once per capture and reused by every VAD/waveform read.
+    buffer: new Uint8Array(new ArrayBuffer(graph.analyser.fftSize)),
+    recorder: null,
+    segmenter: new SpeechSegmenter({
+      tickMs: VAD_SAMPLE_MS,
+      minSegmentMs: MIN_SEGMENT_MS,
+      maxSegmentMs: MAX_BUFFER_MS,
+      silentDiscardMs: SILENT_SEGMENT_DISCARD_MS,
+      baseThreshold: rmsThreshold,
+    }),
+    rotation: null,
+    muted: id === "mic" && micMutedInMeet,
+  };
+  channel.recorder = createRecorder(channel);
+  channel.recorder.start();
+  channel.segmenter.reset(now);
+  return channel;
+}
+
+/** Closes a channel whose input ended, keeping its last segment if it held speech. */
+async function closeChannel(channel: Channel) {
+  channels = channels.filter((candidate) => candidate !== channel);
+  if (channel.rotation) await channel.rotation;
+  const recorder = channel.recorder;
+  channel.recorder = null;
+  if (!recorder) return;
+  const startedAt = channel.segmenter.segmentStartedAt;
+  const keep = channel.segmenter.hasSpeech() && !channel.muted;
+  const blob = await stopRecorderAndCollect(recorder);
+  if (keep && blob && isChunkViable(blob)) {
+    enqueueChunk({ blob, source: channel.id, startedAt, endedAt: Date.now(), attempts: 0 });
+  }
+  stopTracks(channel.graph.destination.stream);
+}
+
 async function startCapture(streamId: string, includeMicrophone = true, vadThreshold?: number) {
-  if (captureActive && mediaRecorder?.state === "recording") {
-    return { microphoneActive: Boolean(microphoneStream), alreadyActive: true };
+  if (captureActive && channels.some((channel) => channel.recorder?.state === "recording")) {
+    return {
+      microphoneActive: channels.some((channel) => channel.id === "mic"),
+      alreadyActive: true,
+    };
   }
   if (stopPromise) await stopPromise;
 
@@ -436,11 +466,12 @@ async function startCapture(streamId: string, includeMicrophone = true, vadThres
   chunksDropped = 0;
   segmentsDiscarded = 0;
   pendingChunks = [];
+  channels = [];
 
-  mediaStream = await getTabAudioStream(streamId);
-  if (!mediaStream) throw new Error("Não foi possível capturar o áudio da aba.");
+  const tabStream = await getTabAudioStream(streamId);
+  if (!tabStream) throw new Error("Não foi possível capturar o áudio da aba.");
 
-  mediaStream.getTracks().forEach((track) => {
+  tabStream.getTracks().forEach((track) => {
     track.onended = () => {
       if (!captureActive) return;
       relay("tab audio track ended (tab closed or capture revoked)");
@@ -453,45 +484,56 @@ async function startCapture(streamId: string, includeMicrophone = true, vadThres
   audioContext = new AudioContext();
   if (audioContext.state === "suspended") await audioContext.resume();
 
-  const audioGraph = createOffscreenAudioGraph(audioContext, mediaStream);
-  analyserNode = audioGraph.analyser;
-  // Sized once per capture and reused by every VAD/waveform read.
-  analysisBuffer = new Uint8Array(new ArrayBuffer(analyserNode.fftSize));
+  recorderMimeType = pickSupportedMimeType();
+  channels.push(createChannel("tab", tabStream, createTabChannelGraph(audioContext, tabStream)));
 
   if (includeMicrophone) {
-    microphoneStream = await getMicrophoneStream();
+    const microphoneStream = await getMicrophoneStream();
     if (microphoneStream) {
-      connectMicrophoneToOffscreenAudioGraph(audioContext, microphoneStream, audioGraph);
+      const mic = createChannel(
+        "mic",
+        microphoneStream,
+        createMicrophoneChannelGraph(audioContext, microphoneStream),
+      );
+      channels.push(mic);
       microphoneStream.getTracks().forEach((track) => {
         track.onended = () => {
           if (!captureActive) return;
           relay("microphone track ended (input device disconnected)");
+          void closeChannel(mic);
           chrome.runtime.sendMessage({ type: "OFFSCREEN_MIC_LOST" }).catch(() => {});
         };
       });
     }
   }
 
-  recorderStream = audioGraph.recorderDestination.stream;
-  recorderMimeType = pickSupportedMimeType();
-  mediaRecorder = createRecorder();
-  mediaRecorder.start();
-  resetSegmentCounters();
   captureActive = true;
-
   waveformTimer = setInterval(sampleAndSendWaveform, WAVEFORM_INTERVAL_MS);
   vadTimer = setInterval(vadTick, VAD_SAMPLE_MS);
 
+  const microphoneActive = channels.some((channel) => channel.id === "mic");
   relay(
-    `capture started — mic=${Boolean(microphoneStream)} mime=${recorderMimeType || "default"} rmsThreshold=${rmsThreshold}`,
+    `capture started — channels=${channels.map(channelLabel).join("+")} mime=${recorderMimeType || "default"} rmsThreshold=${rmsThreshold}`,
   );
-  return { microphoneActive: Boolean(microphoneStream), microphoneError };
+  return { microphoneActive, microphoneError };
+}
+
+/** Meet's own mute button: while muted, the microphone channel records nothing. */
+function setMicMuted(muted: boolean) {
+  if (micMutedInMeet === muted) return;
+  micMutedInMeet = muted;
+  const mic = channels.find((channel) => channel.id === "mic");
+  if (!mic) return;
+  // Whatever was recorded around the switch is dropped: muted speech must not leak.
+  mic.muted = muted;
+  void rotateSegment(mic, "discard", muted ? "microfone mudo no Meet" : "microfone reativado");
+  relay(`microphone ${muted ? "muted" : "unmuted"} in Meet`);
 }
 
 /**
- * Stops capture: records the final segment (only if it holds speech), posts
- * every pending chunk to the service worker and releases the devices.
- * Concurrent callers share the same promise.
+ * Stops capture: records each channel's final segment (only if it holds
+ * speech), posts every pending chunk to the service worker and releases the
+ * devices. Concurrent callers share the same promise.
  */
 function stopCapture(): Promise<void> {
   if (stopPromise) return stopPromise;
@@ -504,17 +546,19 @@ function stopCapture(): Promise<void> {
     waveformTimer = null;
 
     try {
-      if (rotationPromise) await rotationPromise;
-      const recorder = mediaRecorder;
-      mediaRecorder = null;
-      if (wasActive && recorder) {
-        const startedAt = segmentStartedAt;
-        const keep = segmentHasSpeech();
+      await Promise.all(channels.map((channel) => channel.rotation ?? Promise.resolve()));
+      const finals = channels.map(async (channel) => {
+        const recorder = channel.recorder;
+        channel.recorder = null;
+        if (!wasActive || !recorder) return;
+        const startedAt = channel.segmenter.segmentStartedAt;
+        const keep = channel.segmenter.hasSpeech() && !channel.muted;
         const blob = await stopRecorderAndCollect(recorder);
         if (keep && blob && isChunkViable(blob)) {
-          enqueueChunk({ blob, startedAt, endedAt: Date.now(), attempts: 0 });
+          enqueueChunk({ blob, source: channel.id, startedAt, endedAt: Date.now(), attempts: 0 });
         }
-      }
+      });
+      await Promise.all(finals);
       await drainWithDeadline(STOP_DRAIN_TIMEOUT_MS);
       if (pendingChunks.length > 0) {
         chunksDropped += pendingChunks.length;
@@ -546,6 +590,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
       case "OFFSCREEN_START_CAPTURE":
         try {
+          micMutedInMeet = message.micMuted === true;
           const info = await startCapture(
             message.streamId,
             message.includeMicrophone !== false,
@@ -558,6 +603,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           console.error("[ValorBrainMeet][offscreen] failed to start capture:", e);
           sendResponse({ success: false, error: e?.message || "Falha ao iniciar a captura" });
         }
+        return;
+
+      case "OFFSCREEN_SET_MIC_MUTED":
+        setMicMuted(message.muted === true);
+        sendResponse({ success: true });
         return;
 
       case "OFFSCREEN_STOP_CAPTURE":
@@ -581,6 +631,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return message.type === "OFFSCREEN_PING" ||
     message.type === "OFFSCREEN_START_CAPTURE" ||
+    message.type === "OFFSCREEN_SET_MIC_MUTED" ||
     message.type === "OFFSCREEN_STOP_CAPTURE"
     ? true
     : false;

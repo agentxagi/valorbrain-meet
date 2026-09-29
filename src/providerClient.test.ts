@@ -13,6 +13,7 @@ import {
   ProviderConfigError,
   ProviderHttpError,
   ProviderPayloadError,
+  quotaResetAt,
 } from "./providerErrors.ts";
 import type { ProviderConfig } from "./utils/providerSettings.ts";
 
@@ -141,6 +142,30 @@ test("HTTP errors carry status and the provider's error code", async () => {
 });
 
 test("describeProviderError explains the common failures in PT-BR", () => {
+  // Z.ai GLM Coding Plan: the 5-hour usage window is exhausted (seen live).
+  const exhausted = new ProviderHttpError(
+    429,
+    JSON.stringify({
+      error: {
+        code: "1308",
+        message: "Usage limit reached for 5 hour. Your limit will reset at 2026-09-30 04:55:58",
+      },
+    }),
+    "https://api.z.ai/api/coding/paas/v4/chat/completions",
+  );
+  assert.equal(isRetryableProviderError(exhausted), false, "retrying cannot beat a quota");
+  const quota = describeProviderError("summary", exhausted);
+  assert.equal(quota.kind, "quota");
+  assert.match(quota.message, /cota do provedor de resumo acabou/);
+  assert.match(quota.message, /renova às \d{2}:\d{2}/);
+  assert.equal(quotaResetAt(exhausted.providerMessage)?.toISOString(), "2026-09-29T20:55:58.000Z");
+  assert.equal(quotaResetAt("sem data"), null);
+  assert.equal(
+    isRetryableProviderError(new ProviderHttpError(429, '{"error":{"message":"slow down"}}', "u")),
+    true,
+    "a plain rate limit is still retried",
+  );
+
   const auth = describeProviderError("summary", new ProviderHttpError(401, "{}", "u"));
   assert.equal(auth.kind, "auth");
   assert.match(auth.message, /recusou a chave/);

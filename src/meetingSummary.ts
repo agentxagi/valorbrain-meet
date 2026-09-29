@@ -154,6 +154,8 @@ export interface BuildSummaryPromptOptions {
   isFinal: boolean;
   /** Company terms with their correct spelling (from the settings). */
   vocabulary?: string[];
+  /** Name of the person who recorded (their lines come from the microphone). */
+  selfName?: string;
 }
 
 /** Builds the PT-BR system + user messages for one summarization pass. */
@@ -216,9 +218,14 @@ ${rules.map((rule) => `- ${rule}`).join("\n")}`;
     '"questionsRaised": ["pergunta sem resposta"]',
   ];
 
-  const participants = options.participants
-    .map((name) => sanitizePromptText(name, 100))
-    .filter((name) => name && name !== "You");
+  const participants = Array.from(
+    new Set(
+      options.participants
+        .map((name) => sanitizePromptText(name, 100))
+        .filter((name) => name && name !== "You"),
+    ),
+  );
+  const selfName = sanitizePromptText(options.selfName ?? "", 100);
 
   const user = `<contexto_anterior>
 ${sanitizePromptText(options.previousSummary, 4000) || "(início da reunião)"}
@@ -239,6 +246,10 @@ ${options.transcriptLines.join("\n")}
 
 Formato das linhas: [chunkId] [tempo] Pessoa: fala. "Participante" significa que a pessoa não foi identificada.
 Participantes detectados no Meet: ${participants.length > 0 ? participants.join(", ") : "(não detectados)"}.${
+    selfName
+      ? `\nQuem gravou a reunião: ${selfName}. As falas de ${selfName} vêm do microfone dessa pessoa; "Participante" é sempre outra pessoa.`
+      : ""
+  }${
     options.vocabulary && options.vocabulary.length > 0
       ? `\nGrafia correta de termos da empresa (a transcrição pode ter errado): ${options.vocabulary.join(", ")}.`
       : ""
