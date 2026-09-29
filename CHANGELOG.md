@@ -25,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Marca ValorBrain V. 2.1** em todas as telas: tokens oficiais, Hanken Grotesk e JetBrains Mono (SIL OFL), ícones 16/32/48/128 e temas claro e escuro
 - **Aviso no Meet** (dica para gravar, gravando com tempo, salvando, concluído), com estilos isolados da página do Meet
 - Endereços fora da lista padrão (ValorBrain próprio, provedor na rede local) pedem permissão de host ao salvar as configurações
+- **macOS**: quando o sistema bloqueia o microfone do Chrome, o aviso mostra o caminho em Ajustes do Sistema (e no Windows, em Configurações). **Testar microfone** nas Configurações pega esse caso antes da reunião, e os atalhos aparecem com os símbolos do Mac (⌥⇧G)
+- **Página de download em [meet.valorbra.in](https://meet.valorbra.in)**, no estilo do brand kit, com instruções para Mac e Windows e o SHA-256 do pacote
 
 ### 🐛 Bug Fixes
 
@@ -33,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Marcadores de "em andamento" gravados no storage travavam as filas depois que o service worker reiniciava
 - O clique automático no painel de participantes fazia a interface do Meet piscar
 - Classes CSS duplicadas ou sem definição (modal, esqueleto de carregamento, busca, estados vazios)
+- O pacote da extensão passa a incluir os avisos de licença (MIT e SIL OFL das fontes)
 
 ### 📚 Documentation
 

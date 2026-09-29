@@ -7,6 +7,8 @@
 Grava reuniões do Google Meet direto no navegador, transcreve, resume em português
 e guarda tudo na memória do ValorBrain. Sem bot na chamada.
 
+**Download e instruções: [meet.valorbra.in](https://meet.valorbra.in)**
+
 </div>
 
 ---
@@ -22,26 +24,28 @@ e guarda tudo na memória do ValorBrain. Sem bot na chamada.
 
 ## Instalar
 
-Requisito: Google Chrome 116 ou mais recente.
+Requisito: Google Chrome 116 ou mais recente, no macOS ou no Windows.
 
-1. Baixe `valorbrain-meet-v2.0.0.zip` (ou gere a pasta `dist/` com `npm ci && npm run build`).
-2. Descompacte numa pasta que vai ficar no lugar, por exemplo `C:\ValorBrain\valorbrain-meet`. O Chrome lê a extensão dessa pasta; não apague depois.
+1. Baixe o zip em [meet.valorbra.in](https://meet.valorbra.in) (ou gere a pasta `dist/` com `npm ci && npm run build`).
+2. Descompacte e mova a pasta para um lugar fixo, sem a versão no nome: `~/ValorBrain/valorbrain-meet` no Mac, `C:\ValorBrain\valorbrain-meet` no Windows. O Chrome lê a extensão dessa pasta; não apague depois.
 3. Abra `chrome://extensions`, ligue o **Modo do desenvolvedor** e clique em **Carregar sem compactação**.
 4. Selecione a pasta que contém o `manifest.json`.
 5. Fixe o ícone do ValorBrain Meet na barra do Chrome (ícone de quebra-cabeça → alfinete).
 
 Na primeira instalação, a página de configurações abre sozinha.
 
+**Atualizar:** substitua a pasta pela versão nova (mesmo lugar, mesmo nome) e clique em ↻ no cartão da extensão em `chrome://extensions`. O histórico e as configurações continuam. Carregar de outra pasta cria outra extensão, com o histórico vazio.
+
 ## Primeira configuração
 
 Em **Configurações → Primeiros passos**, a lista mostra o que falta. Cada item leva ao ajuste certo.
 
-| Item              | O que fazer                                                                                                                                                     |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Transcrição**   | Escolha o provedor. Veja a tabela abaixo.                                                                                                                       |
-| **Resumo com IA** | Cole a chave do provedor de resumo. O padrão é o Z.ai GLM (GLM Coding Plan). Sem chave, só a transcrição funciona.                                              |
-| **Microfone**     | Clique em **Permitir microfone** e aceite o aviso do Chrome. É uma vez só. Sem isso, a sua voz não entra na gravação: o áudio da aba só traz as outras pessoas. |
-| **ValorBrain**    | Clique em **Conectar com ValorBrain**, entre na sua conta e aprove. Para usar um token de API, abra **Configuração manual**.                                    |
+| Item              | O que fazer                                                                                                                                                                                                                                              |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Transcrição**   | Escolha o provedor. Veja a tabela abaixo.                                                                                                                                                                                                                |
+| **Resumo com IA** | Cole a chave do provedor de resumo. O padrão é o Z.ai GLM (GLM Coding Plan). Sem chave, só a transcrição funciona.                                                                                                                                       |
+| **Microfone**     | Clique em **Permitir microfone** e aceite o aviso do Chrome. É uma vez só. Depois, **Testar microfone** confirma que o sistema (macOS/Windows) também liberou. Sem microfone, a sua voz não entra na gravação: o áudio da aba só traz as outras pessoas. |
+| **ValorBrain**    | Clique em **Conectar com ValorBrain**, entre na sua conta e aprove. Para usar um token de API, abra **Configuração manual**.                                                                                                                             |
 
 Use **Testar transcrição**, **Testar resumo** e **Testar conexão** para confirmar cada parte antes da primeira reunião.
 
@@ -56,26 +60,26 @@ Use **Testar transcrição**, **Testar resumo** e **Testar conexão** para confi
 | Z.ai GLM (API pré-paga)                | Resumo               | `https://api.z.ai/api/paas/v4`                           | Chave com saldo pré-pago |
 | Personalizado                          | Qualquer um          | Qualquer API compatível com a OpenAI                     | Opcional                 |
 
-O **Whisper local** só funciona quando o servidor roda no mesmo computador que o Chrome. Se o Whisper roda em outra máquina ou no WSL, use o **Whisper remoto**.
+O **Whisper local** só funciona quando o servidor roda no mesmo computador que o Chrome. No Mac e no Windows, use o **Whisper remoto** (a chave Bearer é fornecida pela Valor) ou a OpenAI.
 
 O **Vocabulário da empresa** (nomes próprios, produtos, siglas) ajuda a transcrição e o resumo a escrever certo.
 
 ## Usar numa reunião
 
-1. Entre na reunião em `meet.google.com`. No canto inferior esquerdo aparece: _Gravar esta reunião: Alt+Shift+G ou o ícone da extensão_.
-2. **Comece** clicando no ícone do ValorBrain Meet → **Iniciar gravação**, ou pressione **Alt+Shift+G**. O Chrome exige esse clique ou atalho para liberar a captura da aba.
-3. **Durante**: o ícone mostra **REC** e o aviso na tela mostra o tempo de gravação. O painel lateral (**Alt+Shift+L**) mostra o resumo, a transcrição, as decisões e as pessoas ao vivo. **Alt+Shift+U** atualiza o resumo na hora.
-4. **Encerre** em **Encerrar** (no aviso ou no ícone), com **Alt+Shift+G**, ou simplesmente saindo da chamada. A extensão termina o trabalho e avisa quando a reunião estiver salva e enviada.
+1. Entre na reunião em `meet.google.com`. No canto inferior esquerdo aparece o aviso com o atalho de gravação.
+2. **Comece** clicando no ícone do ValorBrain Meet → **Iniciar gravação**, ou pressione **⌥⇧G** no Mac (**Alt+Shift+G** no Windows). O Chrome exige esse clique ou atalho para liberar a captura da aba.
+3. **Durante**: o ícone mostra **REC** e o aviso na tela mostra o tempo de gravação. O painel lateral (**⌥⇧L** / **Alt+Shift+L**) mostra o resumo, a transcrição, as decisões e as pessoas ao vivo. **⌥⇧U** / **Alt+Shift+U** atualiza o resumo na hora.
+4. **Encerre** em **Encerrar** no aviso, **Encerrar e salvar** no ícone, com o atalho de novo ou simplesmente saindo da chamada. A extensão termina o trabalho e avisa quando a reunião estiver salva e enviada.
 
 Avise os participantes de que a reunião está sendo gravada.
 
 ### Atalhos
 
-| Atalho        | Ação                           |
-| ------------- | ------------------------------ |
-| `Alt+Shift+G` | Iniciar ou encerrar a gravação |
-| `Alt+Shift+L` | Abrir o painel da reunião      |
-| `Alt+Shift+U` | Atualizar o resumo agora       |
+| Ação                           | Mac   | Windows       |
+| ------------------------------ | ----- | ------------- |
+| Iniciar ou encerrar a gravação | `⌥⇧G` | `Alt+Shift+G` |
+| Abrir o painel da reunião      | `⌥⇧L` | `Alt+Shift+L` |
+| Atualizar o resumo agora       | `⌥⇧U` | `Alt+Shift+U` |
 
 Os atalhos podem ser trocados em `chrome://extensions/shortcuts`. O rodapé do ícone mostra o atalho que está valendo; se o Chrome não conseguir reservar a combinação, aparece o botão **Definir atalho de gravação**.
 
@@ -95,14 +99,15 @@ Detalhes: [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 ## Problemas comuns
 
-| Sintoma                              | Causa provável e solução                                                                                                                                                                               |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| "Whisper local não respondeu"        | O servidor está desligado ou roda em outra máquina/no WSL. Use **Whisper remoto** ou outro provedor.                                                                                                   |
-| A sua voz não aparece na transcrição | Microfone não liberado. **Configurações → Microfone → Permitir microfone**. Se o Chrome bloqueou, clique no ícone à esquerda do endereço da página de configurações, permita o microfone e recarregue. |
-| A gravação não começa                | Comece pelo ícone ou pelo atalho com a aba do Meet em primeiro plano.                                                                                                                                  |
-| Sem resumo                           | Falta a chave do provedor de resumo. No Z.ai, o erro 1113 significa "sem saldo": chaves do GLM Coding Plan usam o perfil **Z.ai GLM (GLM Coding Plan)**.                                               |
-| Envio ao ValorBrain falhou           | No **Histórico**, clique em **Enviar ao ValorBrain** na reunião. Confira em **Configurações → ValorBrain → Testar conexão**; 401/403 indicam token expirado: clique em **Reconectar**.                 |
-| Preciso ver os logs                  | `chrome://extensions` → ValorBrain Meet → **service worker** → aba Console.                                                                                                                            |
+| Sintoma                               | Causa provável e solução                                                                                                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "Whisper local não respondeu"         | O servidor está desligado ou roda em outra máquina/no WSL. Use **Whisper remoto** ou outro provedor.                                                                                                   |
+| A sua voz não aparece na transcrição  | Microfone não liberado. **Configurações → Microfone → Permitir microfone**. Se o Chrome bloqueou, clique no ícone à esquerda do endereço da página de configurações, permita o microfone e recarregue. |
+| "O macOS está bloqueando o microfone" | O Chrome não tem acesso ao microfone no sistema. **Ajustes do Sistema → Privacidade e Segurança → Microfone** → ative o Google Chrome e reinicie a gravação.                                           |
+| A gravação não começa                 | Comece pelo ícone ou pelo atalho com a aba do Meet em primeiro plano.                                                                                                                                  |
+| Sem resumo                            | Falta a chave do provedor de resumo. No Z.ai, o erro 1113 significa "sem saldo": chaves do GLM Coding Plan usam o perfil **Z.ai GLM (GLM Coding Plan)**.                                               |
+| Envio ao ValorBrain falhou            | No **Histórico**, clique em **Enviar ao ValorBrain** na reunião. Confira em **Configurações → ValorBrain → Testar conexão**; 401/403 indicam token expirado: clique em **Reconectar**.                 |
+| Preciso ver os logs                   | `chrome://extensions` → ValorBrain Meet → **service worker** → aba Console.                                                                                                                            |
 
 ## Desenvolvimento
 
@@ -114,6 +119,17 @@ npm run lint
 npx tsc --noEmit
 npm run size-check  # orçamento de tamanho do bundle
 ```
+
+### Site meet.valorbra.in
+
+A página de download fica em `site/` (HTML e CSS no estilo do brand kit V. 2.1, sem framework).
+
+```bash
+npm run site:build   # build da extensão + zip reproduzível + página em site-dist/
+npm run site:deploy  # publica no nginx local (releases/<data> + symlink current)
+```
+
+O zip sai sempre com os mesmos bytes para o mesmo código, e o SHA-256 publicado na página é o desse zip. O deploy recusa republicar uma versão com conteúdo diferente: aumente a versão antes. A origem é o nginx em `127.0.0.1:8140`, exposto pelo túnel do cloudflared.
 
 | Arquivo                                           | Papel                                                                                                           |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
