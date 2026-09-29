@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="paper">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ValorBrain Meet · Reuniões do Google Meet na memória da empresa</title>
+    <meta
+      name="description"
+      content="Extensão do Chrome que grava o Google Meet sem bot, transcreve em português, resume decisões e próximos passos e guarda tudo no ValorBrain. Versão {{VERSION}} para macOS e Windows."
+    />
+    <meta name="theme-color" content="#F6F7F3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111317" media="(prefers-color-scheme: dark)" />
+    <link rel="canonical" href="https://meet.valorbra.in/" />
+    <link rel="icon" href="assets/symbol.svg" type="image/svg+xml" />
+    <link rel="icon" href="assets/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:url" content="https://meet.valorbra.in/" />
+    <meta property="og:site_name" content="ValorBrain Meet" />
+    <meta property="og:title" content="ValorBrain Meet {{VERSION}}" />
+    <meta
+      property="og:description"
+      content="A reunião acaba. O contexto fica. Grava o Google Meet sem bot, transcreve, resume e guarda no ValorBrain."
+    />
+    <meta property="og:image" content="https://meet.valorbra.in/assets/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link
+      rel="preload"
+      href="fonts/hanken-grotesk-latin-var.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="brand/valorbrain-tokens.css" />
+    <link rel="stylesheet" href="fonts/fonts.css" />
+    <link rel="stylesheet" href="site.css" />
+    <script src="site.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#conteudo">Pular para o conteúdo</a>
+    <div class="shell">
+      <header class="top">
+        <a class="brand" href="./" aria-label="ValorBrain Meet, início">
+          <img src="assets/symbol.svg" alt="" width="40" height="40" />
+          <span>ValorBrain <span class="brand-product">Meet</span></span>
+        </a>
+        <nav aria-label="Navegação">
+          <a href="#instalar">Instalar</a>
+          <a href="#configurar">Configurar</a>
+          <a href="#usar">Usar</a>
+          <a href="#privacidade">Privacidade</a>
+          <label class="theme">
+            <span class="locked">Tema</span>
+            <select id="theme">
+              <option value="paper">Paper</option>
+              <option value="light">Claro</option>
+              <option value="dark">Escuro</option>
+            </select>
+          </label>
+        </nav>
+      </header>
+
+      <main id="conteudo">
+        <div class="hero">
+          <div>
+            <div class="eyebrow">Extensão para Google Chrome / v{{VERSION}}</div>
+            <h1>A reunião acaba.<br />O contexto fica.</h1>
+            <p class="lead muted">
+              O ValorBrain Meet grava o Google Meet direto no Chrome, sem bot na chamada. Transcreve
+              em português, resume decisões e próximos passos e guarda tudo na memória do
+              ValorBrain.
+            </p>
+            <div class="actions">
+              <a class="button primary" href="{{ZIP_URL}}" download>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <path d="m7 10 5 5 5-5" />
+                  <path d="M12 15V3" />
+                </svg>
+                Baixar a versão {{VERSION}}
+              </a>
+              <a href="#instalar">Como instalar no Mac →</a>
+            </div>
+            <p class="meta">
+              ZIP · {{ZIP_SIZE}} · macOS e Windows · Chrome {{CHROME_MIN}} ou mais recente
+            </p>
+          </div>
+          <figure class="hero-shot">
+            <img
+              class="shot only-light"
+              src="assets/painel-resumo.webp"
+              width="405"
+              height="640"
+              alt="Painel lateral do ValorBrain Meet com o resumo de uma reunião de exemplo, a linha do tempo e as abas Transcrição, Decisões, Pessoas e Histórico"
+            />
+            <img
+              class="shot only-dark"
+              src="assets/painel-resumo-escuro.webp"
+              width="405"
+              height="640"
+              loading="lazy"
+              alt="Painel lateral do ValorBrain Meet no tema escuro, com o resumo de uma reunião de exemplo"
+            />
+          </figure>
+        </div>
+
+        <section id="como-funciona">
+          <div class="eyebrow">01 / Como funciona</div>
+          <h2>Você só participa da reunião.</h2>
+          <p class="muted">
+            Ao encerrar, ou simplesmente ao sair da chamada, a extensão termina o trabalho sozinha e
+            avisa com uma notificação.
+          </p>
+          <div class="grid four">
+            <article class="card">
+              <div class="number">01</div>
+              <h3>Grava sem bot</h3>
+              <p>
+                O áudio da aba do Meet traz as outras pessoas. O microfone traz a sua voz. Ninguém a
+                mais entra na chamada.
+              </p>
+            </article>
+            <article class="card">
+              <div class="number">02</div>
+              <h3>Transcreve em português</h3>
+              <p>
+                Com o Whisper, identificando quem falou pelo indicador de fala do Meet. O
+                vocabulário da empresa ajuda nos nomes próprios.
+              </p>
+            </article>
+            <article class="card">
+              <div class="number">03</div>
+              <h3>Resume durante a reunião</h3>
+              <p>
+                Resumo, decisões, próximos passos com responsável e prazo, assuntos e pontos em
+                aberto, atualizados enquanto a conversa acontece.
+              </p>
+            </article>
+            <article class="card">
+              <div class="number">04</div>
+              <h3>Guarda no ValorBrain</h3>
+              <p>
+                A reunião fica salva no navegador e vai para a memória da empresa. Se o envio
+                falhar, nada se perde: o histórico reenvia.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="instalar">
+          <div class="eyebrow">02 / Instalar</div>
+          <h2>Instale em dois minutos.</h2>
+          <p class="muted">
+            A extensão é carregada direto no Chrome, sem passar pela Chrome Web Store. Na primeira
+            vez, as configurações abrem sozinhas.
+          </p>
+          <div class="grid">
+            <article class="card" id="mac">
+              <h3>No Mac</h3>
+              <ol class="steps">
+                <li>
+                  <span
+                    >Baixe o <a href="{{ZIP_URL}}" download>{{ZIP_NAME}}</a> e dê dois cliques nele
+                    no Finder. O macOS cria a pasta <code>{{FOLDER_NAME}}</code>.</span
+                  >
+                </li>
+                <li>
+                  <span
+                    >Mova a pasta para um lugar fixo e tire a versão do nome, como
+                    <code>~/ValorBrain/valorbrain-meet</code>. O Chrome lê a extensão dessa pasta:
+                    não apague depois.</span
+                  >
+                </li>
+                <li>
+                  <span
+                    >Abra <code>chrome://extensions</code>, ligue o
+                    <strong>Modo do desenvolvedor</strong> no canto superior direito e clique em
+                    <strong>Carregar sem compactação</strong>.</span
+                  >
+                </li>
+                <li>
+                  <span>Escolha a pasta que contém o arquivo <code>manifest.json</code>.</span>
+                </li>
+                <li>
+                  <span
+                    >Fixe o ícone: clique no quebra-cabeça da barra do Chrome e no alfinete ao lado
+                    de ValorBrain Meet.</span
+                  >
+                </li>
+              </ol>
+              <p class="note">
+                Se o Chrome ainda não usou o microfone neste Mac, o macOS pergunta na primeira vez.
+                Se você recusou antes, abra
+                <strong>Ajustes do Sistema → Privacidade e Segurança → Microfone</strong> e ative o
+                Google Chrome.
+              </p>
+            </article>
+            <article class="card" id="windows">
+              <h3>No Windows</h3>
+              <ol class="steps">
+                <li>
+                  <span
+                    >Baixe o zip, clique nele com o botão direito e escolha
+                    <strong>Extrair tudo</strong>.</span
+                  >
+                </li>
+                <li>
+                  <span
+                    >Mova a pasta para um lugar fixo e tire a versão do nome, como
+                    <code>C:\ValorBrain\valorbrain-meet</code>.</span
+                  >
+                </li>
+                <li>
+                  <span
+                    >Abra <code>chrome://extensions</code>, ligue o
+                    <strong>Modo do desenvolvedor</strong> e clique em
+                    <strong>Carregar sem compactação</strong>.</span
+                  >
+                </li>
+                <li>
+                  <span>Escolha a pasta que contém o arquivo <code>manifest.json</code>.</span>
+                </li>
+                <li><span>Fixe o ícone pelo quebra-cabeça da barra do Chrome.</span></li>
+              </ol>
+            </article>
+          </div>
+          <details class="card update">
+            <summary>Já usa o ValorBrain Meet? Como atualizar</summary>
+            <p>
+              Substitua a pasta da extensão pela versão nova, no mesmo lugar e com o mesmo nome, e
+              clique em
+              <strong>↻</strong> no cartão do ValorBrain Meet em <code>chrome://extensions</code>. O
+              histórico de reuniões e as configurações continuam.
+            </p>
+            <p class="muted">
+              Carregar de outra pasta cria outra extensão, com o histórico vazio. Se ficarem duas
+              cópias, remova a antiga.
+            </p>
+          </details>
+        </section>
+
+        <section id="configurar">
+          <div class="eyebrow">03 / Primeira configuração</div>
+          <h2>Quatro itens, uma vez só.</h2>
+          <p class="muted">
+            Em <strong>Configurações → Primeiros passos</strong>, a lista mostra o que falta e leva
+            ao ajuste certo. Quando está tudo certo, ela mostra <strong>Tudo pronto</strong>.
+          </p>
+          <div class="grid">
+            <article class="card">
+              <h3>Transcrição</h3>
+              <p>
+                No Mac e no Windows, escolha
+                <strong>Whisper remoto (whisper.valor.digital)</strong> e cole a chave do servidor,
+                fornecida pela Valor. O <strong>Whisper local</strong> só funciona com o servidor
+                rodando no mesmo computador do Chrome. A OpenAI (<code>whisper-1</code>) também
+                serve.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Resumo com IA</h3>
+              <p>
+                Cole a chave do <strong>Z.ai GLM (GLM Coding Plan)</strong>, o perfil padrão. Chaves
+                pré-pagas usam <strong>Z.ai GLM (API pré-paga)</strong>, e a OpenAI também funciona.
+                Sem chave, só a transcrição acontece.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Microfone</h3>
+              <p>
+                Clique em <strong>Permitir microfone</strong> e aceite o aviso do Chrome. Depois,
+                <strong>Testar microfone</strong> confirma que o sistema também liberou. Sem o
+                microfone, a gravação traz só as outras pessoas.
+              </p>
+            </article>
+            <article class="card">
+              <h3>ValorBrain</h3>
+              <p>
+                Clique em <strong>Conectar com ValorBrain</strong>, entre com a sua conta e aprove.
+                As reuniões vão para a memória da sua empresa, na coleção <code>meetings</code>.
+              </p>
+            </article>
+          </div>
+          <p class="muted">
+            Cada item tem um botão de teste: <strong>Testar transcrição</strong>,
+            <strong>Testar resumo</strong> e <strong>Testar conexão</strong>. O
+            <strong>Vocabulário da empresa</strong> (nomes próprios, produtos, siglas) melhora a
+            transcrição e o resumo.
+          </p>
+        </section>
+
+        <section id="usar">
+          <div class="eyebrow">04 / Na reunião</div>
+          <h2>Um atalho para começar.<br />Nenhum para terminar.</h2>
+          <div class="grid">
+            <div>
+              <ol class="steps">
+                <li>
+                  <span
+                    >Entre na reunião em <code>meet.google.com</code>. No canto inferior esquerdo
+                    aparece o aviso com o atalho de gravação.</span
+                  >
+                </li>
+                <li>
+                  <span
+                    >Comece pelo ícone do ValorBrain Meet (<strong>Iniciar gravação</strong>) ou
+                    pelo atalho <kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>G</kbd>. O Chrome exige esse clique
+                    ou atalho para liberar a captura da aba.</span
+                  >
+                </li>
+                <li>
+                  <span
+                    >Durante a reunião, o ícone mostra <strong>REC</strong> e o painel lateral traz
+                    resumo, transcrição, decisões e pessoas ao vivo.</span
+                  >
+                </li>
+                <li>
+                  <span
+                    >Para terminar, clique em <strong>Encerrar</strong>, repita o atalho ou saia da
+                    chamada. A notificação avisa quando a reunião estiver salva e enviada.</span
+                  >
+                </li>
+              </ol>
+              <p class="note">Avise os participantes de que a reunião está sendo gravada.</p>
+            </div>
+            <figure class="shots">
+              <div class="pill-shot">
+                <img
+                  class="pill"
+                  src="assets/pill-dica.webp"
+                  width="520"
+                  height="64"
+                  loading="lazy"
+                  alt="Aviso do ValorBrain Meet no Google Meet: gravar esta reunião com o atalho ou o ícone da extensão"
+                />
+                <img
+                  class="pill"
+                  src="assets/pill-gravando.webp"
+                  width="396"
+                  height="64"
+                  loading="lazy"
+                  alt="Aviso durante a gravação, com o tempo decorrido e o botão Encerrar"
+                />
+              </div>
+              <img
+                class="shot popup-shot"
+                src="assets/popup-gravando.webp"
+                width="360"
+                height="480"
+                loading="lazy"
+                alt="Janela do ícone durante a gravação: tempo, falas, última fala e o botão Encerrar e salvar"
+              />
+              <figcaption>Reunião de exemplo, com dados fictícios.</figcaption>
+            </figure>
+          </div>
+          <div class="overflow">
+            <table aria-label="Atalhos de teclado">
+              <thead>
+                <tr>
+                  <th scope="col">Atalho</th>
+                  <th scope="col">Mac</th>
+                  <th scope="col">Windows</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Iniciar ou encerrar a gravação</th>
+                  <td><kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>G</kbd></td>
+                  <td><kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>G</kbd></td>
+                </tr>
+                <tr>
+                  <th scope="row">Abrir o painel da reunião</th>
+                  <td><kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>L</kbd></td>
+                  <td><kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd></td>
+                </tr>
+                <tr>
+                  <th scope="row">Atualizar o resumo agora</th>
+                  <td><kbd>⌥</kbd> <kbd>⇧</kbd> <kbd>U</kbd></td>
+                  <td><kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>U</kbd></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="muted">
+            Os atalhos mudam em <code>chrome://extensions/shortcuts</code>. O rodapé da janela do
+            ícone mostra o que está valendo.
+          </p>
+        </section>
+
+        <section id="privacidade">
+          <div class="eyebrow">05 / Privacidade</div>
+          <h2>Os dados vão só para onde você escolheu.</h2>
+          <div class="grid three">
+            <article class="card">
+              <h3>Áudio</h3>
+              <p>
+                Vai em trechos para o provedor de transcrição configurado. Trechos de silêncio são
+                descartados no próprio navegador.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Texto</h3>
+              <p>
+                A transcrição vai para o provedor de resumo configurado, junto com o vocabulário da
+                empresa.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Reunião</h3>
+              <p>
+                Resumo, decisões, próximos passos e transcrição vão para o ValorBrain da sua
+                empresa.
+              </p>
+            </article>
+          </div>
+          <p class="muted">
+            A extensão não tem servidor próprio nem telemetria. Reuniões, chaves e configurações
+            ficam no Chrome deste computador, sem sincronizar com outros. Detalhes em
+            <a href="{{REPO_URL}}/blob/main/docs/PRIVACY.md">docs/PRIVACY.md</a>.
+          </p>
+        </section>
+
+        <section id="download">
+          <div class="eyebrow">06 / Arquivos</div>
+          <h2>Versão {{VERSION}}</h2>
+          <p class="muted">Publicada em {{RELEASE_DATE}}. Um único pacote para macOS e Windows.</p>
+          <div class="download">
+            <strong>ValorBrain Meet {{VERSION}}</strong>
+            <div class="actions">
+              <span class="muted">ZIP · {{ZIP_SIZE}}</span>
+              <a href="{{ZIP_URL}}" download>Baixar ↓</a>
+            </div>
+          </div>
+          <div class="download">
+            <strong>SHA-256</strong>
+            <code class="hash">{{SHA256}}</code>
+          </div>
+          <div class="download">
+            <strong>Conferir o arquivo</strong>
+            <div class="stack">
+              <code>shasum -a 256 ~/Downloads/{{ZIP_NAME}}</code>
+              <code>certutil -hashfile %USERPROFILE%\Downloads\{{ZIP_NAME}} SHA256</code>
+            </div>
+          </div>
+          <div class="download">
+            <strong>Notas da versão</strong>
+            <a href="{{RELEASE_URL}}">GitHub ↗</a>
+          </div>
+          <div class="download">
+            <strong>Código-fonte</strong>
+            <a href="{{REPO_URL}}">agentxagi/valorbrain-meet ↗</a>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <p>ValorBrain Meet {{VERSION}} · ValorBrain © 2026</p>
+        <p>
+          Baseado no projeto open source Late Meet (licença MIT). Fontes Hanken Grotesk e JetBrains
+          Mono sob a SIL Open Font License 1.1.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

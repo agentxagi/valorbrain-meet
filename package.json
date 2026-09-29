@@ -11,6 +11,8 @@
     "lint": "eslint . --ext .ts,.js",
     "type-check": "tsc --noEmit",
     "size-check": "tsx scripts/checkBundleSize.ts",
+    "site:build": "vite build && tsx scripts/buildSite.ts",
+    "site:deploy": "bash scripts/deploy-site.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky",

@@ -26,6 +26,7 @@ node_modules/
 # Build artifacts
 dist/
 build/
+site-dist/
 *.zip
 
 # External repos
