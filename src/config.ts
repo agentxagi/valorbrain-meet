@@ -8,7 +8,25 @@ export const MAX_PROMPT_LENGTH = 2000;
 export const TRANSCRIPT_WINDOW_SIZE = 25;
 
 /** Maximum number of tokens the AI may generate for a meeting summary response. */
-export const SUMMARIZATION_MAX_TOKENS = 1200;
+export const SUMMARIZATION_MAX_TOKENS = 2400;
+
+/** Character budget of new transcript text sent in one summarization pass. */
+export const SUMMARY_TRANSCRIPT_CHAR_BUDGET = 14000;
+
+/** Summary cadence bounds and default, in seconds (user-configurable in Settings). */
+export const SUMMARY_MIN_INTERVAL_S = 120;
+export const SUMMARY_DEFAULT_INTERVAL_S = 180;
+export const SUMMARY_MAX_INTERVAL_S = 900;
+
+/** The first summary runs once the transcript has this much text or this much time. */
+export const FIRST_SUMMARY_MIN_CHARS = 350;
+export const FIRST_SUMMARY_MIN_ELAPSED_S = 60;
+
+/** Items per array kept in the STATE_UPDATE payload sent to the popup/side panel. */
+export const UI_ARRAY_LIMIT = 400;
+
+/** Default transcription language (ISO 639-1); "auto" lets the model detect it. */
+export const DEFAULT_TRANSCRIPTION_LANGUAGE = "pt";
 
 /** Maximum number of tokens the AI may generate for a late-joiner briefing message. */
 export const JOINER_MESSAGE_MAX_TOKENS = 120;
@@ -34,6 +52,12 @@ export const SILENCE_FLUSH_MS = 1500;
 
 /** Maximum buffered audio duration in milliseconds before the buffer is force-flushed. */
 export const MAX_BUFFER_MS = 25000;
+
+/** Speech segments shorter than this are extended instead of flushed on a pause. */
+export const MIN_SEGMENT_MS = 2500;
+
+/** A segment with no speech at all is discarded (not transcribed) after this long. */
+export const SILENT_SEGMENT_DISCARD_MS = 10000;
 
 // Meeting Behavior
 /**

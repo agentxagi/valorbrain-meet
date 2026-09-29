@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR" data-theme="paper">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,867 +8,560 @@
     <link rel="stylesheet" href="options.css" />
     <link rel="stylesheet" href="storageDashboard.css" />
     <link rel="stylesheet" href="apiUsageDashboard.css" />
-    <link rel="stylesheet" href="onboarding.css" />
   </head>
-  <body class="no-transitions">
-    <div class="options-container">
-      <header class="options-header">
-        <div class="options-logo">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="40"
-            height="40"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-brain"
-          >
-            <path
-              d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"
-            />
-            <path
-              d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"
-            />
-            <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
-            <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
-            <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
-            <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
-            <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
-            <path d="M6 18a4 4 0 0 1-1.967-.516" />
-            <path d="M19.967 17.484A4 4 0 0 1 18 18" />
-          </svg>
-        </div>
-        <div>
-          <h1 class="options-title">ValorBrain Meet</h1>
-          <p class="options-subtitle">Configurações</p>
+  <body>
+    <a class="op-skip" href="#conteudo">Pular para o conteúdo</a>
+    <div class="op-shell">
+      <header class="op-header">
+        <div class="vb-brand">
+          <span data-brand-symbol="vb-brand-symbol op-symbol"></span>
+          <div>
+            <div class="vb-brand-name op-brand-name">ValorBrain <span>Meet</span></div>
+            <div class="vb-muted op-subtitle">
+              Configurações · versão <span id="op-version" class="vb-mono"></span>
+            </div>
+          </div>
         </div>
       </header>
-      <div id="onboarding-root" hidden></div>
-      <div class="options-actions">
-        <button id="view-onboarding" class="btn" aria-label="View onboarding">
-          Ver onboarding
-        </button>
-      </div>
-      <!-- Theme Section-->
-      <div class="options-grid">
-        <div class="options-section">
-          <div class="section-title">
-            <!-- Inline SVG for styling icon -->
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="m12 3-1.912 5.886a1 1 0 0 1-.951.691H2.918l4.909 3.567a1 1 0 0 1 .364 1.118L6.28 20.151l4.91-3.567a1 1 0 0 1 1.12 0l4.91 3.567-1.911-5.889a1 1 0 0 1 .364-1.118l4.909-3.567h-6.22a1 1 0 0 1-.951-.691Z"
-              />
-            </svg>
-            <span>Aparência</span>
-          </div>
 
-          <div class="form-group">
-            <label class="form-label" for="theme-select">Tema da interface</label>
-            <div class="form-hint">Escolha como a interface lida com temas claros e escuros.</div>
-            <select id="theme-select" class="form-select">
-              <option value="system">Padrão do sistema</option>
-              <option value="light">Claro</option>
-              <option value="dark">Escuro</option>
-            </select>
-          </div>
+      <div class="op-layout">
+        <nav class="op-nav" aria-label="Seções das configurações">
+          <a href="#primeiros-passos">Primeiros passos</a>
+          <a href="#transcricao">Transcrição</a>
+          <a href="#resumo">Resumo com IA</a>
+          <a href="#valorbrain">ValorBrain</a>
+          <a href="#microfone">Microfone</a>
+          <a href="#recursos">Recursos</a>
+          <a href="#aparencia">Aparência</a>
+          <a href="#dados">Dados e uso</a>
+        </nav>
 
-          <div class="form-group">
-            <label class="form-label">Cor de destaque</label>
-            <div class="form-hint">
-              Escolha a cor de destaque de botões, campos e componentes ativos.
-            </div>
-            <div class="accent-picker-grid">
-              <button
-                type="button"
-                class="color-dot"
-                data-color="161, 84%, 25%"
-                aria-label="Accent color: Verde Valor"
-                aria-pressed="false"
-                data-swatch="valorbrain"
-              ></button>
-              <!-- Blue -->
-              <button
-                type="button"
-                class="color-dot"
-                data-color="145, 65%, 45%"
-                aria-label="Accent color: Green"
-                aria-pressed="false"
-                data-swatch="green"
-              ></button>
-              <!-- Green -->
-              <button
-                type="button"
-                class="color-dot"
-                data-color="280, 75%, 60%"
-                aria-label="Accent color: Purple"
-                aria-pressed="false"
-                data-swatch="purple"
-              ></button>
-              <!-- Purple -->
-              <button
-                type="button"
-                class="color-dot"
-                data-color="15, 95%, 55%"
-                aria-label="Accent color: Orange"
-                aria-pressed="false"
-                data-swatch="orange"
-              ></button>
-              <!-- Orange -->
-              <button
-                type="button"
-                class="color-dot"
-                data-color="340, 85%, 55%"
-                aria-label="Accent color: Pink"
-                aria-pressed="false"
-                data-swatch="pink"
-              ></button>
-              <!-- Pink -->
-            </div>
-          </div>
-        </div>
-
-        <!-- Frase de criptografia Section -->
-        <section class="options-section">
-          <h2 class="section-title">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="lucide lucide-lock"
-            >
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
-            Frase de criptografia
-          </h2>
-          <div class="form-group">
-            <label class="form-label" for="passphrase-input">Frase</label>
-            <p class="form-hint">
-              Necessária para criptografar chaves salvas. Digite a cada sessão do navegador para
-              desbloquear.
+        <main id="conteudo" class="op-main">
+          <!-- Welcome (first run) -->
+          <section id="boas-vindas" class="op-welcome" hidden>
+            <div class="vb-eyebrow">Bem-vindo</div>
+            <h1 class="op-welcome-title">Suas reuniões, direto para a memória da empresa.</h1>
+            <p class="op-welcome-text">
+              O ValorBrain Meet grava a reunião do Google Meet no seu navegador, transcreve, resume
+              em português e envia tudo para o ValorBrain. Sem robô na sala.
             </p>
-            <div class="input-row">
-              <input
-                type="password"
-                id="passphrase-input"
-                class="form-input"
-                placeholder="Enter encryption passphrase..."
-              />
-              <button
-                class="toggle-vis"
-                data-target="passphrase-input"
-                aria-label="Toggle passphrase visibility"
-                title="Show/Hide Passphrase"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="lucide lucide-eye"
-                >
-                  <path
-                    d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
-                  />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-              </button>
+            <ol class="op-welcome-steps">
+              <li>
+                <strong>Transcrição</strong> e <strong>resumo</strong>: confira os provedores abaixo
+                e teste.
+              </li>
+              <li><strong>ValorBrain</strong>: conecte a sua conta com um clique.</li>
+              <li><strong>Microfone</strong>: libere para que a sua voz entre na transcrição.</li>
+            </ol>
+            <p class="vb-muted op-welcome-text">
+              Depois é só entrar no Meet, clicar no ícone do ValorBrain Meet na barra do Chrome e em
+              <strong>Iniciar gravação</strong>. Fixe o ícone (menu de extensões → alfinete) para
+              achá-lo rápido.
+            </p>
+            <button id="op-welcome-done" class="vb-btn vb-btn--primary" type="button">
+              Entendi, vamos configurar
+            </button>
+          </section>
+
+          <!-- Checklist -->
+          <section id="primeiros-passos" class="op-section">
+            <div class="op-section-head">
+              <h2 class="op-section-title">Primeiros passos</h2>
+              <span id="op-setup-summary" class="vb-chip vb-chip--neutral">Verificando…</span>
             </div>
-            <div id="passphrase-status" class="form-hint u-mt-8"></div>
-          </div>
-        </section>
-      </div>
+            <ul id="op-setup-list" class="op-checklist"></ul>
+          </section>
 
-      <!-- AI Providers Section -->
-      <section class="options-section">
-        <h2 class="section-title">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-cpu"
-          >
-            <rect x="4" y="4" width="16" height="16" rx="2" />
-            <rect x="9" y="9" width="6" height="6" />
-            <path d="M15 2v2" />
-            <path d="M15 20v2" />
-            <path d="M2 15h2" />
-            <path d="M2 9h2" />
-            <path d="M20 15h2" />
-            <path d="M20 9h2" />
-            <path d="M9 2v2" />
-            <path d="M9 20v2" />
-          </svg>
-          AI Providers
-        </h2>
-        <p class="form-hint">
-          Transcrição e resumo podem usar providers diferentes compatíveis com o formato OpenAI.
-          Escolher um perfil preenche os campos — tudo continua editável para endpoints custom.
-        </p>
-
-        <div class="provider-block">
-          <h3 class="provider-block-title">Transcrição (fala → texto)</h3>
-          <div class="form-group">
-            <label class="form-label" for="transcription-profile">Perfil</label>
-            <select id="transcription-profile" class="form-select">
-              <option value="whisper-local">Local Whisper (faster-whisper)</option>
-              <option value="zai">Z.ai GLM</option>
-              <option value="openai">OpenAI</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="transcription-base-url">Base URL</label>
-            <input
-              type="text"
-              id="transcription-base-url"
-              class="form-input"
-              placeholder="http://127.0.0.1:8394/v1"
-              spellcheck="false"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="transcription-api-key">Chave de API</label>
-            <p class="form-hint">Deixe vazio para um servidor local sem autenticação.</p>
-            <div class="input-row">
-              <input
-                type="password"
-                id="transcription-api-key"
-                class="form-input"
-                placeholder="(not required for local servers)"
-                autocomplete="off"
-              />
-              <button
-                class="toggle-vis"
-                data-target="transcription-api-key"
-                aria-label="Toggle transcription API key visibility"
-                title="Show/Hide Key"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="lucide lucide-eye"
-                >
-                  <path
-                    d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
-                  />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-              </button>
+          <!-- Transcription -->
+          <section id="transcricao" class="op-section" data-role="transcription">
+            <div class="op-section-head">
+              <h2 class="op-section-title"><span data-icon="mic"></span>Transcrição</h2>
             </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="transcription-model">Modelo</label>
-            <input
-              type="text"
-              id="transcription-model"
-              class="form-input"
-              placeholder="whisper-local"
-              spellcheck="false"
-            />
-          </div>
-          <button id="transcription-test" class="btn" type="button">Testar conexão</button>
-          <div id="transcription-test-status" class="passphrase-status"></div>
-        </div>
-
-        <div class="provider-block">
-          <h3 class="provider-block-title">Resumo (LLM)</h3>
-          <div class="form-group">
-            <label class="form-label" for="summary-profile">Perfil</label>
-            <select id="summary-profile" class="form-select">
-              <option value="whisper-local">Local Whisper (faster-whisper)</option>
-              <option value="zai">Z.ai GLM</option>
-              <option value="openai">OpenAI</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="summary-base-url">Base URL</label>
-            <input
-              type="text"
-              id="summary-base-url"
-              class="form-input"
-              placeholder="https://api.z.ai/api/paas/v4"
-              spellcheck="false"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="summary-api-key">Chave de API</label>
-            <div class="input-row">
-              <input
-                type="password"
-                id="summary-api-key"
-                class="form-input"
-                placeholder="(provider API key)"
-                autocomplete="off"
-              />
-              <button
-                class="toggle-vis"
-                data-target="summary-api-key"
-                aria-label="Toggle summary API key visibility"
-                title="Show/Hide Key"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="lucide lucide-eye"
-                >
-                  <path
-                    d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
-                  />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="summary-model">Modelo</label>
-            <input
-              type="text"
-              id="summary-model"
-              class="form-input"
-              placeholder="glm-5.3-flash"
-              spellcheck="false"
-            />
-          </div>
-          <button id="summary-test" class="btn" type="button">Testar conexão</button>
-          <div id="summary-test-status" class="passphrase-status"></div>
-        </div>
-      </section>
-
-      <!-- Chaves de API (legado) Section -->
-      <section class="options-section">
-        <h2 class="section-title">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-key"
-          >
-            <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
-            <path d="m21 2-9.6 9.6" />
-            <circle cx="7.5" cy="15.5" r="5.5" />
-          </svg>
-          Chaves de API (legado)
-        </h2>
-
-        <div class="form-group">
-          <label class="form-label">Chave de API da OpenAI</label>
-          <p class="form-hint">
-            Chave legada no cofre criptografado. O perfil OpenAI em AI Providers usa esta chave
-            quando o próprio campo está vazio.
-          </p>
-          <div class="input-row">
-            <input type="password" id="openai-key" class="form-input" placeholder="sk-..." />
-            <button
-              class="toggle-vis"
-              data-target="openai-key"
-              aria-label="Toggle API key visibility"
-              title="Show/Hide Key"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="lucide lucide-eye"
-              >
-                <path
-                  d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+            <p class="vb-muted">
+              Transforma o áudio da reunião em texto. Qualquer servidor compatível com a API de
+              transcrição da OpenAI funciona.
+            </p>
+            <div class="op-grid">
+              <div class="vb-field op-span-2">
+                <label class="vb-label" for="transcription-profile">Provedor</label>
+                <select id="transcription-profile" class="vb-select" data-dirty></select>
+                <p id="transcription-profile-hint" class="vb-hint"></p>
+              </div>
+              <div class="vb-field op-span-2">
+                <label class="vb-label" for="transcription-base-url">Endereço (Base URL)</label>
+                <input
+                  id="transcription-base-url"
+                  class="vb-input vb-input--mono"
+                  type="url"
+                  spellcheck="false"
+                  autocomplete="off"
+                  data-dirty
                 />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <!-- Summarization Section -->
-      <section class="options-section">
-        <h2 class="section-title">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-zap"
-          >
-            <path
-              d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"
-            />
-          </svg>
-          Processamento de IA
-        </h2>
-
-        <div class="form-group">
-          <label class="form-label">Intervalo do resumo</label>
-          <p class="form-hint">Com que frequência a IA resume a transcrição (5–15 minutos)</p>
-          <div class="slider-row">
-            <input
-              type="range"
-              id="summary-interval"
-              class="form-range"
-              min="300"
-              max="900"
-              step="300"
-              value="300"
-            />
-
-            <span id="interval-value" class="range-value">5 min</span>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Limiar de detecção de voz</label>
-          <p class="form-hint">
-            Valores baixos detectam vozes mais baixas; altos filtram mais silêncio.
-          </p>
-
-          <div class="slider-row">
-            <input
-              type="range"
-              id="vad-threshold"
-              class="form-range"
-              min="0.005"
-              max="0.05"
-              step="0.001"
-              value="0.012"
-            />
-            <span id="vad-value" class="range-value">0.012</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Funcionalidades Section -->
-      <section class="options-section">
-        <h2 class="section-title">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-target"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <circle cx="12" cy="12" r="6" />
-            <circle cx="12" cy="12" r="2" />
-          </svg>
-          Funcionalidades
-        </h2>
-
-        <div class="toggle-group">
-          <div class="toggle-item">
-            <div>
-              <div class="toggle-label">Briefing de atrasados</div>
-              <div class="toggle-hint">
-                Gera automaticamente um briefing privado quando alguém entra atrasado
               </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="late-joiner-toggle" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="toggle-item">
-            <div>
-              <div class="toggle-label">Briefings no chat público</div>
-              <div class="toggle-hint">
-                Também envia o briefing para o chat do Google Meet (visível a todos)
+              <div class="vb-field">
+                <label class="vb-label" for="transcription-api-key">Chave de API</label>
+                <div class="vb-input-row">
+                  <input
+                    id="transcription-api-key"
+                    class="vb-input vb-input--mono"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    data-dirty
+                  />
+                  <button
+                    class="vb-btn op-reveal"
+                    type="button"
+                    data-reveal="transcription-api-key"
+                    aria-label="Mostrar a chave"
+                  >
+                    Mostrar
+                  </button>
+                </div>
+                <p id="transcription-key-hint" class="vb-hint"></p>
               </div>
-            </div>
-            <label class="toggle-switch">
-              <input
-                type="checkbox"
-                id="public-late-joiner-chat-toggle"
-                aria-label="Briefings no chat público"
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="toggle-item">
-            <div>
-              <div class="toggle-label">Detecção de tópicos</div>
-              <div class="toggle-hint">Detecta e acompanha os tópicos da discussão</div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="topic-toggle" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="toggle-item">
-            <div>
-              <div class="toggle-label">Detecção de decisões</div>
-              <div class="toggle-hint">Extrai decisões tomadas na reunião</div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="decision-toggle" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="toggle-item">
-            <div>
-              <div class="toggle-label">Extração de itens de ação</div>
-              <div class="toggle-hint">Detecta tarefas, responsáveis e prazos</div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="action-toggle" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="toggle-item">
-            <div>
-              <div class="toggle-label">Análise de sentimento</div>
-              <div class="toggle-hint">Acompanha o clima e o engajamento da reunião</div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="sentiment-toggle" checked />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="toggle-item">
-            <div>
-              <div class="toggle-label">Refino da transcrição</div>
-              <div class="toggle-hint">
-                Usa IA para limpar vícios de fala e corrigir erros de transcrição (uma chamada extra
-                de API por trecho de áudio)
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="refinement-toggle" aria-label="Refino da transcrição" />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
-      </section>
-      <!-- ValorBrain Section -->
-      <section class="options-section">
-        <h2 class="section-title">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-cloud-upload"
-          >
-            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
-            <path d="M12 12v9" />
-            <path d="m16 16-4-4-4 4" />
-          </svg>
-          ValorBrain
-        </h2>
-        <p class="form-hint">
-          Envia sessões salvas para a memória do seu tenant ValorBrain. Tudo é por tenant e fica só
-          neste navegador.
-        </p>
-
-        <div class="input-row">
-          <button id="vb-connect" class="save-btn" type="button">Conectar com ValorBrain</button>
-        </div>
-        <div id="vb-connect-status" class="passphrase-status"></div>
-
-        <div class="form-group">
-          <label class="form-label" for="vb-base-url">Base URL</label>
-          <p class="form-hint">ex.: https://valorbrain-api.valor.digital — vazio desativa</p>
-          <input
-            type="text"
-            id="vb-base-url"
-            class="form-input"
-            placeholder="https://your-valorbrain-host"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="vb-api-token">API Token</label>
-          <p class="form-hint">Token Bearer emitido para seu tenant</p>
-          <div class="input-row">
-            <input
-              type="password"
-              id="vb-api-token"
-              class="form-input"
-              placeholder="Your ValorBrain API token..."
-              autocomplete="off"
-            />
-            <button
-              class="toggle-vis"
-              data-target="vb-api-token"
-              aria-label="Toggle token visibility"
-              title="Show/Hide Token"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="lucide lucide-eye"
-              >
-                <path
-                  d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+              <div class="vb-field">
+                <label class="vb-label" for="transcription-model">Modelo</label>
+                <input
+                  id="transcription-model"
+                  class="vb-input vb-input--mono"
+                  type="text"
+                  spellcheck="false"
+                  autocomplete="off"
+                  data-dirty
                 />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="vb-tenant-id">Tenant ID</label>
-          <p class="form-hint">UUID do seu tenant ValorBrain</p>
-          <input
-            type="text"
-            id="vb-tenant-id"
-            class="form-input"
-            placeholder="00000000-0000-0000-0000-000000000000"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </div>
-
-        <div class="toggle-group">
-          <div class="toggle-item">
-            <div>
-              <div class="toggle-label">Auto-send to ValorBrain</div>
-              <div class="toggle-hint">
-                Ligado por padrão quando Base URL + token + Tenant ID estão definidos. Envia cada
-                sessão salva ao fim da reunião; a exportação local nunca é bloqueada por falhas de
-                envio. Desmarque para enviar só manualmente.
+              </div>
+              <div class="vb-field">
+                <label class="vb-label" for="transcription-language">Idioma da reunião</label>
+                <select id="transcription-language" class="vb-select" data-dirty>
+                  <option value="pt">Português (Brasil)</option>
+                  <option value="en">Inglês</option>
+                  <option value="es">Espanhol</option>
+                  <option value="auto">Detectar automaticamente</option>
+                </select>
+                <p class="vb-hint">Fixar o idioma evita trechos transcritos na língua errada.</p>
+              </div>
+              <div class="vb-field op-span-2">
+                <label class="vb-label" for="transcription-vocabulary"
+                  >Vocabulário da empresa</label
+                >
+                <textarea
+                  id="transcription-vocabulary"
+                  class="vb-input op-textarea"
+                  rows="2"
+                  spellcheck="false"
+                  placeholder="ValorBrain, Valor Digital, nomes de clientes e produtos"
+                  data-dirty
+                ></textarea>
+                <p class="vb-hint">
+                  Nomes próprios, produtos e siglas separados por vírgula. Ajudam a transcrição e o
+                  resumo a escrever certo.
+                </p>
               </div>
             </div>
-            <label class="toggle-switch">
-              <input type="checkbox" id="vb-auto-send" aria-label="Auto-send to ValorBrain" />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
+            <div class="op-test">
+              <button id="transcription-test" class="vb-btn" type="button">
+                <span data-icon="activity"></span>Testar transcrição
+              </button>
+              <p
+                id="transcription-test-status"
+                class="op-test-status"
+                role="status"
+                aria-live="polite"
+              ></p>
+            </div>
+          </section>
 
-        <div class="form-group">
-          <div class="input-row">
-            <button id="vb-test-connection-btn" class="btn" aria-label="Test ValorBrain connection">
-              Testar conexão
-            </button>
-            <button id="vb-disconnect-btn" class="btn" aria-label="Disconnect ValorBrain">
-              Desconectar
-            </button>
-          </div>
-          <div id="vb-test-status" class="form-hint u-mt-8"></div>
-        </div>
-      </section>
+          <!-- Summary -->
+          <section id="resumo" class="op-section" data-role="summary">
+            <div class="op-section-head">
+              <h2 class="op-section-title"><span data-icon="sparkles"></span>Resumo com IA</h2>
+            </div>
+            <p class="vb-muted">
+              Gera o resumo, as decisões e os próximos passos em português durante e ao fim da
+              reunião.
+            </p>
+            <div class="op-grid">
+              <div class="vb-field op-span-2">
+                <label class="vb-label" for="summary-profile">Provedor</label>
+                <select id="summary-profile" class="vb-select" data-dirty></select>
+                <p id="summary-profile-hint" class="vb-hint"></p>
+              </div>
+              <div class="vb-field op-span-2">
+                <label class="vb-label" for="summary-base-url">Endereço (Base URL)</label>
+                <input
+                  id="summary-base-url"
+                  class="vb-input vb-input--mono"
+                  type="url"
+                  spellcheck="false"
+                  autocomplete="off"
+                  data-dirty
+                />
+              </div>
+              <div class="vb-field">
+                <label class="vb-label" for="summary-api-key">Chave de API</label>
+                <div class="vb-input-row">
+                  <input
+                    id="summary-api-key"
+                    class="vb-input vb-input--mono"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    data-dirty
+                  />
+                  <button
+                    class="vb-btn op-reveal"
+                    type="button"
+                    data-reveal="summary-api-key"
+                    aria-label="Mostrar a chave"
+                  >
+                    Mostrar
+                  </button>
+                </div>
+                <p id="summary-key-hint" class="vb-hint"></p>
+              </div>
+              <div class="vb-field">
+                <label class="vb-label" for="summary-model">Modelo</label>
+                <input
+                  id="summary-model"
+                  class="vb-input vb-input--mono"
+                  type="text"
+                  spellcheck="false"
+                  autocomplete="off"
+                  data-dirty
+                />
+              </div>
+              <div class="vb-field op-span-2">
+                <label class="vb-label" for="summary-interval"
+                  >Atualizar o resumo a cada
+                  <span id="summary-interval-value" class="vb-mono">3 min</span></label
+                >
+                <input
+                  id="summary-interval"
+                  class="op-range"
+                  type="range"
+                  min="120"
+                  max="900"
+                  step="60"
+                  data-dirty
+                />
+                <p class="vb-hint">
+                  Ao encerrar a gravação, um resumo final da reunião inteira é sempre gerado.
+                </p>
+              </div>
+            </div>
+            <div class="op-test">
+              <button id="summary-test" class="vb-btn" type="button">
+                <span data-icon="activity"></span>Testar resumo
+              </button>
+              <p
+                id="summary-test-status"
+                class="op-test-status"
+                role="status"
+                aria-live="polite"
+              ></p>
+            </div>
+          </section>
 
-      <!-- Storage Section -->
-      <section class="options-section">
-        <h2 class="section-title">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-database"
-          >
-            <ellipse cx="12" cy="5" rx="9" ry="3" />
-            <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-            <path d="M3 12A9 3 0 0 0 21 12" />
-          </svg>
-          Storage
-        </h2>
-        <p class="form-hint">Veja e gerencie o armazenamento local do ValorBrain Meet.</p>
-        <div id="storage-dashboard-container"></div>
-      </section>
+          <!-- ValorBrain -->
+          <section id="valorbrain" class="op-section">
+            <div class="op-section-head">
+              <h2 class="op-section-title"><span data-icon="cloudUpload"></span>ValorBrain</h2>
+              <span id="vb-status-chip" class="vb-chip vb-chip--neutral">Não conectado</span>
+            </div>
+            <p class="vb-muted">
+              Cada reunião encerrada vai para a memória da sua empresa no ValorBrain, com resumo,
+              decisões, próximos passos e transcrição.
+            </p>
+            <p id="vb-status-detail" class="op-vb-detail"></p>
+            <div class="op-actions">
+              <button id="vb-connect" class="vb-btn vb-btn--primary" type="button">
+                <span data-icon="logIn"></span
+                ><span class="vb-connect-label">Conectar com ValorBrain</span>
+              </button>
+              <button id="vb-test" class="vb-btn" type="button">
+                <span data-icon="activity"></span>Testar conexão
+              </button>
+              <button id="vb-disconnect" class="vb-btn vb-btn--danger-outline" type="button">
+                <span data-icon="unplug"></span>Desconectar
+              </button>
+            </div>
+            <p id="vb-action-status" class="op-test-status" role="status" aria-live="polite"></p>
 
-      <!-- API Usage & Cost Section -->
-      <section class="options-section">
-        <h2 class="section-title">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-credit-card"
-          >
-            <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-            <line x1="1" y1="10" x2="23" y2="10" />
-          </svg>
-          Custo de API e uso de tokens
-        </h2>
-        <p class="form-hint">
-          Track and estimate AI token usage and transcription audio seconds. Costs are estimated
-          from OpenAI published pricing; other providers are shown without cost estimates.
-        </p>
-        <div id="api-usage-dashboard-container"></div>
-      </section>
+            <div class="op-toggle">
+              <div>
+                <label class="vb-label" for="vb-auto-send"
+                  >Enviar cada reunião automaticamente</label
+                >
+                <p class="vb-hint">
+                  Ao encerrar a gravação, a reunião é salva neste navegador e enviada ao ValorBrain.
+                  Se o envio falhar, dá para reenviar pelo histórico.
+                </p>
+              </div>
+              <label class="vb-switch"
+                ><input id="vb-auto-send" type="checkbox" data-dirty /><span></span
+              ></label>
+            </div>
 
-      <!-- Dados Section -->
-      <section class="options-section">
-        <h2 class="section-title">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
-            <path d="M3 5V19A9 3 0 0 0 21 19V5"></path>
-            <path d="M3 12A9 3 0 0 0 21 12"></path>
-          </svg>
-          Dados
-        </h2>
-        <div class="form-group">
-          <div class="form-label">Limpar armazenamento local</div>
-          <p class="form-hint">
-            Apaga definitivamente sessões salvas, chaves e configurações deste navegador.
-          </p>
-          <button id="clear-data-btn" class="save-btn" class="u-danger-clear u-mt-10">
-            <span class="save-text">Apagar todos os dados</span>
-            <span class="save-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M3 6h18"></path>
-                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-              </svg>
-            </span>
-          </button>
-        </div>
-      </section>
+            <details class="op-details">
+              <summary>Configuração manual (token de API)</summary>
+              <div class="op-grid">
+                <div class="vb-field op-span-2">
+                  <label class="vb-label" for="vb-base-url">Endereço da API</label>
+                  <input
+                    id="vb-base-url"
+                    class="vb-input vb-input--mono"
+                    type="url"
+                    placeholder="https://valorbrain-api.valor.digital"
+                    spellcheck="false"
+                    autocomplete="off"
+                    data-dirty
+                  />
+                </div>
+                <div class="vb-field">
+                  <label class="vb-label" for="vb-api-token">Token</label>
+                  <div class="vb-input-row">
+                    <input
+                      id="vb-api-token"
+                      class="vb-input vb-input--mono"
+                      type="password"
+                      autocomplete="off"
+                      spellcheck="false"
+                      data-dirty
+                    />
+                    <button
+                      class="vb-btn op-reveal"
+                      type="button"
+                      data-reveal="vb-api-token"
+                      aria-label="Mostrar o token"
+                    >
+                      Mostrar
+                    </button>
+                  </div>
+                </div>
+                <div class="vb-field">
+                  <label class="vb-label" for="vb-tenant-id">Tenant ID (opcional)</label>
+                  <input
+                    id="vb-tenant-id"
+                    class="vb-input vb-input--mono"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    data-dirty
+                  />
+                  <p class="vb-hint">
+                    Só para tokens de administração. Tokens da conexão já identificam a empresa.
+                  </p>
+                </div>
+              </div>
+            </details>
+          </section>
 
-      <!-- Save Button -->
-      <div class="save-section">
-        <button id="save-btn" class="save-btn">
-          <span class="save-text">Save Settings</span>
-          <span class="save-icon">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="lucide lucide-save"
-            >
-              <path
-                d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
+          <!-- Microphone -->
+          <section id="microfone" class="op-section">
+            <div class="op-section-head">
+              <h2 class="op-section-title"><span data-icon="mic"></span>Microfone</h2>
+              <span id="mic-status-chip" class="vb-chip vb-chip--neutral">Verificando…</span>
+            </div>
+            <p class="vb-muted">
+              O áudio da aba traz as outras pessoas. A sua voz vem do microfone, que precisa ser
+              liberado uma vez para o ValorBrain Meet.
+            </p>
+            <div class="op-actions">
+              <button id="mic-grant" class="vb-btn vb-btn--primary" type="button">
+                <span data-icon="mic"></span>Permitir microfone
+              </button>
+            </div>
+            <p id="mic-help" class="op-test-status" role="status" aria-live="polite"></p>
+            <div class="vb-field">
+              <label class="vb-label" for="vad-threshold"
+                >Sensibilidade à fala: <span id="vad-value" class="vb-mono"></span
+              ></label>
+              <input
+                id="vad-threshold"
+                class="op-range"
+                type="range"
+                min="0.004"
+                max="0.05"
+                step="0.001"
+                data-dirty
               />
-              <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
-              <path d="M7 3v4a1 1 0 0 0 1 1h7" />
-            </svg>
-          </span>
-        </button>
-        <div id="save-status" class="save-status"></div>
-      </div>
+              <p class="vb-hint">
+                Valores menores captam vozes baixas; maiores ignoram mais ruído de fundo. O padrão
+                (0,012) serve para a maioria das reuniões.
+              </p>
+            </div>
+          </section>
 
-      <footer class="options-footer">
-        <p>ValorBrain Meet v<span id="version-display">1.1.0</span> — pela Valor Digital</p>
-      </footer>
+          <!-- Features -->
+          <section id="recursos" class="op-section">
+            <div class="op-section-head">
+              <h2 class="op-section-title"><span data-icon="listChecks"></span>Recursos</h2>
+            </div>
+            <div class="op-toggles">
+              <div class="op-toggle">
+                <div>
+                  <label class="vb-label" for="topic-toggle">Assuntos</label>
+                  <p class="vb-hint">Identifica os assuntos e o que ficou em aberto.</p>
+                </div>
+                <label class="vb-switch"
+                  ><input id="topic-toggle" type="checkbox" data-dirty /><span></span
+                ></label>
+              </div>
+              <div class="op-toggle">
+                <div>
+                  <label class="vb-label" for="decision-toggle">Decisões</label>
+                  <p class="vb-hint">
+                    Registra o que foi decidido, separando o que ainda está a confirmar.
+                  </p>
+                </div>
+                <label class="vb-switch"
+                  ><input id="decision-toggle" type="checkbox" data-dirty /><span></span
+                ></label>
+              </div>
+              <div class="op-toggle">
+                <div>
+                  <label class="vb-label" for="action-toggle">Próximos passos</label>
+                  <p class="vb-hint">Extrai tarefas, responsáveis e prazos.</p>
+                </div>
+                <label class="vb-switch"
+                  ><input id="action-toggle" type="checkbox" data-dirty /><span></span
+                ></label>
+              </div>
+              <div class="op-toggle">
+                <div>
+                  <label class="vb-label" for="sentiment-toggle">Clima da reunião</label>
+                  <p class="vb-hint">
+                    Indica se a conversa foi positiva, neutra, negativa ou mista.
+                  </p>
+                </div>
+                <label class="vb-switch"
+                  ><input id="sentiment-toggle" type="checkbox" data-dirty /><span></span
+                ></label>
+              </div>
+              <div class="op-toggle">
+                <div>
+                  <label class="vb-label" for="refinement-toggle"
+                    >Revisar a transcrição com IA</label
+                  >
+                  <p class="vb-hint">
+                    Corrige erros de reconhecimento e remove vícios de fala. Faz uma chamada extra
+                    ao provedor de resumo por trecho.
+                  </p>
+                </div>
+                <label class="vb-switch"
+                  ><input id="refinement-toggle" type="checkbox" data-dirty /><span></span
+                ></label>
+              </div>
+              <div class="op-toggle">
+                <div>
+                  <label class="vb-label" for="late-joiner-toggle"
+                    >Resumo para quem chega atrasado</label
+                  >
+                  <p class="vb-hint">
+                    Mostra um resumo privado na sua tela quando alguém entra depois.
+                  </p>
+                </div>
+                <label class="vb-switch"
+                  ><input id="late-joiner-toggle" type="checkbox" data-dirty /><span></span
+                ></label>
+              </div>
+              <div class="op-toggle">
+                <div>
+                  <label class="vb-label" for="public-late-joiner-chat-toggle"
+                    >Enviar esse resumo no chat do Meet</label
+                  >
+                  <p class="vb-hint">Todos na reunião veem a mensagem. Desligado por padrão.</p>
+                </div>
+                <label class="vb-switch"
+                  ><input
+                    id="public-late-joiner-chat-toggle"
+                    type="checkbox"
+                    data-dirty /><span></span
+                ></label>
+              </div>
+            </div>
+          </section>
+
+          <!-- Appearance -->
+          <section id="aparencia" class="op-section">
+            <div class="op-section-head">
+              <h2 class="op-section-title"><span data-icon="palette"></span>Aparência</h2>
+            </div>
+            <div class="vb-field op-narrow">
+              <label class="vb-label" for="theme-select">Tema</label>
+              <select id="theme-select" class="vb-select" data-dirty>
+                <option value="system">Igual ao sistema</option>
+                <option value="light">Claro</option>
+                <option value="dark">Escuro</option>
+              </select>
+            </div>
+          </section>
+
+          <!-- Data -->
+          <section id="dados" class="op-section">
+            <div class="op-section-head">
+              <h2 class="op-section-title"><span data-icon="database"></span>Dados e uso</h2>
+            </div>
+            <p class="vb-muted">
+              As reuniões ficam salvas neste navegador, mesmo quando também vão para o ValorBrain.
+            </p>
+            <h3 class="op-subtitle-h">Armazenamento local</h3>
+            <div id="storage-dashboard-container"></div>
+            <h3 class="op-subtitle-h">Uso dos provedores de IA</h3>
+            <div id="api-usage-dashboard-container"></div>
+
+            <details id="op-legacy" class="op-details" hidden>
+              <summary>Chave antiga da OpenAI (cofre criptografado)</summary>
+              <p class="vb-hint">
+                Versões anteriores guardavam uma chave da OpenAI em um cofre protegido por frase
+                secreta. Ela só é usada pelo provedor OpenAI quando o campo de chave dele está
+                vazio.
+              </p>
+              <div class="vb-input-row">
+                <input
+                  id="legacy-passphrase"
+                  class="vb-input"
+                  type="password"
+                  placeholder="Frase secreta do cofre"
+                  autocomplete="off"
+                />
+                <button id="legacy-unlock" class="vb-btn" type="button">Desbloquear</button>
+                <button id="legacy-remove" class="vb-btn vb-btn--danger-outline" type="button">
+                  Remover chave antiga
+                </button>
+              </div>
+              <p id="legacy-status" class="op-test-status" role="status"></p>
+            </details>
+
+            <div class="op-danger">
+              <div>
+                <div class="vb-label">Apagar todos os dados deste navegador</div>
+                <p class="vb-hint">
+                  Remove reuniões salvas, chaves e configurações. O que já está no ValorBrain não é
+                  apagado.
+                </p>
+              </div>
+              <button id="clear-data-btn" class="vb-btn vb-btn--danger-outline" type="button">
+                <span data-icon="trash"></span>Apagar tudo
+              </button>
+            </div>
+          </section>
+
+          <p class="op-footer vb-muted">ValorBrain · O conhecimento muda. O trabalho continua.</p>
+        </main>
+      </div>
     </div>
 
+    <div id="op-savebar" class="op-savebar" hidden role="region" aria-label="Alterações não salvas">
+      <span class="op-savebar-text">Você tem alterações não salvas.</span>
+      <div class="op-savebar-actions">
+        <button id="op-discard" class="vb-btn" type="button">Descartar</button>
+        <button id="op-save" class="vb-btn vb-btn--primary" type="button">Salvar alterações</button>
+      </div>
+    </div>
+
+    <div id="op-toast" class="vb-toast" role="status" aria-live="polite"></div>
     <script type="module" src="options.ts"></script>
   </body>
 </html>

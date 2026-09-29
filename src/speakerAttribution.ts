@@ -1,6 +1,7 @@
 import { participantNameFromCandidate } from "./participantDetection";
 
-export const DEFAULT_TRANSCRIPT_SPEAKER = "Audio";
+/** Label used when Meet did not reveal who was speaking. */
+export const DEFAULT_TRANSCRIPT_SPEAKER = "Participante";
 
 export function normalizeActiveSpeakerName(value: unknown): string | null {
   return participantNameFromCandidate({

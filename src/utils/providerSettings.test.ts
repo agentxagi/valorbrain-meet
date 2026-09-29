@@ -9,7 +9,10 @@ import {
   migrateProviderSettings,
   normalizeBaseUrl,
   normalizeProviderConfig,
+  profileModel,
+  profilesForRole,
   providerConfigFromProfile,
+  requiresApiKey,
   resolveProviderApiKey,
   saveProviderConfig,
   storageKeyFor,
@@ -62,19 +65,52 @@ function setupChromeStorage(localInitial: StorageArea = {}) {
   return { local, session, area };
 }
 
-test("built-in profiles carry the PRD defaults", () => {
+test("built-in profiles carry the deployment defaults", () => {
   const whisper = getProviderProfile("whisper-local")!;
+  const whisperRemote = getProviderProfile("whisper-valor")!;
+  const zaiCoding = getProviderProfile("zai-coding")!;
   const zai = getProviderProfile("zai")!;
   const openai = getProviderProfile("openai")!;
 
   assert.equal(whisper.baseUrl, "http://127.0.0.1:8394/v1");
   assert.equal(whisper.model, "whisper-local");
+  assert.equal(whisper.requiresKey, false);
+  assert.equal(whisperRemote.baseUrl, "https://whisper.valor.digital/v1");
+  assert.equal(whisperRemote.requiresKey, true);
+  assert.equal(zaiCoding.baseUrl, "https://api.z.ai/api/coding/paas/v4");
+  assert.equal(zaiCoding.model, "glm-5.3-flash");
   assert.equal(zai.baseUrl, "https://api.z.ai/api/paas/v4");
   assert.equal(zai.model, "glm-5.3-flash");
   assert.equal(openai.baseUrl, "https://api.openai.com/v1");
-  assert.equal(openai.model, "gpt-4o-mini");
+  assert.equal(profileModel(openai, "transcription"), "whisper-1");
+  assert.equal(profileModel(openai, "summary"), "gpt-4o-mini");
   assert.equal(getProviderProfile("custom"), null);
-  assert.equal(PROVIDER_PROFILES.length, 3);
+  assert.equal(PROVIDER_PROFILES.length, 5);
+});
+
+test("profiles are offered only for the roles they can drive", () => {
+  assert.deepEqual(
+    profilesForRole("transcription").map((p) => p.id),
+    ["whisper-local", "whisper-valor", "openai"],
+  );
+  assert.deepEqual(
+    profilesForRole("summary").map((p) => p.id),
+    ["zai-coding", "zai", "openai"],
+  );
+  assert.equal(requiresApiKey({ profile: "whisper-local" }), false);
+  assert.equal(requiresApiKey({ profile: "custom" }), false);
+  assert.equal(requiresApiKey({ profile: "zai-coding" }), true);
+});
+
+test("a chat preset stored under transcription is kept as custom, not silently reset", () => {
+  const normalized = normalizeProviderConfig("transcription", {
+    profile: "zai",
+    baseUrl: "https://stt.example.com/v1",
+    model: "whisper-large",
+  });
+  assert.equal(normalized.profile, "custom");
+  assert.equal(normalized.baseUrl, "https://stt.example.com/v1");
+  assert.equal(normalized.model, "whisper-large");
 });
 
 test("getProviderConfig falls back to role defaults when nothing is stored", async () => {
@@ -88,8 +124,8 @@ test("getProviderConfig falls back to role defaults when nothing is stored", asy
   assert.equal(transcription.model, "whisper-local");
   assert.equal(transcription.apiKey, "");
 
-  assert.equal(summary.profile, "zai");
-  assert.equal(summary.baseUrl, "https://api.z.ai/api/paas/v4");
+  assert.equal(summary.profile, "zai-coding");
+  assert.equal(summary.baseUrl, "https://api.z.ai/api/coding/paas/v4");
   assert.equal(summary.model, "glm-5.3-flash");
 });
 
@@ -210,7 +246,8 @@ test("migration points both roles at OpenAI when only a legacy credential exists
 
   assert.equal(transcription.profile, "openai");
   assert.equal(transcription.baseUrl, "https://api.openai.com/v1");
-  assert.equal(transcription.model, "gpt-4o-mini");
+  // /audio/transcriptions needs a speech model, never the chat model.
+  assert.equal(transcription.model, "whisper-1");
   assert.equal(transcription.apiKey, "");
 
   assert.equal(summary.profile, "openai");
@@ -255,6 +292,9 @@ test("providerConfigFromProfile builds a probe block from a preset", () => {
   assert.equal(config.baseUrl, "https://api.openai.com/v1");
   assert.equal(config.model, "gpt-4o-mini");
   assert.equal(config.apiKey, "sk-probe");
+
+  const stt = providerConfigFromProfile("openai", "sk-probe", "transcription");
+  assert.equal(stt.model, "whisper-1");
 });
 
 after(() => {

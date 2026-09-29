@@ -1,2219 +1,1056 @@
+// Side panel: live meeting view (summary, transcript, decisions, people) and
+// the local history of saved meetings with their ValorBrain delivery status.
+import type { ActionItem, MeetingNotice, State, TranscriptEntry } from "./types";
+import { initTheme } from "./theme";
+import { hydrateIcons, icon, type IconName } from "./ui/icons";
+import { escapeHtml } from "./utils/domHelpers";
 import {
-  State,
-  Topic,
-  TranscriptEntry,
-  TimelineEvent,
-  Decision,
-  ActionItem,
-  KeyInsight,
-} from "./types";
-import { initTheme } from "./theme.js";
-import { resolveManualMeetTab } from "./meetingTabs";
-import { startDashboardAudioCapture } from "./dashboardCapture";
-import { escapeHtml, formatDuration, sanitizeTopicStatus } from "./utils/domHelpers";
-import { sanitizeDataAttr } from "./utils/sanitize";
-import { renderApiUsageDashboard } from "./apiUsageDashboard";
-import { VB_SYNC_STATUS_KEY, type VbSendResult, type VbSyncStatus } from "./vbClient";
+  confidenceLabel,
+  formatClock,
+  formatDateTime,
+  formatDurationHuman,
+  initials,
+  plural,
+  sentimentLabel,
+  speakerLabel,
+  topicStatusLabel,
+} from "./ui/format";
+import { getMeetingIdFromUrl } from "./meetingTabs";
+import {
+  buildMeetingJson,
+  buildMeetingMarkdown,
+  buildMeetingText,
+  exportFilename,
+  meetingTitle,
+} from "./meetingExport";
 
-const UI_TRUNCATION_MAX = 50;
+void initTheme();
 
-initTheme();
+type TabName = "summary" | "transcript" | "actions" | "people" | "history";
+const TABS: TabName[] = ["summary", "transcript", "actions", "people", "history"];
+const DASHBOARD_TAB_KEY = "dashboardInitialTab";
+const ACTION_STATUS_KEY = "actionItemStatuses";
+const WAVE_BARS = 32;
 
-function truncatedNoticeHtml(key: string, total: number | undefined): string {
-  if (total === undefined || total <= UI_TRUNCATION_MAX) return "";
-  return `<div class="truncated-notice">Showing last ${UI_TRUNCATION_MAX} of ${total} ${key}</div>`;
-}
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-function truncatedNoticeText(key: string, total: number | undefined): string {
-  if (total === undefined || total <= UI_TRUNCATION_MAX) return "";
-  return `Showing last ${UI_TRUNCATION_MAX} of ${total} ${key}`;
-}
-
-/** Securely checks whether a URL belongs to meet.google.com using URL parsing (not substring matching). */
-function isMeetHostname(url: string | null | undefined): boolean {
-  if (!url) return false;
-  try {
-    return new URL(url).hostname === "meet.google.com";
-  } catch {
-    return false;
-  }
-}
-
-// ——— Action Item Status Persistence ———
+let liveState: State | null = null;
+let viewed: State | null = null;
+let activeTab: TabName = "summary";
+let timerHandle: ReturnType<typeof setInterval> | null = null;
+let toastHandle: ReturnType<typeof setTimeout> | null = null;
+let lastWaveAt = 0;
 const actionStatuses = new Map<string, boolean>();
-let currentMeetingId = "unknown";
 
-function resolveActionKey(item: ActionItem | unknown): string {
-  if (item && typeof item === "object" && "task" in (item as object)) {
-    const task = (item as { task?: unknown }).task;
-    return String(task ?? "").trim();
+function current(): State | null {
+  return viewed ?? liveState;
+}
+
+function toast(message: string, kind: "info" | "error" = "info") {
+  const el = $("db-toast");
+  el.textContent = message;
+  el.className = `vb-toast${kind === "error" ? " vb-toast--error" : ""} is-visible`;
+  if (toastHandle) clearTimeout(toastHandle);
+  toastHandle = setTimeout(() => el.classList.remove("is-visible"), 3200);
+}
+
+function emptyBlock(title: string, text = ""): string {
+  return `<div class="db-empty"><strong>${escapeHtml(title)}</strong>${escapeHtml(text)}</div>`;
+}
+
+function tsButton(chunkId: string | undefined, label: string | undefined): string {
+  if (!label) return "";
+  const safe = escapeHtml(label);
+  return chunkId
+    ? `<button type="button" class="db-ts" data-chunk="${escapeHtml(chunkId)}" aria-label="Ir para ${safe} na transcrição">${safe}</button>`
+    : `<span class="db-ts">${safe}</span>`;
+}
+
+function copyButton(text: string, label: string): string {
+  return `<button type="button" class="vb-icon-btn db-copy" data-copy="${escapeHtml(text)}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${icon("copy")}</button>`;
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copiado.");
+  } catch {
+    toast("Não consegui copiar.", "error");
   }
-  return String(item ?? "").trim();
 }
 
-function buildActionStatusKey(meetingId: string, task: string): string {
-  return `${meetingId}::${task}`;
-}
+// ——— Action item status (ticked checkboxes) ———
 
-function normalizeActionItem(input: unknown): ActionItem | null {
-  if (!input || typeof input !== "object") return null;
-  const raw = input as Partial<ActionItem> & { confidence?: unknown; isSpeculative?: unknown };
-  const task = String(raw.task ?? "").trim();
-
-  if (!task) return null;
-
-  return {
-    task,
-    owner: String(raw.owner ?? "").trim() || undefined,
-    deadline: String(raw.deadline ?? "").trim() || undefined,
-    confidence: typeof raw.confidence === "number" ? raw.confidence : undefined,
-    isSpeculative: typeof raw.isSpeculative === "boolean" ? raw.isSpeculative : undefined,
-  } as ActionItem;
+function statusKey(session: State | null, task: string): string {
+  return `${session?.meetingId || "unknown"}::${session?.startTime || 0}::${task}`;
 }
 
 async function loadActionStatuses() {
-  try {
-    const result = await chrome.storage.local.get("actionItemStatuses");
-    const stored = result.actionItemStatuses;
-    if (stored && typeof stored === "object") {
-      for (const [k, v] of Object.entries(stored as Record<string, unknown>)) {
-        actionStatuses.set(k, Boolean(v));
-      }
+  const stored = (await chrome.storage.local.get(ACTION_STATUS_KEY))[ACTION_STATUS_KEY];
+  actionStatuses.clear();
+  if (stored && typeof stored === "object") {
+    for (const [key, value] of Object.entries(stored as Record<string, unknown>)) {
+      actionStatuses.set(key, value === true);
     }
-  } catch (err) {
-    console.error("[Dashboard] Failed to load action statuses:", err);
   }
 }
 
-async function persistActionStatuses() {
-  try {
-    const obj: Record<string, boolean> = {};
-    actionStatuses.forEach((v, k) => {
-      obj[k] = v;
-    });
-    await chrome.storage.local.set({ actionItemStatuses: obj });
-  } catch (err) {
-    console.error("[Dashboard] Failed to persist action statuses:", err);
-  }
+async function saveActionStatus(key: string, done: boolean) {
+  actionStatuses.set(key, done);
+  await chrome.storage.local.set({ [ACTION_STATUS_KEY]: Object.fromEntries(actionStatuses) });
 }
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "local" && changes.actionItemStatuses) {
-    const newVal = changes.actionItemStatuses.newValue;
-    if (newVal && typeof newVal === "object") {
-      for (const [k, v] of Object.entries(newVal)) {
-        actionStatuses.set(k, Boolean(v));
-      }
+function isActionDone(session: State | null, task: string): boolean {
+  return actionStatuses.get(statusKey(session, task)) === true;
+}
 
-      const checkboxes = document.querySelectorAll<HTMLInputElement>(".action-checkbox");
-      checkboxes.forEach((cb) => {
-        const meetId = cb.dataset.meetingId || currentMeetingId;
-        const taskText = cb.dataset.task || "";
-        const key = buildActionStatusKey(meetId, taskText);
-        const isDone = actionStatuses.get(key) === true;
+// ——— Header / controls ———
 
-        if (cb.checked !== isDone) {
-          cb.checked = isDone;
-          const wrapper = cb.closest(".action-item");
-          const taskDiv = wrapper?.querySelector(".action-task");
-          wrapper?.classList.toggle("action-item--done", isDone);
-          taskDiv?.classList.toggle("action-task--done", isDone);
-        }
-      });
-    }
-  }
-});
-
-document.addEventListener("DOMContentLoaded", async () => {
-  // ——— Transcript Search DOM Elements (Queried early to prevent TDZ) ———
-  const searchInput = document.getElementById("transcript-search-input") as HTMLInputElement | null;
-  const searchCounter = document.getElementById(
-    "transcript-search-counter",
-  ) as HTMLSpanElement | null;
-  const searchPrevBtn = document.getElementById("search-prev") as HTMLButtonElement | null;
-  const searchNextBtn = document.getElementById("search-next") as HTMLButtonElement | null;
-  const searchClearBtn = document.getElementById("search-clear") as HTMLButtonElement | null;
-  const transcriptContainer = document.getElementById(
-    "dash-transcript-list",
-  ) as HTMLDivElement | null;
-
-  await loadActionStatuses();
-  // ——— Waveform Visualizer ———
-  const WAVEFORM_N = 32;
-  const WAVEFORM_H = 48;
-  const WAVEFORM_SMOOTH = 0.55;
-
-  const waveformCanvas = document.getElementById("waveform-canvas") as HTMLCanvasElement | null;
-  const waveformStatusEl = document.getElementById("waveform-status");
-  let waveformCtx: CanvasRenderingContext2D | null = null;
-  let waveformCssW = 280;
-  let smoothed = new Array(WAVEFORM_N).fill(0);
-
-  function initWaveformCanvas() {
-    if (!waveformCanvas) return;
-    waveformCtx = waveformCanvas.getContext("2d");
-    const dpr = window.devicePixelRatio || 1;
-    waveformCssW = waveformCanvas.offsetWidth || 280;
-    waveformCanvas.width = Math.round(waveformCssW * dpr);
-    waveformCanvas.height = Math.round(WAVEFORM_H * dpr);
-    if (waveformCtx) waveformCtx.scale(dpr, dpr);
-    drawIdleWaveform();
+function renderHeader() {
+  const s = liveState;
+  const chip = $("db-state-chip");
+  const timer = $("db-timer");
+  if (s?.finalizing) {
+    chip.className = "vb-chip vb-chip--warning";
+    chip.innerHTML = '<span class="vb-spinner" aria-hidden="true"></span>Salvando';
+  } else if (s?.audioActive) {
+    chip.className = "vb-chip vb-chip--error";
+    chip.innerHTML = '<span class="vb-rec-dot"></span>Gravando';
+  } else if (s?.isActive && getMeetingIdFromUrl(s.meetingUrl ?? undefined)) {
+    chip.className = "vb-chip vb-chip--neutral";
+    chip.textContent = "Pronta para gravar";
+  } else {
+    chip.className = "vb-chip vb-chip--neutral";
+    chip.textContent = "Sem reunião";
   }
 
-  function drawIdleWaveform() {
-    if (!waveformCtx) return;
-    const barGap = 2;
-    const barW = (waveformCssW - barGap * (WAVEFORM_N - 1)) / WAVEFORM_N;
-    const centerY = WAVEFORM_H / 2;
-    waveformCtx.clearRect(0, 0, waveformCssW, WAVEFORM_H);
-    for (let i = 0; i < WAVEFORM_N; i++) {
-      const x = i * (barW + barGap);
-      waveformCtx.fillStyle = "rgba(255,255,255,0.08)";
-      waveformCtx.beginPath();
-      waveformCtx.roundRect(x, centerY - 1, barW, 2, 1);
-      waveformCtx.fill();
-    }
-  }
+  const recording = s?.audioActive === true && !s.finalizing;
+  timer.hidden = !recording;
+  if (recording && s?.startTime) timer.textContent = formatClock((Date.now() - s.startTime) / 1000);
 
-  function drawWaveform(buckets: number[]) {
-    if (!waveformCtx) return;
-    const barGap = 2;
-    const barW = (waveformCssW - barGap * (WAVEFORM_N - 1)) / WAVEFORM_N;
-    const centerY = WAVEFORM_H / 2;
-    waveformCtx.clearRect(0, 0, waveformCssW, WAVEFORM_H);
-    for (let i = 0; i < WAVEFORM_N; i++) {
-      smoothed[i] = smoothed[i] * WAVEFORM_SMOOTH + buckets[i] * (1 - WAVEFORM_SMOOTH);
-      const amp = smoothed[i];
-      const barH = Math.max(2, amp * WAVEFORM_H * 0.9);
-      const x = i * (barW + barGap);
-      const y = centerY - barH / 2;
-      const alpha = Math.min(1, 0.3 + amp * 2.4);
-      waveformCtx.fillStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
-      waveformCtx.beginPath();
-      waveformCtx.roundRect(x, y, barW, barH, barW / 2);
-      waveformCtx.fill();
-    }
-  }
-
-  initWaveformCanvas();
-
-  // ——— Tab Switching ———
-  const tabs = document.querySelectorAll(".dash-tabs .dash-tab");
-  const panels = document.querySelectorAll(".tab-panel");
-  const loadedTabs = new Set<string>(["overview"]);
-
-  function showSkeletonForTab(tabId: string) {
-    const containerMap: Record<string, string> = {
-      topics: "dash-topics-full",
-      decisions: "dash-decisions-list",
-      actions: "dash-actions-list",
-      people: "dash-participants-list",
-      timeline: "dash-timeline",
-      transcript: "dash-transcript-list",
-      sessions: "dash-sessions-list",
-    };
-    const containerId = containerMap[tabId];
-    if (!containerId) return;
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    if (tabId === "people" || tabId === "transcript" || tabId === "timeline") {
-      container.innerHTML = Array(4)
-        .fill(0)
-        .map(
-          () => `
-        <div class="skeleton-row">
-          <div class="skeleton-avatar"></div>
-          <div class="skeleton-text-block">
-            <div class="skeleton-text"></div>
-            <div class="skeleton-text short"></div>
-          </div>
-        </div>
-      `,
-        )
-        .join("");
-    } else {
-      container.innerHTML = Array(4)
-        .fill(0)
-        .map(
-          () => `
-        <div class="skeleton-item"></div>
-      `,
-        )
-        .join("");
-    }
-  }
-
-  tabs.forEach((tab) => {
-    tab.addEventListener("click", () => {
-      const tabId = (tab as HTMLElement).dataset.tab;
-      if (!tabId) return;
-
-      tabs.forEach((t) => {
-        t.classList.remove("active");
-        t.setAttribute("aria-selected", "false");
-        t.setAttribute("tabindex", "-1");
-      });
-      panels.forEach((p) => p.classList.remove("active"));
-      (tab as HTMLElement).classList.add("active");
-      (tab as HTMLElement).setAttribute("aria-selected", "true");
-      (tab as HTMLElement).setAttribute("tabindex", "0");
-
-      const panel = document.getElementById(`tab-${tabId}`);
-      if (panel) {
-        panel.classList.add("active");
+  if (recording && !timerHandle) {
+    timerHandle = setInterval(() => {
+      if (liveState?.audioActive && liveState.startTime) {
+        timer.textContent = formatClock((Date.now() - liveState.startTime) / 1000);
       }
-
-      if (!loadedTabs.has(tabId)) {
-        loadedTabs.add(tabId);
-        showSkeletonForTab(tabId);
-        setTimeout(() => {
-          if (tabId === "topics") updateTopics(lastState?.topics || []);
-          else if (tabId === "decisions") updateDecisions(lastState?.decisions || []);
-          else if (tabId === "actions") updateActions(lastState?.actionItems || []);
-          else if (tabId === "people")
-            updatePeople(
-              lastState?.participants || [],
-              lastState?.lateJoiners || [],
-              lastState?.meetingUrl || null,
-            );
-          else if (tabId === "timeline") updateTimeline(lastState?.timeline || []);
-          else if (tabId === "transcript") updateTranscript(lastState?.transcript || []);
-          else if (tabId === "history" || tabId === "sessions") loadMeetingHistory();
-          else if (tabId === "usage") {
-            const usageContainer = document.getElementById("sidepanel-usage-container");
-            if (usageContainer) renderApiUsageDashboard(usageContainer);
-          }
-        }, 150);
-      }
-    });
-
-    tab.addEventListener("keydown", (e: Event) => {
-      const kbEvent = e as KeyboardEvent;
-      let newIndex = -1;
-      const tabsArray = Array.from(tabs);
-      const index = tabsArray.indexOf(tab);
-
-      if (kbEvent.key === "ArrowRight") {
-        newIndex = (index + 1) % tabsArray.length;
-      } else if (kbEvent.key === "ArrowLeft") {
-        newIndex = (index - 1 + tabsArray.length) % tabsArray.length;
-      } else if (kbEvent.key === "Home") {
-        newIndex = 0;
-      } else if (kbEvent.key === "End") {
-        newIndex = tabsArray.length - 1;
-      }
-
-      if (newIndex !== -1) {
-        kbEvent.preventDefault();
-        const newTab = tabsArray[newIndex] as HTMLElement;
-        newTab.focus();
-        newTab.click();
-      }
-    });
-  });
-
-  // ——— State Management ———
-  let lastState: State | null = null;
-
-  // ——— Initial State ———
-  try {
-    lastState = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-    if (lastState) updateDashboard(lastState);
-  } catch {
-    /* no meeting data yet */
-  }
-
-  // ——— Listen for State Updates ———
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === "STATE_UPDATE") {
-      lastState = message.state;
-      updateDashboard(message.state);
-      if (!message.state?.audioActive) {
-        smoothed = new Array(WAVEFORM_N).fill(0);
-        drawIdleWaveform();
-        if (waveformStatusEl) {
-          waveformStatusEl.textContent = "IDLE";
-          waveformStatusEl.classList.remove("active");
-        }
-      }
-    }
-    if (message.type === "SESSION_ENDED") {
-      // Dynamic load requested by human reviewer
-      loadMeetingHistory();
-      loadedTabs.delete("sessions");
-    }
-    if (message.type === "WAVEFORM_DATA" && Array.isArray(message.buckets)) {
-      drawWaveform(message.buckets);
-      if (waveformStatusEl && !waveformStatusEl.classList.contains("active")) {
-        waveformStatusEl.textContent = "LIVE";
-        waveformStatusEl.classList.add("active");
-      }
-    }
-  });
-
-  // ——— Start Audio Capture (User Gesture via tabCapture) ———
-  const audioBtn = document.getElementById("dash-start-audio-btn") as HTMLButtonElement | null;
-
-  function getDashboardMediaStreamId(tabId: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message || "Erro de captura da aba"));
-          return;
-        }
-
-        resolve(streamId || "");
-      });
-    });
-  }
-
-  async function requestDashboardMicrophonePermission(): Promise<boolean> {
-    try {
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      micStream.getTracks().forEach((t) => t.stop());
-      return true;
-    } catch {
-      console.warn("[Dashboard] Mic permission not granted — waveform will use tab audio only");
-      return false;
-    }
-  }
-
-  audioBtn?.addEventListener("click", async () => {
-    if (lastState?.audioActive) {
-      try {
-        audioBtn.disabled = true;
-        await chrome.runtime.sendMessage({ type: "MANUAL_STOP_AUDIO" });
-      } catch (err) {
-        console.error("[Dashboard] Failed to stop audio:", err);
-      } finally {
-        audioBtn.disabled = false;
-      }
-      return;
-    }
-
-    try {
-      audioBtn.disabled = true;
-      audioBtn.textContent = "Starting...";
-
-      const { meetingId } = await startDashboardAudioCapture({
-        resolveMeetTab: resolveManualMeetTab,
-        getMediaStreamId: getDashboardMediaStreamId,
-        requestMicrophonePermission: requestDashboardMicrophonePermission,
-        startAudioCapture: (payload) =>
-          chrome.runtime.sendMessage({
-            type: "MANUAL_START_AUDIO",
-            ...payload,
-          }),
-      });
-
-      setAudioBtnActive(true);
-      // Start timer immediately
-      startTimer(Date.now());
-      const statusText = document.getElementById("dash-status-text");
-      const statusDot = document.querySelector(".dash-status-dot");
-      if (statusText) statusText.textContent = `Meeting active — ${meetingId || "unknown"}`;
-      if (statusDot) statusDot.classList.add("active");
-    } catch (err) {
-      const e = err as Error;
-      if ((e.message || "").includes("active stream")) {
-        setAudioBtnActive(true);
-        return;
-      }
-      handleDashboardAudioError(e);
-    }
-
-    function handleDashboardAudioError(err: unknown) {
-      const e = err as Error;
-      console.error("[Dashboard] Failed to start audio:", e);
-      if (audioBtn) {
-        audioBtn.disabled = false;
-        audioBtn.textContent =
-          (e.message || String(e)).length > 30 ? "Error — Retry" : e.message || "Error";
-        setTimeout(() => {
-          if (audioBtn) {
-            audioBtn.innerHTML =
-              '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" class="u-svg-mr"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Iniciar áudio';
-          }
-        }, 3000);
-      }
-    }
-  });
-
-  function setAudioBtnActive(active: boolean) {
-    if (!audioBtn) return;
-    if (active) {
-      audioBtn.classList.add("active");
-      audioBtn.disabled = false;
-      audioBtn.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" class="u-svg-mr"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 12h6"></path></svg> Stop Audio';
-    } else {
-      audioBtn.classList.remove("active");
-      audioBtn.disabled = false;
-      audioBtn.innerHTML =
-        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" class="u-svg-mr"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Iniciar áudio';
-    }
-  }
-
-  // ——— Duration Timer ———
-  let timerInterval: number | null = null;
-
-  function startTimer(startTime: number) {
-    if (timerInterval) return;
-    timerInterval = window.setInterval(() => {
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      const timerEl = document.getElementById("dash-timer");
-      if (timerEl) timerEl.textContent = formatDuration(elapsed);
     }, 1000);
+  } else if (!recording && timerHandle) {
+    clearInterval(timerHandle);
+    timerHandle = null;
+  }
+}
+
+function renderControls() {
+  const label = $("db-meeting-label");
+  const title = $("db-meeting-title");
+  const button = $<HTMLButtonElement>("db-record-btn");
+  const buttonLabel = button.querySelector(".db-record-label");
+
+  if (viewed) {
+    label.textContent = "Reunião salva";
+    title.textContent = meetingTitle(viewed);
+    button.hidden = true;
+    return;
   }
 
-  // ——— Update Dashboard ———
-  function updateDashboard(state: State) {
-    currentMeetingId = state.meetingId || "unknown";
-    // Status
-    const statusDot = document.querySelector(".dash-status-dot");
-    const statusText = document.getElementById("dash-status-text");
-    if (state.isActive) {
-      if (statusDot) statusDot.classList.add("active");
-      if (statusText) statusText.textContent = `Meeting active — ${state.meetingId || "unknown"}`;
-      if (state.startTime) startTimer(state.startTime);
-      setAudioBtnActive(state.audioActive || false);
-    } else {
-      if (statusDot) statusDot.classList.remove("active");
-      if (statusText) statusText.textContent = "Nenhuma reunião ativa";
-      setAudioBtnActive(false);
-      if (timerInterval) {
-        window.clearInterval(timerInterval);
-        timerInterval = null;
-      }
-    }
+  const s = liveState;
+  const meetingId = getMeetingIdFromUrl(s?.meetingUrl ?? undefined);
+  if (s?.finalizing) {
+    label.textContent = "Salvando";
+    title.textContent = meetingTitle(s);
+    button.hidden = false;
+    button.disabled = true;
+    button.className = "vb-btn vb-btn--danger";
+    if (buttonLabel) buttonLabel.textContent = "Salvando…";
+  } else if (s?.audioActive) {
+    label.textContent = "Gravando agora";
+    title.textContent = s.currentTopic || meetingTitle(s);
+    button.hidden = false;
+    button.disabled = false;
+    button.className = "vb-btn vb-btn--danger";
+    if (buttonLabel) buttonLabel.textContent = "Encerrar e salvar";
+    button.querySelector("svg")?.remove();
+    button.insertAdjacentHTML("afterbegin", icon("stop"));
+  } else if (s?.isActive && meetingId) {
+    label.textContent = "Reunião detectada";
+    title.textContent = meetingId;
+    button.hidden = false;
+    button.disabled = false;
+    button.className = "vb-btn vb-btn--primary";
+    if (buttonLabel) buttonLabel.textContent = "Iniciar gravação";
+    button.querySelector("svg")?.remove();
+    button.insertAdjacentHTML("afterbegin", icon("mic"));
+  } else {
+    label.textContent = "Reunião";
+    title.textContent = "Nenhuma reunião aberta";
+    button.hidden = true;
+  }
+}
 
-    // Summary
-    const summaryEl = document.getElementById("dash-summary");
-    if (summaryEl) {
-      if (Array.isArray(state.summaryItems) && state.summaryItems.length > 0) {
-        const notice = truncatedNoticeHtml("summary items", state.truncatedCounts?.summaryItems);
-        summaryEl.innerHTML =
-          notice +
-          state.summaryItems
-            .map((item) => {
-              const label = escapeHtml(item.timestampLabel || item.timestamp || "00:00");
-              const timestampChunk = item.chunkId
-                ? `<button type="button" class="timestamp-link" data-chunk-id="${escapeHtml(
-                    item.chunkId,
-                  )}" aria-label="Ir para a transcrição em ${label}">${label}</button>`
-                : `<span class="timestamp-text">${label}</span>`;
-              return `
-              <div class="summary-item">
-                <div class="summary-text">${escapeHtml(item.text || "")}</div>
-                <div class="summary-meta">${timestampChunk}</div>
-              </div>
-            `;
-            })
-            .join("");
-      } else {
-        summaryEl.textContent = state.summary || "Aguardando a conversa começar...";
-      }
-    }
+function renderViewingBanner() {
+  const banner = $("db-viewing");
+  banner.hidden = !viewed;
+  if (viewed) {
+    const when = viewed.startTime || viewed.savedAt || 0;
+    $("db-viewing-text").textContent =
+      `Você está vendo uma reunião salva${when ? ` de ${formatDateTime(when)}` : ""}.`;
+  }
+}
 
-    // Current Topic
-    const topicEl = document.getElementById("dash-current-topic");
-    if (topicEl) topicEl.textContent = state.currentTopic || "Detecting...";
+function renderNotice(notice: MeetingNotice | null | undefined) {
+  const host = $("db-notice");
+  if (!notice || viewed) {
+    host.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+  const iconName: IconName =
+    notice.severity === "error"
+      ? "alertCircle"
+      : notice.severity === "warning"
+        ? "alertTriangle"
+        : "info";
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="vb-notice vb-notice--${notice.severity}" role="${notice.severity === "error" ? "alert" : "status"}">
+      ${icon(iconName)}
+      <div class="vb-notice-body">${escapeHtml(notice.message)}</div>
+      <button type="button" class="vb-icon-btn vb-notice-dismiss" aria-label="Dispensar aviso">${icon("x")}</button>
+    </div>`;
+  host.querySelector("button")?.addEventListener("click", () => {
+    host.hidden = true;
+    void chrome.runtime.sendMessage({ type: "DISMISS_NOTICE" }).catch(() => {});
+  });
+}
 
-    // Stats
-    const topicCountEl = document.getElementById("dash-topic-count");
-    if (topicCountEl) topicCountEl.textContent = String(state.topics?.length || 0);
+// ——— Summary tab ———
 
-    const decisionCountEl = document.getElementById("dash-decision-count");
-    if (decisionCountEl) decisionCountEl.textContent = String(state.decisions?.length || 0);
-
-    const actionCountEl = document.getElementById("dash-action-count");
-    if (actionCountEl) actionCountEl.textContent = String(state.actionItems?.length || 0);
-
-    const peopleCountEl = document.getElementById("dash-people-count");
-    if (peopleCountEl) peopleCountEl.textContent = String(state.participants?.length || 0);
-
-    const isMeetTab = isMeetHostname(state.meetingUrl);
-    const lateJoinersCard = document.getElementById("late-joiners-card");
-    if (lateJoinersCard && !isMeetTab) {
-      lateJoinersCard.style.display = "none";
-    }
-
-    // Sentiment
-    updateSentiment(state.sentiment);
-
-    // Key Insights
-    updateInsights(state.keyInsights);
-
-    updateUnresolvedDiscussions(state.unresolvedDiscussions);
-    updateContradictions(state.contradictions);
-
-    // Topics Tab
-    if (loadedTabs.has("topics")) updateTopics(state.topics);
-
-    // Decisions Tab
-    if (loadedTabs.has("decisions")) updateDecisions(state.decisions);
-
-    // Actions Tab
-    if (loadedTabs.has("actions")) updateActions(state.actionItems);
-
-    // People Tab
-    if (loadedTabs.has("people"))
-      updatePeople(state.participants, state.lateJoiners, state.meetingUrl);
-
-    // Timeline Tab
-    if (loadedTabs.has("timeline")) updateTimeline(state.timeline);
-
-    // Transcript Tab
-    if (loadedTabs.has("transcript")) updateTranscript(state.transcript);
-    attachTimestampLinkListeners();
-
-    // Live Session Token & Cost Tracker
-    const trackerCard = document.getElementById("live-tracker-card");
-    const liveTokensEl = document.getElementById("live-tokens");
-    const liveCostEl = document.getElementById("live-cost");
-    if (trackerCard) {
-      if (state.isActive) {
-        trackerCard.style.display = "";
-        if (liveTokensEl) liveTokensEl.textContent = (state.tokensUsed ?? 0).toLocaleString();
-        if (liveCostEl) liveCostEl.textContent = `$${(state.estimatedCost ?? 0).toFixed(4)}`;
-      } else {
-        trackerCard.style.display = "none";
-      }
-    }
+function renderAudioCard(s: State | null) {
+  const card = $("db-audio-card");
+  card.hidden = Boolean(viewed);
+  if (viewed) return;
+  const chip = $("db-audio-chip");
+  const meta = $("db-audio-meta");
+  const receiving = s?.audioActive && Date.now() - lastWaveAt < 1500;
+  if (s?.audioActive) {
+    chip.className = `vb-chip vb-card-aside ${receiving ? "vb-chip--success" : "vb-chip--neutral"}`;
+    chip.innerHTML = receiving ? `${icon("activity")}Recebendo áudio` : "Aguardando áudio";
+  } else {
+    chip.className = "vb-chip vb-chip--neutral vb-card-aside";
+    chip.textContent = s?.finalizing ? "Finalizando" : "Parada";
+    drawIdleWave();
   }
 
-  // ——— Sentiment ———
-  function updateSentiment(sentiment: string) {
-    const fill = document.getElementById("dash-sentiment-fill");
-    const label = document.getElementById("dash-sentiment-label");
-    const map: Record<string, { width: string; text: string; color: string }> = {
-      positive: { width: "85%", text: "Positive 😊", color: "#34D399" },
-      negative: { width: "20%", text: "Negative 😟", color: "#F87171" },
-      neutral: { width: "50%", text: "Neutral 😐", color: "var(--text-main)" },
-      mixed: { width: "55%", text: "Mixed 🤔", color: "#FBBF24" },
-    };
-    const normalizedSentiment = (sentiment || "").toLowerCase();
-    const s = map[normalizedSentiment] || map.neutral;
-    if (fill) fill.style.width = s.width;
-    if (label) {
-      label.textContent = s.text;
-      label.style.color = s.color;
+  const parts: string[] = [];
+  if (s?.audioActive || s?.finalizing) {
+    parts.push(
+      s?.micActive === false
+        ? "Microfone fora da gravação: só o áudio da reunião."
+        : "Áudio da reunião + seu microfone.",
+    );
+    const stats = s?.stats;
+    if (stats) {
+      parts.push(
+        `${plural(stats.chunksTranscribed, "trecho transcrito", "trechos transcritos")}${
+          stats.chunksFiltered ? ` · ${stats.chunksFiltered} sem fala` : ""
+        }${stats.chunksFailed ? ` · ${stats.chunksFailed} com erro` : ""}`,
+      );
     }
+  } else {
+    parts.push("A gravação usa o áudio da aba da reunião e o seu microfone.");
+  }
+  meta.textContent = parts.join(" ");
+}
+
+function renderSummaryTab(s: State | null) {
+  renderAudioCard(s);
+
+  const summaryEl = $("db-summary");
+  const summary = s?.summary?.trim();
+  if (summary) {
+    summaryEl.classList.remove("vb-muted");
+    summaryEl.textContent = summary;
+  } else {
+    summaryEl.classList.add("vb-muted");
+    summaryEl.textContent =
+      s?.audioActive || s?.finalizing
+        ? "O resumo aparece alguns minutos depois que a conversa começa."
+        : viewed
+          ? "Esta reunião não tem resumo."
+          : "Inicie a gravação para acompanhar o resumo ao vivo.";
   }
 
-  // ——— Key Insights ———
-  function updateInsights(insights: any[]) {
-    const list = document.getElementById("dash-insights-list");
-    if (!list) return;
-    if (!insights || insights.length === 0) {
-      list.innerHTML = getEmptyStateHTML("Os insights aparecem conforme a conversa avança", true);
-      return;
-    }
-    list.innerHTML = insights
-      .filter((i) => i != null)
-      .map((i) => {
-        const text = typeof i === "string" ? i : i.text || "";
-        const rawScore =
-          typeof i === "object" && i !== null
-            ? (i as { confidenceScore?: unknown }).confidenceScore
-            : undefined;
-        const parsedScore = typeof rawScore === "number" ? rawScore : Number(rawScore);
-        const safeScore = Number.isFinite(parsedScore)
-          ? Math.max(0, Math.min(100, parsedScore))
-          : null;
-        const score =
-          safeScore !== null ? ` <span class="u-muted-11">(Conf: ${safeScore}%)</span>` : "";
-        return `<li>${escapeHtml(text)}${score}</li>`;
-      })
-      .join("");
-  }
+  const items = s?.summaryItems ?? [];
+  const list = $("db-summary-items");
+  list.hidden = items.length === 0;
+  list.innerHTML = items
+    .map(
+      (item) =>
+        `<li class="db-point"><span class="db-point-text">${escapeHtml(item.text)}</span>${tsButton(item.chunkId, item.timestampLabel || item.timestamp)}</li>`,
+    )
+    .join("");
 
-  function updateUnresolvedDiscussions(discussions: string[]) {
-    const list = document.getElementById("dash-unresolved-list");
-    if (!list) return;
-    if (!discussions || discussions.length === 0) {
-      list.innerHTML = getEmptyStateHTML("Nenhum assunto em aberto ainda", true);
-      return;
-    }
-    list.innerHTML = discussions.map((d) => `<li>${escapeHtml(d || "")}</li>`).join("");
-  }
+  const counts = s?.truncatedCounts;
+  $("db-stat-lines").textContent = String(counts?.transcript ?? s?.transcript?.length ?? 0);
+  $("db-stat-topics").textContent = String(counts?.topics ?? s?.topics?.length ?? 0);
+  $("db-stat-decisions").textContent = String(counts?.decisions ?? s?.decisions?.length ?? 0);
+  $("db-stat-actions").textContent = String(counts?.actionItems ?? s?.actionItems?.length ?? 0);
 
-  function updateContradictions(contradictions: any[]) {
-    const list = document.getElementById("dash-contradictions-list");
-    if (!list) return;
-    if (!contradictions || contradictions.length === 0) {
-      list.innerHTML = getEmptyStateHTML("Nenhuma contradição detectada", true);
-      return;
-    }
-    list.innerHTML = contradictions
-      .filter((c) => c != null)
-      .map((c) => {
-        const issue = typeof c === "string" ? c : c.issue || "";
-        const persists =
-          typeof c === "object" && c.persists
-            ? ` <span class="u-persists-badge">Persists</span>`
-            : "";
-        return `<li>${escapeHtml(issue)}${persists}</li>`;
-      })
-      .join("");
-  }
+  const currentTopic = $("db-current-topic");
+  currentTopic.hidden = !s?.currentTopic || Boolean(viewed);
+  currentTopic.innerHTML = s?.currentTopic
+    ? `${icon("target")}<span>Agora: ${escapeHtml(s.currentTopic)}</span>`
+    : "";
 
-  // ——— Topics ———
-  function updateTopics(topics: Topic[]) {
-    const container = document.getElementById("dash-topics-full");
-    if (!container) return;
-    if (!topics || topics.length === 0) {
-      container.innerHTML = '<div class="empty-msg">No topics detected yet</div>';
-      return;
-    }
-    const notice = truncatedNoticeHtml("topics", lastState?.truncatedCounts?.topics);
-    container.innerHTML =
-      notice +
-      topics
+  const topics = s?.topics ?? [];
+  $("db-topics").innerHTML = topics.length
+    ? topics
+        .map((t) => {
+          const chipClass =
+            t.status === "completed"
+              ? "vb-chip--success"
+              : t.status === "unresolved"
+                ? "vb-chip--warning"
+                : "vb-chip--info";
+          return `<li class="db-item"><div class="db-item-body"><div class="db-item-text">${escapeHtml(t.name)}</div></div><span class="vb-chip ${chipClass}">${escapeHtml(topicStatusLabel(t.status))}</span></li>`;
+        })
+        .join("")
+    : `<li>${emptyBlock("Nenhum assunto ainda", "")}</li>`;
+
+  const groups: Array<{ title: string; items: string[] }> = [
+    {
+      title: "Principais pontos",
+      items: (s?.keyInsights ?? [])
+        .map((i) => (typeof i === "string" ? i : i?.text))
+        .filter(Boolean) as string[],
+    },
+    { title: "Pontos em aberto", items: (s?.unresolvedDiscussions ?? []).filter(Boolean) },
+    { title: "Perguntas sem resposta", items: (s?.questionsRaised ?? []).filter(Boolean) },
+    {
+      title: "Contradições",
+      items: (s?.contradictions ?? [])
+        .map((c) => (typeof c === "string" ? c : c?.issue))
+        .filter(Boolean) as string[],
+    },
+  ].filter((group) => group.items.length > 0);
+  $("db-highlights").innerHTML = groups.length
+    ? groups
         .map(
-          (t) => `
-      <div class="topic-full-item">
-        <div class="topic-full-dot ${sanitizeTopicStatus(t.status)}"></div>
-        <div class="topic-full-info">
-          <div class="topic-full-name">${escapeHtml(t.name || "")}</div>
-          <div class="topic-full-meta">${escapeHtml(t.duration || "")} ${t.startTime ? `• Started ${escapeHtml(t.startTime)}` : ""}</div>
-        </div>
-        <span class="topic-full-badge ${sanitizeTopicStatus(t.status)}">${escapeHtml(t.status || "active")}</span>
-      </div>
-    `,
+          (group) =>
+            `<div class="db-highlight-group"><h3>${escapeHtml(group.title)}</h3><ul>${group.items
+              .map((item) => `<li>${escapeHtml(item)}</li>`)
+              .join("")}</ul></div>`,
         )
-        .join("");
-  }
+        .join("")
+    : emptyBlock("Nada destacado ainda", "Insights, perguntas e pontos em aberto aparecem aqui.");
 
-  // ——— Decisions ———
-  function updateDecisions(decisions: Decision[]) {
-    const container = document.getElementById("dash-decisions-list");
-    if (!container) return;
-    if (!decisions || decisions.length === 0) {
-      container.innerHTML = getEmptyStateHTML("Nenhuma decisão detectada ainda");
-      return;
-    }
-    container.innerHTML = "";
-    const noticeText = truncatedNoticeText("decisions", lastState?.truncatedCounts?.decisions);
-    if (noticeText) {
-      const noticeDiv = document.createElement("div");
-      noticeDiv.className = "truncated-notice";
-      noticeDiv.textContent = noticeText;
-      container.appendChild(noticeDiv);
-    }
-    decisions.forEach((d) => {
-      const wrapper = document.createElement("div");
-      wrapper.className = "decision-item";
+  const sentiment = String(s?.sentiment || "neutral").toLowerCase();
+  const widths: Record<string, string> = {
+    positive: "85%",
+    neutral: "50%",
+    mixed: "55%",
+    negative: "20%",
+  };
+  const fill = $("db-sentiment-fill");
+  fill.style.width = widths[sentiment] ?? "50%";
+  fill.dataset.sentiment = sentiment;
+  $("db-sentiment-label").textContent = sentimentLabel(sentiment);
 
-      const contentDiv = document.createElement("div");
-      contentDiv.className = "decision-content";
+  const tokens = s?.tokensUsed ?? 0;
+  const cost = s?.estimatedCost ?? 0;
+  $("db-usage").textContent =
+    tokens > 0
+      ? `IA nesta reunião: ${tokens.toLocaleString("pt-BR")} tokens${cost > 0 ? ` · US$ ${cost.toFixed(4)}` : ""}`
+      : "";
+}
 
-      const textDiv = document.createElement("div");
-      textDiv.className = "decision-text";
-      textDiv.textContent = d.text || "";
-      if (d.classification === "tentative") {
-        const tentativeSpan = document.createElement("span");
-        tentativeSpan.className = "decision-tentative-badge";
-        tentativeSpan.textContent = "Tentative";
-        textDiv.appendChild(tentativeSpan);
-      }
-      contentDiv.appendChild(textDiv);
+// ——— Transcript tab ———
 
-      const metaDiv = document.createElement("div");
-      metaDiv.className = "decision-meta";
+let renderedTranscriptKey = "";
+let renderedTranscriptCount = 0;
 
-      const metaParts: string[] = [];
-      if (d.by) {
-        metaParts.push(`By ${d.by}`);
-      }
-      metaDiv.textContent = metaParts.join(" • ");
+function transcriptKey(s: State | null): string {
+  return viewed ? `saved:${viewed.id}` : `live:${s?.startTime ?? 0}`;
+}
 
-      const label = d.timestampLabel || d.timestamp || "00:00";
-      const chunkId = d.chunkId;
-      if (chunkId) {
-        if (metaParts.length > 0) {
-          metaDiv.appendChild(document.createTextNode(" • "));
-        }
-        const timestampButton = document.createElement("button");
-        timestampButton.type = "button";
-        timestampButton.className = "timestamp-link";
-        timestampButton.textContent = label;
-        timestampButton.setAttribute("aria-label", `Jump to transcript at ${label}`);
-        timestampButton.dataset.chunkId = chunkId;
-        timestampButton.dataset.hasListener = "true";
-        timestampButton.addEventListener("click", () => navigateToTranscriptChunk(chunkId));
-        timestampButton.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            navigateToTranscriptChunk(chunkId);
-          }
-        });
-        metaDiv.appendChild(timestampButton);
-      } else if (d.timestamp) {
-        if (metaParts.length > 0) {
-          metaDiv.appendChild(document.createTextNode(" • "));
-        }
-        const timestampSpan = document.createElement("span");
-        timestampSpan.className = "timestamp-text";
-        timestampSpan.textContent = d.timestamp;
-        metaDiv.appendChild(timestampSpan);
-      }
-      contentDiv.appendChild(metaDiv);
-
-      const copyBtn = document.createElement("button");
-      copyBtn.type = "button";
-      copyBtn.className = "copy-btn";
-      copyBtn.setAttribute("aria-label", "Copiar decisão");
-      copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>`;
-      copyBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        let copyText = `${d.text || ""}`;
-        if (d.by) {
-          copyText += ` - Announced by: ${d.by}`;
-        }
-        navigator.clipboard
-          .writeText(copyText)
-          .then(() => showToast("Copiado!", "success"))
-          .catch((err) => {
-            console.error("Falha ao copiar decisão: ", err);
-            showToast("Falha ao copiar!", "error");
-          });
-      });
-
-      wrapper.appendChild(contentDiv);
-      wrapper.appendChild(copyBtn);
-      container.appendChild(wrapper);
-    });
-  }
-
-  // ——— Action Items ———
-  function updateActions(actions: ActionItem[]) {
-    const container = document.getElementById("dash-actions-list");
-    if (!container) return;
-    if (!actions || actions.length === 0) {
-      container.innerHTML = getEmptyStateHTML("Nenhum item de ação detectado ainda");
-      return;
-    }
-
-    container.innerHTML = "";
-    const noticeText = truncatedNoticeText("action items", lastState?.truncatedCounts?.actionItems);
-    if (noticeText) {
-      const noticeDiv = document.createElement("div");
-      noticeDiv.className = "truncated-notice";
-      noticeDiv.textContent = noticeText;
-      container.appendChild(noticeDiv);
-    }
-    actions.forEach((a, idx) => {
-      const normalized = normalizeActionItem(a);
-      const task = normalized?.task ?? resolveActionKey(a);
-      if (!task) return;
-      const owner = normalized?.owner ?? "";
-      const deadline = normalized?.deadline ?? "";
-      const statusKey = buildActionStatusKey(currentMeetingId, task);
-      const done = actionStatuses.get(statusKey) === true;
-      const cbId = `action-cb-${idx}`;
-
-      const wrapper = document.createElement("div");
-      wrapper.className = "action-item" + (done ? " action-item--done" : "");
-
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.className = "action-checkbox";
-      checkbox.id = cbId;
-      checkbox.checked = done;
-      checkbox.setAttribute("aria-label", "Marcar tarefa como concluída");
-      checkbox.dataset.task = task;
-      checkbox.dataset.meetingId = currentMeetingId;
-
-      const label = document.createElement("label");
-      label.className = "action-info";
-      label.htmlFor = cbId;
-
-      const taskDiv = document.createElement("div");
-      taskDiv.className = "action-task" + (done ? " action-task--done" : "");
-      taskDiv.textContent = task;
-      if (a.isSpeculative) {
-        const specSpan = document.createElement("span");
-        specSpan.className = "action-speculative-badge";
-        specSpan.textContent = "Speculative";
-        taskDiv.appendChild(specSpan);
-      }
-      if (a.confidence && a.confidence !== "high") {
-        const confSpan = document.createElement("span");
-        confSpan.className = "action-conf-badge";
-        confSpan.textContent = `Conf: ${a.confidence}`;
-        taskDiv.appendChild(confSpan);
-      }
-      label.appendChild(taskDiv);
-
-      if (owner) {
-        const ownerSpan = document.createElement("span");
-        ownerSpan.className = "action-owner";
-        ownerSpan.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" class="u-mr-2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>`;
-        ownerSpan.appendChild(document.createTextNode(owner));
-        label.appendChild(ownerSpan);
-      }
-
-      if (deadline) {
-        const deadlineDiv = document.createElement("div");
-        deadlineDiv.className = "action-deadline";
-        deadlineDiv.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" class="u-mr-2"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"></rect><line x1="16" x2="16" y1="2" y2="6"></line><line x1="8" x2="8" y1="2" y2="6"></line><line x1="3" x2="21" y1="10" y2="10"></line></svg>`;
-        deadlineDiv.appendChild(document.createTextNode(deadline));
-        label.appendChild(deadlineDiv);
-      }
-
-      const timestampLabel = a.timestampLabel || a.timestamp;
-      if (timestampLabel) {
-        const timestampButton = document.createElement("button");
-        timestampButton.type = "button";
-        timestampButton.className = "timestamp-link";
-        timestampButton.textContent = timestampLabel;
-        timestampButton.setAttribute("aria-label", `Jump to transcript at ${timestampLabel}`);
-        const chunkId = a.chunkId;
-        if (chunkId) {
-          timestampButton.dataset.chunkId = chunkId;
-          timestampButton.dataset.hasListener = "true";
-          timestampButton.addEventListener("click", () => navigateToTranscriptChunk(chunkId));
-          timestampButton.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              navigateToTranscriptChunk(chunkId);
-            }
-          });
-        } else {
-          timestampButton.disabled = true;
-          timestampButton.classList.add("timestamp-text");
-        }
-        label.appendChild(timestampButton);
-      }
-
-      checkbox.addEventListener("change", () => {
-        const taskText = checkbox.dataset.task || "";
-        const meetId = checkbox.dataset.meetingId || currentMeetingId;
-        const key = buildActionStatusKey(meetId, taskText);
-        const isDone = checkbox.checked;
-        actionStatuses.set(key, isDone);
-        void persistActionStatuses();
-        wrapper.classList.toggle("action-item--done", isDone);
-        taskDiv.classList.toggle("action-task--done", isDone);
-      });
-
-      const copyBtn = document.createElement("button");
-      copyBtn.type = "button";
-      copyBtn.className = "copy-btn";
-      copyBtn.setAttribute("aria-label", "Copiar item de ação");
-      copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>`;
-      copyBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const checkMark = checkbox.checked ? "[x]" : "[ ]";
-        let copyText = `${checkMark} ${task}`;
-        if (owner) {
-          copyText += ` - Assignee: ${owner}`;
-        }
-        if (deadline) {
-          copyText += ` (Due: ${deadline})`;
-        }
-        navigator.clipboard
-          .writeText(copyText)
-          .then(() => showToast("Copiado!", "success"))
-          .catch((err) => {
-            console.error("Falha ao copiar item de ação: ", err);
-            showToast("Falha ao copiar!", "error");
-          });
-      });
-
-      wrapper.appendChild(checkbox);
-      wrapper.appendChild(label);
-      wrapper.appendChild(copyBtn);
-      container.appendChild(wrapper);
-    });
-  }
-
-  // ——— People ———
-  function updatePeople(participants: string[], lateJoiners: string[], meetingUrl: string | null) {
-    const container = document.getElementById("dash-participants-list");
-    if (!container) return;
-    if (!participants || participants.length === 0) {
-      container.innerHTML = getEmptyStateHTML("Nenhum participante detectado");
-      return;
-    }
-
-    const isMeetSession = isMeetHostname(meetingUrl);
-    const notice = truncatedNoticeHtml("participants", lastState?.truncatedCounts?.participants);
-    container.innerHTML =
-      notice +
-      participants
-        .map((name) => {
-          const isLate = lateJoiners?.includes(name);
-          const rawName = String(name || "");
-          const safeName = escapeHtml(rawName);
-          const initials = escapeHtml(
-            rawName
-              .split(" ")
-              .filter(Boolean)
-              .map((w) => w[0])
-              .join("")
-              .toUpperCase()
-              .slice(0, 2),
-          );
-          return `
-        <div class="participant-item">
-          <div class="participant-avatar">${initials}</div>
-          <span class="participant-name">${safeName}</span>
-          <span class="participant-tag ${isLate ? "late" : "original"}">
-            ${isLate ? '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" class="u-mr-2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" x2="3" y1="12" y2="12"></line></svg>Late' : "Original"}
-          </span>
-        </div>
-      `;
-        })
-        .join("");
-
-    // Late joiner section
-    const lateCard = document.getElementById("late-joiners-card");
-    const lateList = document.getElementById("dash-late-joiners");
-    // Keep the non-Meet guard in the updatePeople path too.
-    // Only show late-joiners card if this is a Meet session AND there are late joiners.
-    const showLateJoiners = isMeetSession && lateJoiners && lateJoiners.length > 0;
-    if (showLateJoiners) {
-      if (lateCard) lateCard.style.display = "block";
-      if (lateList) {
-        lateList.innerHTML = lateJoiners
-          .map(
-            (name) => `
-          <div class="late-joiner-card-item">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" class="u-muted-11"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" x2="3" y1="12" y2="12"></line></svg>
-            <span class="u-fw-500-light">${escapeHtml(name || "")}</span>
-            <span class="u-meta-right">
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon" class="u-mr-2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>Brief sent
-            </span>
-          </div>
-        `,
-          )
-          .join("");
-      }
-    } else {
-      if (lateCard) lateCard.style.display = "none";
-    }
-  }
-
-  // ——— Timeline ———
-  function updateTimeline(timeline: TimelineEvent[]) {
-    const container = document.getElementById("dash-timeline");
-    if (!container) return;
-    if (!timeline || timeline.length === 0) {
-      container.innerHTML = container.innerHTML = getEmptyStateHTML(
-        "A linha do tempo se constrói conforme a reunião avança",
-      );
-      return;
-    }
-
-    const notice = truncatedNoticeHtml("timeline events", lastState?.truncatedCounts?.timeline);
-    container.innerHTML =
-      notice +
-      timeline
-        .map((entry) => {
-          const icon = getTimelineIcon(entry.event);
-          return `
-        <div class="timeline-item">
-          <div class="timeline-marker">${icon}</div>
-          <div class="timeline-info">
-            <div class="timeline-event">${escapeHtml(entry.event || "")}</div>
-            <div class="timeline-time">${formatDuration(entry.elapsed || 0)} elapsed</div>
-          </div>
-        </div>
-      `;
-        })
-        .join("");
-  }
-
-  function getTimelineIcon(event: string) {
-    const label = String(event || "");
-    const iconBase =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon">';
-    if (label.includes("started"))
-      return (
-        iconBase +
-        '<circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>'
-      );
-    if (label.includes("ended"))
-      return (
-        iconBase +
-        '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 12h6"></path></svg>'
-      );
-    if (label.includes("joined"))
-      return (
-        iconBase +
-        '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" x2="3" y1="12" y2="12"></line></svg>'
-      );
-    if (label.includes("Topic"))
-      return (
-        iconBase +
-        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>'
-      );
-    if (label.includes("Decision"))
-      return (
-        iconBase +
-        '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>'
-      );
-    return (
-      iconBase +
-      '<line x1="12" x2="12" y1="20" y2="4"></line><line x1="6" x2="18" y1="20" y2="20"></line><line x1="14" x2="14" y1="4" y2="10"></line></svg>'
-    );
-  }
-
-  // ——— Live Transcript ———
-  let renderedTranscriptCount = 0;
-
-  function createTranscriptEntryHTML(entry: TranscriptEntry): string {
-    const timeStr = escapeHtml(entry.timestampLabel || formatDuration(entry.timestamp || 0));
-    const speaker = escapeHtml(entry.speaker || "Unknown");
-    const initials = (entry.speaker || "Unknown")
-      .split(" ")
-      .filter(Boolean)
-      .map((w) => w[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
-    const isAudio = (entry.speaker || "") === "Audio";
-    const text = escapeHtml(entry.text || "");
-    const chunkId = entry.id ? `transcript-${escapeHtml(entry.id)}` : "";
-
-    return `
-      <div id="${chunkId}" class="transcript-entry ${isAudio ? "audio-source" : ""}">
-        <div class="transcript-time">${timeStr}</div>
-        <div class="transcript-avatar">${isAudio ? "🎙" : initials}</div>
-        <div class="transcript-body">
-          <div class="transcript-speaker">${speaker}</div>
-          <div class="transcript-text">${text}</div>
-        </div>
-        <button type="button" class="copy-transcript-btn" 
-                data-speaker="${speaker}" 
-                data-time="${timeStr}" 
-                data-message="${text}" 
-                title="Copiar mensagem" 
-                aria-label="Copiar mensagem">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
-        </button>
+function transcriptLineHtml(entry: TranscriptEntry): string {
+  const label = entry.timestampLabel || formatClock(entry.timestamp || 0);
+  const speaker = speakerLabel(entry.speaker);
+  const id = entry.id ? `tr-${escapeHtml(entry.id)}` : "";
+  return `
+    <div class="db-line"${id ? ` id="${id}"` : ""}>
+      <div class="db-avatar" aria-hidden="true">${escapeHtml(initials(entry.speaker))}</div>
+      <div class="db-line-body">
+        <div class="db-line-head"><span class="db-line-speaker">${escapeHtml(speaker)}</span><span class="db-ts">${escapeHtml(label)}</span></div>
+        <div class="db-line-text">${escapeHtml(entry.text)}</div>
       </div>
-    `;
-  }
+      ${copyButton(`[${label}] ${speaker}: ${entry.text}`, "Copiar esta fala")}
+    </div>`;
+}
 
-  function maybeAppendTranscriptNotice() {
-    if (!transcriptContainer || renderedTranscriptCount !== 0) return;
-    const noticeText = truncatedNoticeText(
-      "transcript entries",
-      lastState?.truncatedCounts?.transcript,
+function renderTranscriptTab(s: State | null) {
+  const container = $("db-transcript");
+  const entries = s?.transcript ?? [];
+  const key = transcriptKey(s);
+
+  if (entries.length === 0) {
+    renderedTranscriptKey = key;
+    renderedTranscriptCount = 0;
+    container.innerHTML = emptyBlock(
+      s?.audioActive ? "Aguardando a primeira fala" : "Sem transcrição",
+      s?.audioActive ? "As falas aparecem aqui poucos segundos depois de ditas." : "",
     );
-    if (!noticeText) return;
-    const noticeDiv = document.createElement("div");
-    noticeDiv.className = "truncated-notice";
-    noticeDiv.textContent = noticeText;
-    transcriptContainer.appendChild(noticeDiv);
+    return;
   }
 
-  function updateTranscript(transcript: TranscriptEntry[]) {
-    if (!transcriptContainer) return;
-
-    if (!transcript || transcript.length === 0) {
-      transcriptContainer.innerHTML =
-        '<div class="empty-msg">No transcript yet. Start audio to begin capturing speech.</div>';
-      renderedTranscriptCount = 0;
-      resetTranscriptSearchState();
-      return;
-    }
-
-    // If the transcript shrunk (e.g., session reset), do a full re-render
-    if (transcript.length < renderedTranscriptCount) {
-      renderedTranscriptCount = 0;
-      transcriptContainer.innerHTML = "";
-    }
-
-    maybeAppendTranscriptNotice();
-
-    // Only render new entries that haven't been rendered yet
-    if (transcript.length > renderedTranscriptCount) {
-      // Remove empty message if present
-      const emptyMsg = transcriptContainer.querySelector(".empty-msg");
-      if (emptyMsg) emptyMsg.remove();
-
-      const newEntries = transcript.slice(renderedTranscriptCount);
-      const fragment = document.createDocumentFragment();
-      const wrapper = document.createElement("div");
-      wrapper.innerHTML = newEntries.map((e) => createTranscriptEntryHTML(e)).join("");
-      while (wrapper.firstChild) {
-        fragment.appendChild(wrapper.firstChild);
-      }
-      transcriptContainer.appendChild(fragment);
-      renderedTranscriptCount = transcript.length;
-
-      if (searchInput?.value.trim()) {
-        executeTranscriptSearch(true);
-      } else {
-        // Auto-scroll only if user is near the bottom
-        const isNearBottom =
-          transcriptContainer.scrollHeight - transcriptContainer.scrollTop <=
-          transcriptContainer.clientHeight + 80;
-        if (isNearBottom) {
-          transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
-        }
-        updateTranscriptSearchControls();
-      }
-    }
+  const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+  if (key !== renderedTranscriptKey || entries.length < renderedTranscriptCount) {
+    container.innerHTML = entries.map(transcriptLineHtml).join("");
+  } else if (entries.length > renderedTranscriptCount) {
+    container.querySelector(".db-empty")?.remove();
+    container.insertAdjacentHTML(
+      "beforeend",
+      entries.slice(renderedTranscriptCount).map(transcriptLineHtml).join(""),
+    );
+  } else {
+    return;
   }
-
-  function navigateToTranscriptChunk(chunkId: string) {
-    const transcriptEl = document.getElementById(`transcript-${chunkId}`);
-    if (!transcriptEl) return;
-    transcriptEl.scrollIntoView({ behavior: "smooth", block: "center" });
-    highlightTranscriptChunk(transcriptEl);
-  }
-
-  function highlightTranscriptChunk(element: HTMLElement) {
-    element.classList.add("transcript-highlight");
-    window.setTimeout(() => {
-      element.classList.remove("transcript-highlight");
-    }, 4000);
-  }
-
-  function attachTimestampLinkListeners() {
-    document.querySelectorAll<HTMLButtonElement>(".timestamp-link").forEach((button) => {
-      const chunkId = button.dataset.chunkId;
-      if (!chunkId) return;
-      if (button.dataset.hasListener) return;
-      button.addEventListener("click", () => navigateToTranscriptChunk(chunkId));
-      button.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          navigateToTranscriptChunk(chunkId);
-        }
-      });
-      button.dataset.hasListener = "true";
-    });
-  }
-
-  // ——— Unified Export Helper (Handles both Live & History) ———
-  function generateMarkdown(state: State): string {
-    const dateVal = state.savedAt || state.startTime || Date.now();
-    const date = new Date(dateVal).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-
-    let md = `# Meeting Summary — ${date}\n\n`;
-    md += `**Meeting ID:** ${state.meetingId || "N/A"}\n`;
-
-    // Safely extract duration even if the type strictness misses it
-    const duration = (state as State & { duration?: number }).duration || 0;
-    md += `**Duration:** ${formatDuration(duration)}\n`;
-    md += `**Sentiment:** ${state.sentiment || "neutral"}\n\n`;
-
-    md += `## Attendees\n`;
-    if (state.participants?.length) {
-      md += state.participants.map((p) => `- ${p}`).join("\n") + "\n\n";
-    } else {
-      md += `_No participants detected_\n\n`;
-    }
-
-    md += `## Summary\n`;
-    md += `${state.summary || "_No summary available_"}\n\n`;
-
-    md += `## Action Items\n`;
-    if (state.actionItems?.length) {
-      const sessionMeetingId = state.meetingId || "unknown";
-      state.actionItems.forEach((a: ActionItem) => {
-        const task = resolveActionKey(a);
-        if (!task) return;
-        const statusKey = buildActionStatusKey(sessionMeetingId, task);
-        const done = actionStatuses.get(statusKey) === true;
-        md += done ? `- [x] ${task}` : `- [ ] ${task}`;
-        if (a.owner) md += ` — ${a.owner}`;
-        if (a.deadline) md += ` (due: ${a.deadline})`;
-        md += "\n";
-      });
-      md += "\n";
-    } else {
-      md += `_No action items_\n\n`;
-    }
-
-    md += `## Key Decisions\n`;
-    if (state.decisions?.length) {
-      state.decisions.forEach((d: Decision) => {
-        md += `- ${d.text}${d.by ? ` — ${d.by}` : ""}\n`;
-      });
-      md += "\n";
-    } else {
-      md += `_No decisions recorded_\n\n`;
-    }
-
-    md += `## Topics Covered\n`;
-    if (state.topics?.length) {
-      state.topics.forEach((t: Topic) => {
-        md += `- ${t.name} _(${t.status})_\n`;
-      });
-      md += "\n";
-    } else {
-      md += `_No topics detected_\n\n`;
-    }
-
-    md += `## Key Insights\n`;
-    if (state.keyInsights?.length) {
-      state.keyInsights
-        .filter((i) => i != null)
-        .forEach((insight: KeyInsight | string | null | undefined) => {
-          const text = typeof insight === "string" ? insight : insight?.text || "";
-
-          if (text) {
-            md += `- ${text}\n`;
-          }
-        });
-      md += "\n";
-    } else {
-      md += `_No insights available_\n\n`;
-    }
-
-    md += `## Timeline\n`;
-    if (state.timeline?.length) {
-      state.timeline.forEach((e) => {
-        md += `- [${formatDuration(e.elapsed || 0)}] ${e.event}\n`;
-      });
-      md += "\n";
-    } else {
-      md += `_No timeline events recorded_\n\n`;
-    }
-
-    md += `## Transcript\n`;
-    if (state.transcript?.length) {
-      const start =
-        state.startTime || (state.transcript[0] ? state.transcript[0].timestamp : Date.now());
-      state.transcript.forEach((t) => {
-        const elapsed = Math.max(0, Math.round((t.timestamp - start) / 1000));
-        md += `**[${formatDuration(elapsed)}] ${t.speaker}:** ${t.text}\n\n`;
-      });
-    } else {
-      md += `_No transcript captured during this session_\n\n`;
-    }
-
-    return md;
-  }
-
-  function generatePlainText(state: State): string {
-    const dateVal = state.savedAt || state.startTime || Date.now();
-    const date = new Date(dateVal).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-
-    const duration = (state as State & { duration?: number }).duration || 0;
-    let txt = `Meeting Summary — ${date}\n\n`;
-    txt += `Meeting ID: ${state.meetingId || "N/A"}\n`;
-    txt += `Duration: ${formatDuration(duration)}\n`;
-    txt += `Sentiment: ${state.sentiment || "neutral"}\n\n`;
-
-    txt += `Attendees\n`;
-    if (state.participants?.length) {
-      txt += state.participants.map((p) => `  • ${p}`).join("\n") + "\n\n";
-    } else {
-      txt += `  (No participants detected)\n\n`;
-    }
-
-    txt += `Summary\n`;
-    txt += `  ${state.summary || "(No summary available)"}\n\n`;
-
-    txt += `Action Items\n`;
-    if (state.actionItems?.length) {
-      const sessionMeetingId = state.meetingId || "unknown";
-      state.actionItems.forEach((a: ActionItem) => {
-        const task = resolveActionKey(a);
-        if (!task) return;
-        const statusKey = buildActionStatusKey(sessionMeetingId, task);
-        const done = actionStatuses.get(statusKey) === true;
-        txt += done ? `  [done] ${task}` : `  [ ] ${task}`;
-        if (a.owner) txt += ` — ${a.owner}`;
-        if (a.deadline) txt += ` (due: ${a.deadline})`;
-        txt += "\n";
-      });
-      txt += "\n";
-    } else {
-      txt += `  (No action items)\n\n`;
-    }
-
-    txt += `Key Decisions\n`;
-    if (state.decisions?.length) {
-      state.decisions.forEach((d: Decision) => {
-        const byStr = d.by ? " — " + d.by : "";
-        txt += `  • ${d.text}${byStr}\n`;
-      });
-      txt += "\n";
-    } else {
-      txt += `  (No decisions recorded)\n\n`;
-    }
-
-    txt += `Topics Covered\n`;
-    if (state.topics?.length) {
-      state.topics.forEach((t: Topic) => {
-        txt += `  • ${t.name} (${t.status})\n`;
-      });
-      txt += "\n";
-    } else {
-      txt += `  (No topics detected)\n\n`;
-    }
-
-    txt += `Key Insights\n`;
-    if (state.keyInsights?.length) {
-      state.keyInsights
-        .filter((i) => i != null)
-        .forEach((insight: KeyInsight | string | null | undefined) => {
-          const text = typeof insight === "string" ? insight : insight?.text || "";
-          if (text) {
-            txt += `  • ${text}\n`;
-          }
-        });
-      txt += "\n";
-    } else {
-      txt += `  (No insights available)\n\n`;
-    }
-
-    txt += `Timeline\n`;
-    if (state.timeline?.length) {
-      state.timeline.forEach((e) => {
-        txt += `  • [${formatDuration(e.elapsed || 0)}] ${e.event}\n`;
-      });
-      txt += "\n";
-    } else {
-      txt += `  (No timeline events recorded)\n\n`;
-    }
-
-    txt += `Transcript\n`;
-    if (state.transcript?.length) {
-      const start =
-        state.startTime || (state.transcript[0] ? state.transcript[0].timestamp : Date.now());
-      state.transcript.forEach((t) => {
-        const elapsed = Math.max(0, Math.round((t.timestamp - start) / 1000));
-        txt += `  [${formatDuration(elapsed)}] ${t.speaker}: ${t.text}\n\n`;
-      });
-    } else {
-      txt += `  (No transcript captured during this session)\n\n`;
-    }
-
-    return txt;
-  }
-
-  let exportToastTimer: number | null = null;
-
-  function showToast(message: string, type: "success" | "error" = "success"): void {
-    const toast = document.getElementById("export-toast") as HTMLDivElement;
-    if (!toast) return;
-    if (exportToastTimer) window.clearTimeout(exportToastTimer);
-    toast.textContent = message;
-    toast.className = `export-toast ${type} show`;
-    exportToastTimer = window.setTimeout(() => {
-      toast.className = "export-toast";
-      exportToastTimer = null;
-    }, 3000);
-  }
-
-  function downloadFile(content: string, filename: string, mimeType: string): void {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.click();
-    window.setTimeout(() => {
-      URL.revokeObjectURL(url);
-    }, 0);
-  }
-
-  // ——— Export Dropdown ———
-  const exportBtn = document.getElementById("export-btn") as HTMLButtonElement;
-  const exportDropdown = document.getElementById("export-dropdown") as HTMLDivElement;
-
-  function openExportDropdown() {
-    exportDropdown.removeAttribute("hidden");
-    exportBtn.setAttribute("aria-expanded", "true");
-    const firstItem = exportDropdown.querySelector('[role="menuitem"]') as HTMLElement | null;
-    firstItem?.focus();
-  }
-
-  function closeExportDropdown(returnFocus = true) {
-    exportDropdown.setAttribute("hidden", "");
-    exportBtn.setAttribute("aria-expanded", "false");
-    if (returnFocus) exportBtn.focus();
-  }
-
-  exportBtn?.addEventListener("click", () => {
-    const isHidden = exportDropdown.hasAttribute("hidden");
-    if (isHidden) {
-      openExportDropdown();
-    } else {
-      closeExportDropdown(false);
-    }
-  });
-
-  exportBtn?.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
-      if (exportDropdown.hasAttribute("hidden")) {
-        e.preventDefault();
-        openExportDropdown();
-      }
-    }
-  });
-
-  exportDropdown?.addEventListener("keydown", (e: KeyboardEvent) => {
-    const items = Array.from(exportDropdown.querySelectorAll('[role="menuitem"]')) as HTMLElement[];
-    const currentIndex = items.indexOf(document.activeElement as HTMLElement);
-
-    switch (e.key) {
-      case "Escape":
-        e.preventDefault();
-        closeExportDropdown();
-        break;
-      case "ArrowDown":
-        e.preventDefault();
-        items[(currentIndex + 1) % items.length]?.focus();
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        items[(currentIndex - 1 + items.length) % items.length]?.focus();
-        break;
-      case "Home":
-        e.preventDefault();
-        items[0]?.focus();
-        break;
-      case "End":
-        e.preventDefault();
-        items.at(-1)?.focus();
-        break;
-      case "Tab":
-        closeExportDropdown(false);
-        break;
-      default:
-        break;
-    }
-  });
-
-  document.addEventListener("click", (e: MouseEvent) => {
-    const wrapper = document.getElementById("export-wrapper");
-    if (wrapper && !wrapper.contains(e.target as Node)) {
-      closeExportDropdown(false);
-    }
-  });
-
-  // --- MD EXPORT (LIVE DASHBOARD) ---
-  document.getElementById("export-md-btn")?.addEventListener("click", async () => {
-    try {
-      const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-      if (!state) throw new Error("Sem dados de reunião");
-      const markdown = generateMarkdown(state);
-      const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.md`;
-      downloadFile(markdown, filename, "text/markdown");
-      showToast("Baixado como .md", "success");
-    } catch (err) {
-      const e = err as Error;
-      showToast("Falha ao exportar: " + (e.message || String(e)), "error");
-    } finally {
-      exportDropdown?.setAttribute("hidden", "");
-      exportBtn?.setAttribute("aria-expanded", "false");
-    }
-  });
-
-  // --- TXT EXPORT (LIVE DASHBOARD) ---
-  document.getElementById("export-txt-btn")?.addEventListener("click", async () => {
-    try {
-      const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-      if (!state) throw new Error("Sem dados de reunião");
-      const textContent = generatePlainText(state);
-      const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.txt`;
-      downloadFile(textContent, filename, "text/plain");
-      showToast("Baixado como .txt", "success");
-    } catch (err) {
-      const e = err as Error;
-      showToast("Falha ao exportar: " + (e.message || String(e)), "error");
-    } finally {
-      exportDropdown?.setAttribute("hidden", "");
-      exportBtn?.setAttribute("aria-expanded", "false");
-    }
-  });
-
-  document.getElementById("export-clipboard-btn")?.addEventListener("click", async () => {
-    try {
-      const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-      if (!state) {
-        showToast("Sem dados de reunião", "error");
-        return;
-      }
-      const markdown = generateMarkdown(state);
-      await navigator.clipboard.writeText(markdown);
-      showToast("Copiado para a área de transferência", "success");
-    } catch (err) {
-      console.error(err);
-      showToast("Failed to copy to clipboard", "error");
-    } finally {
-      exportDropdown?.setAttribute("hidden", "");
-      exportBtn?.setAttribute("aria-expanded", "false");
-    }
-  });
-
-  document.getElementById("export-json-btn")?.addEventListener("click", async () => {
-    try {
-      const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-      if (!state) throw new Error("Sem dados de reunião");
-      const sessionData = {
-        exportedAt: new Date().toISOString(),
-        meetingId: state.meetingId || "unknown",
-        duration: (state as State & { duration?: number }).duration || 0,
-        sentiment: state.sentiment || "neutral",
-        summary: state.summary || "",
-        participants: state.participants || [],
-        topics: state.topics || [],
-        decisions: state.decisions || [],
-        actionItems: state.actionItems || [],
-        keyInsights: state.keyInsights || [],
-        timeline: state.timeline || [],
-        transcript: state.transcript || [],
-      };
-      const filename = `meeting-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      downloadFile(JSON.stringify(sessionData, null, 2), filename, "application/json");
-      showToast("Downloaded as .json backup", "success");
-    } catch (err) {
-      const e = err as Error;
-      showToast("Falha ao exportar: " + (e.message || String(e)), "error");
-    } finally {
-      exportDropdown?.setAttribute("hidden", "");
-      exportBtn?.setAttribute("aria-expanded", "false");
-    }
-  });
-
-  // ——— Helpers ———
-  // ——— Meeting History Tab ———
-  let sessionToDelete: string | null = null;
-
-  async function loadMeetingHistory() {
-    try {
-      const sessions: State[] = await chrome.runtime.sendMessage({ type: "GET_SAVED_SESSIONS" });
-      const container = document.getElementById("dash-history-list");
-      if (!container) return;
-      if (!sessions || sessions.length === 0) {
-        container.innerHTML = getEmptyStateHTML(
-          "No history exists yet. Sessions are saved when you end them.",
-        );
-        return;
-      }
-
-      container.innerHTML = sessions
-        .map((s: State) => {
-          const date = new Date(s.savedAt || s.startTime || Date.now()).toLocaleDateString(
-            "en-US",
-            { month: "short", day: "numeric", year: "numeric" },
-          );
-          const time = new Date(s.savedAt || s.startTime || Date.now()).toLocaleTimeString(
-            "en-US",
-            { hour: "2-digit", minute: "2-digit" },
-          );
-          const topicCount = s.topics?.length || 0;
-          const decisionCount = s.decisions?.length || 0;
-          const actionCount = s.actionItems?.length || 0;
-
-          return `
-          <div class="session-item" data-session-id="${sanitizeDataAttr(s.id)}">
-            <div class="session-item-header">
-              <div>
-                <div class="session-item-date">${escapeHtml(date)} at ${escapeHtml(time)}</div>
-                <div class="session-item-id" title="${escapeHtml(s.meetingUrl || "")}">${escapeHtml(s.meetingUrl || s.meetingId || "Reunião desconhecida")}</div>
-              </div>
-              <div class="session-item-meta">
-                <span>${formatDuration((s as State & { duration?: number }).duration || 0)}</span>
-              </div>
-            </div>
-            <div class="session-item-summary" class="u-cursor-pointer" title="Click to expand/collapse summary">${escapeHtml(s.summary || "Sem resumo disponível")}</div>
-            <div class="session-item-stats">
-              <span>${topicCount} topics</span>
-              <span>${decisionCount} decisions</span>
-              <span>${actionCount} actions</span>
-            </div>
-            <div class="session-item-actions">
-              <button class="session-export-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Exportar como Markdown">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
-                Export
-              </button>
-              <button class="session-export-btn session-download-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Baixar arquivo Markdown">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" x2="12" y1="15" y2="3"></line></svg>
-                Download
-              </button>
-              <button class="session-export-btn vb-send-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Enviar esta sessão para o ValorBrain">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m16 16-4-4-4 4"></path></svg>
-                <span class="vb-send-label">Send to ValorBrain</span>
-              </button>
-              <button class="session-delete-btn" data-session-id="${sanitizeDataAttr(s.id)}" title="Excluir sessão">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
-                Delete
-              </button>
-            </div>
-          </div>
-        `;
-        })
-        .join("");
-
-      // Wire up export buttons
-      container
-        .querySelectorAll<HTMLButtonElement>(".session-export-btn:not(.session-download-btn)")
-        .forEach((btn) => {
-          btn.addEventListener("click", async () => {
-            const sessionId = btn.dataset.sessionId;
-            const session = sessionId ? await loadFullSavedSession(sessionId) : null;
-            if (session) exportSessionMarkdown(session);
-          });
-        });
-
-      container.querySelectorAll<HTMLButtonElement>(".session-download-btn").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const sessionId = btn.dataset.sessionId;
-          const session = sessionId ? await loadFullSavedSession(sessionId) : null;
-          if (session) downloadSessionMarkdown(session);
-        });
-      });
-
-      // Wire up ValorBrain send buttons (sending / sent / error-with-retry)
-      const setVbButtonState = (
-        btn: HTMLButtonElement,
-        state: "idle" | "sending" | "sent" | "error",
-        message = "",
-      ) => {
-        const label = btn.querySelector(".vb-send-label");
-        btn.classList.remove("vb-state-sending", "vb-state-sent", "vb-state-error");
-        if (state === "idle") {
-          btn.disabled = false;
-          if (label) label.textContent = "Enviar para o ValorBrain";
-        } else if (state === "sending") {
-          btn.disabled = true;
-          btn.classList.add("vb-state-sending");
-          if (label) label.textContent = "Enviando...";
-        } else if (state === "sent") {
-          btn.disabled = true;
-          btn.classList.add("vb-state-sent");
-          if (label) label.textContent = message || "Enviado ✓";
-        } else {
-          // Error keeps the button clickable as an explicit retry.
-          btn.disabled = false;
-          btn.classList.add("vb-state-error");
-          if (label) label.textContent = "Tentar novamente";
-        }
-      };
-
-      container.querySelectorAll<HTMLButtonElement>(".vb-send-btn").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const sessionId = btn.dataset.sessionId;
-          if (!sessionId) return;
-          setVbButtonState(btn, "sending");
-
-          const session = await loadFullSavedSession(sessionId);
-          if (!session) {
-            setVbButtonState(btn, "idle");
-            return;
-          }
-
-          let result: VbSendResult | undefined;
-          try {
-            result = (await chrome.runtime.sendMessage({
-              type: "VB_SEND_SESSION",
-              session,
-            })) as VbSendResult | undefined;
-          } catch (err) {
-            const e = err as Error;
-            result = {
-              ok: false,
-              kind: "network",
-              error: e.message || "Falha no envio",
-              retryable: true,
-            };
-          }
-
-          if (result?.ok) {
-            setVbButtonState(btn, "sent");
-            showToast(
-              result.docRef ? `Sent to ValorBrain (${result.docRef})` : "Enviado ao ValorBrain",
-              "success",
-            );
-          } else {
-            setVbButtonState(btn, "error");
-            showToast(
-              `ValorBrain error: ${(result as VbSendResult & { error?: string })?.error || "Falha no envio"}`,
-              "error",
-            );
-          }
-        });
-      });
-
-      // Wire up delete buttons
-      container.querySelectorAll<HTMLButtonElement>(".session-delete-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          sessionToDelete = btn.dataset.sessionId || null;
-          if (sessionToDelete) {
-            document.getElementById("delete-confirm-modal")?.classList.remove("hidden");
-          }
-        });
-      });
-
-      // Wire up summary expand/collapse
-      container.querySelectorAll<HTMLDivElement>(".session-item-summary").forEach((summary) => {
-        summary.addEventListener("click", () => {
-          const item = summary.closest(".session-item");
-          if (item) item.classList.toggle("expanded");
-        });
-      });
-    } catch (err) {
-      console.error("[Dashboard] Failed to load history:", err);
-    }
-  }
-
-  // Modal logic
-  document.getElementById("cancel-delete-btn")?.addEventListener("click", () => {
-    sessionToDelete = null;
-    document.getElementById("delete-confirm-modal")?.classList.add("hidden");
-  });
-  document.getElementById("confirm-delete-btn")?.addEventListener("click", async () => {
-    if (sessionToDelete) {
-      await chrome.runtime.sendMessage({
-        type: "DELETE_SAVED_SESSION",
-        sessionId: sessionToDelete,
-      });
-      sessionToDelete = null;
-      document.getElementById("delete-confirm-modal")?.classList.add("hidden");
-      loadMeetingHistory();
-    }
-  });
-
-  // ——— HISTORY EXPORT ACTIONS (Now perfectly unified with the dynamic generator!) ———
-  async function loadFullSavedSession(sessionId: string): Promise<State | null> {
-    try {
-      const session: State | null = await chrome.runtime.sendMessage({
-        type: "GET_SAVED_SESSION",
-        sessionId,
-      });
-
-      if (!session) {
-        showToast("Saved session data could not be found", "error");
-        return null;
-      }
-
-      return session;
-    } catch (err) {
-      const e = err as Error;
-      showToast("Failed to load saved session: " + (e.message || String(e)), "error");
-      return null;
-    }
-  }
-
-  function exportSessionMarkdown(session: State) {
-    const md = generateMarkdown(session);
-
-    navigator.clipboard
-      .writeText(md)
-      .then(() => {
-        showToast("Sessão copiada para a área de transferência", "success");
-      })
-      .catch((err) => {
-        const e = err as Error;
-        showToast("Failed to export session: " + (e.message || String(e)), "error");
-      });
-  }
-
-  function downloadSessionMarkdown(session: State) {
-    const md = generateMarkdown(session);
-
-    const dateVal = session.savedAt || session.startTime || Date.now();
-    const filename = `meeting-summary-${new Date(dateVal).toISOString().slice(0, 10)}.md`;
-    downloadFile(md, filename, "text/markdown");
-    showToast("Baixado como .md", "success");
-  }
-
-  // ——— Transcript Search ———
-  let searchMatches: HTMLElement[] = [];
-  let currentMatchIndex = -1;
-  let searchDebounceTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-
-  function resetTranscriptSearchState(): void {
-    searchMatches = [];
-    currentMatchIndex = -1;
-
-    if (searchCounter) {
-      searchCounter.textContent = "0/0";
-    }
-
-    if (searchPrevBtn) {
-      searchPrevBtn.disabled = true;
-    }
-
-    if (searchNextBtn) {
-      searchNextBtn.disabled = true;
-    }
-
-    if (searchClearBtn) {
-      searchClearBtn.disabled = !searchInput?.value.trim();
-      searchClearBtn.classList.toggle("visible", Boolean(searchInput?.value.trim()));
-    }
-  }
-
-  function unwrapTranscriptSearchMarks(): void {
-    if (!transcriptContainer) return;
-
-    transcriptContainer.querySelectorAll("mark.search-match").forEach((mark) => {
+  renderedTranscriptKey = key;
+  renderedTranscriptCount = entries.length;
+
+  if (searchInput().value.trim()) runSearch(true);
+  else if (activeTab === "transcript" && nearBottom && !viewed)
+    window.scrollTo({ top: document.body.scrollHeight });
+}
+
+function navigateToChunk(chunkId: string) {
+  selectTab("transcript");
+  const target = document.getElementById(`tr-${chunkId}`);
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("is-highlighted");
+  setTimeout(() => target.classList.remove("is-highlighted"), 2500);
+}
+
+// ——— Search ———
+
+let matches: HTMLElement[] = [];
+let matchIndex = -1;
+let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+const searchInput = () => $<HTMLInputElement>("db-search");
+
+function clearMarks() {
+  $("db-transcript")
+    .querySelectorAll("mark.db-match")
+    .forEach((mark) => {
       const parent = mark.parentNode;
-
       if (!parent) return;
-
       parent.replaceChild(document.createTextNode(mark.textContent || ""), mark);
       parent.normalize();
     });
+}
+
+function updateSearchControls() {
+  $("db-search-count").textContent = matches.length ? `${matchIndex + 1}/${matches.length}` : "0/0";
+  $<HTMLButtonElement>("db-search-prev").disabled = matches.length === 0;
+  $<HTMLButtonElement>("db-search-next").disabled = matches.length === 0;
+}
+
+function focusMatch(scroll = true) {
+  matches.forEach((mark, i) => mark.classList.toggle("is-current", i === matchIndex));
+  updateSearchControls();
+  if (scroll) matches[matchIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function runSearch(preserveIndex = false) {
+  const query = searchInput().value.trim().toLowerCase();
+  const previous = matchIndex;
+  clearMarks();
+  matches = [];
+  matchIndex = -1;
+  if (!query) {
+    updateSearchControls();
+    return;
+  }
+  const walker = document.createTreeWalker($("db-transcript"), NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) =>
+      node.parentElement?.closest(".db-line-text") && node.nodeValue?.trim()
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT,
+  });
+  const nodes: Text[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text);
+
+  for (const node of nodes) {
+    const text = node.nodeValue || "";
+    const lower = text.toLowerCase();
+    let at = lower.indexOf(query);
+    if (at === -1) continue;
+    const fragment = document.createDocumentFragment();
+    let last = 0;
+    while (at !== -1) {
+      if (at > last) fragment.appendChild(document.createTextNode(text.slice(last, at)));
+      const mark = document.createElement("mark");
+      mark.className = "db-match";
+      mark.textContent = text.slice(at, at + query.length);
+      fragment.appendChild(mark);
+      matches.push(mark);
+      last = at + query.length;
+      at = lower.indexOf(query, last);
+    }
+    if (last < text.length) fragment.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode?.replaceChild(fragment, node);
+  }
+  if (matches.length) {
+    matchIndex = preserveIndex && previous >= 0 && previous < matches.length ? previous : 0;
+    focusMatch(!preserveIndex);
+  } else {
+    updateSearchControls();
+  }
+}
+
+function stepMatch(direction: 1 | -1) {
+  if (!matches.length) return;
+  matchIndex = (matchIndex + direction + matches.length) % matches.length;
+  focusMatch();
+}
+
+// ——— Decisions & actions tab ———
+
+function renderActionsTab(s: State | null) {
+  const decisions = (s?.decisions ?? []).filter((d) => d?.text);
+  $("db-decisions").innerHTML = decisions.length
+    ? decisions
+        .map((d) => {
+          const meta = [
+            d.by ? `<span>${escapeHtml(d.by)}</span>` : "",
+            d.classification === "tentative"
+              ? `<span class="vb-chip vb-chip--warning">${icon("alertTriangle")}A confirmar</span>`
+              : "",
+            tsButton(d.chunkId, d.timestampLabel || d.timestamp),
+          ].filter(Boolean);
+          return `<li class="db-item">
+            <div class="db-item-body">
+              <div class="db-item-text">${escapeHtml(d.text)}</div>
+              ${meta.length ? `<div class="db-item-meta">${meta.join("")}</div>` : ""}
+            </div>
+            ${copyButton(d.by ? `${d.text} (${d.by})` : d.text, "Copiar decisão")}
+          </li>`;
+        })
+        .join("")
+    : `<li>${emptyBlock("Nenhuma decisão registrada", "")}</li>`;
+
+  const actions = (s?.actionItems ?? []).filter((a: ActionItem) => a?.task);
+  $("db-actions").innerHTML = actions.length
+    ? actions
+        .map((a, index) => {
+          const done = isActionDone(s, a.task);
+          const meta = [
+            a.owner ? `<span>${icon("users")}${escapeHtml(a.owner)}</span>` : "",
+            a.deadline ? `<span>${icon("clock")}${escapeHtml(a.deadline)}</span>` : "",
+            a.isSpeculative
+              ? `<span class="vb-chip vb-chip--neutral">Ideia, não confirmada</span>`
+              : "",
+            a.confidence && a.confidence !== "high"
+              ? `<span class="vb-chip vb-chip--neutral">Confiança ${escapeHtml(confidenceLabel(a.confidence))}</span>`
+              : "",
+            tsButton(a.chunkId, a.timestampLabel || a.timestamp),
+          ].filter(Boolean);
+          const copy = `- [${done ? "x" : " "}] ${a.task}${a.owner ? ` — ${a.owner}` : ""}${a.deadline ? ` (prazo: ${a.deadline})` : ""}`;
+          return `<li class="db-item${done ? " db-item--done" : ""}">
+            <input type="checkbox" class="db-check" id="act-${index}" data-task="${escapeHtml(a.task)}" ${done ? "checked" : ""} aria-label="Marcar como feito: ${escapeHtml(a.task)}" />
+            <label class="db-item-body" for="act-${index}">
+              <div class="db-item-text">${escapeHtml(a.task)}</div>
+              ${meta.length ? `<div class="db-item-meta">${meta.join("")}</div>` : ""}
+            </label>
+            ${copyButton(copy, "Copiar próximo passo")}
+          </li>`;
+        })
+        .join("")
+    : `<li>${emptyBlock("Nenhum próximo passo registrado", "")}</li>`;
+}
+
+// ——— People tab ———
+
+function renderPeopleTab(s: State | null) {
+  const late = new Set(s?.lateJoiners ?? []);
+  const people = Array.from(new Set((s?.participants ?? []).filter((p) => p && p !== "You")));
+  $("db-people").innerHTML = people.length
+    ? people
+        .map(
+          (name) => `<li class="db-item">
+            <div class="db-avatar" aria-hidden="true">${escapeHtml(initials(name))}</div>
+            <div class="db-item-body"><div class="db-item-text">${escapeHtml(name)}</div></div>
+            ${late.has(name) ? `<span class="vb-chip vb-chip--info">Entrou depois</span>` : ""}
+          </li>`,
+        )
+        .join("")
+    : `<li>${emptyBlock("Nenhum participante detectado", "Os nomes aparecem conforme o Meet mostra quem está na sala.")}</li>`;
+
+  const events = s?.timeline ?? [];
+  $("db-timeline").innerHTML = events.length
+    ? events
+        .map(
+          (event) =>
+            `<li><span class="db-ts">${escapeHtml(formatClock(event.elapsed || 0))}</span><span>${escapeHtml(event.event)}</span></li>`,
+        )
+        .join("")
+    : `<li>${emptyBlock("Nenhum evento ainda", "")}</li>`;
+}
+
+// ——— History tab ———
+
+function vbChip(session: State): string {
+  const vb = session.vb;
+  if (vb?.status === "sent")
+    return `<span class="vb-chip vb-chip--success">${icon("checkCircle")}No ValorBrain</span>`;
+  if (vb?.status === "failed")
+    return `<span class="vb-chip vb-chip--error">${icon("alertCircle")}Envio falhou</span>`;
+  return `<span class="vb-chip vb-chip--neutral">Só neste navegador</span>`;
+}
+
+async function renderHistory() {
+  const container = $("db-history");
+  let sessions: State[];
+  try {
+    sessions = (await chrome.runtime.sendMessage({ type: "GET_SAVED_SESSIONS" })) ?? [];
+  } catch {
+    sessions = [];
+  }
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    container.innerHTML = emptyBlock(
+      "Nenhuma reunião salva ainda",
+      "Toda gravação encerrada é salva aqui automaticamente.",
+    );
+    return;
   }
 
-  function updateTranscriptSearchControls(): void {
-    const hasQuery = Boolean(searchInput?.value.trim());
-    const hasMatches = searchMatches.length > 0;
+  container.innerHTML = sessions
+    .map((session) => {
+      const when = session.startTime || session.savedAt || 0;
+      const counts = [
+        session.duration ? formatDurationHuman(session.duration) : "",
+        plural(session.decisions?.length ?? 0, "decisão", "decisões"),
+        plural(session.actionItems?.length ?? 0, "ação", "ações"),
+      ].filter(Boolean);
+      const sent = session.vb?.status === "sent";
+      return `<article class="vb-card db-session" data-session="${escapeHtml(session.id || "")}">
+        <div class="db-session-head">
+          <div>
+            <div class="db-session-title">${escapeHtml(meetingTitle(session))}</div>
+            <div class="db-session-meta">${escapeHtml([formatDateTime(when), ...counts].filter(Boolean).join(" · "))}</div>
+          </div>
+          ${vbChip(session)}
+        </div>
+        ${session.summary ? `<p class="db-session-summary">${escapeHtml(session.summary)}</p>` : ""}
+        ${session.vb?.status === "failed" && session.vb.error ? `<p class="db-session-error">${escapeHtml(session.vb.error)}</p>` : ""}
+        <div class="db-session-actions">
+          <button type="button" class="vb-btn vb-btn--sm" data-act="open">${icon("fileText")}Abrir</button>
+          <button type="button" class="vb-btn vb-btn--sm${sent ? "" : " vb-btn--primary"}" data-act="send">${icon("cloudUpload")}${sent ? "Reenviar" : "Enviar ao ValorBrain"}</button>
+          <button type="button" class="vb-btn vb-btn--sm" data-act="download">${icon("download")}.md</button>
+          <button type="button" class="vb-btn vb-btn--sm vb-btn--ghost" data-act="delete" aria-label="Excluir esta reunião">${icon("trash")}</button>
+        </div>
+      </article>`;
+    })
+    .join("");
+}
 
-    if (searchCounter) {
-      searchCounter.textContent = hasMatches
-        ? `${currentMatchIndex + 1}/${searchMatches.length}`
-        : "0/0";
-    }
-
-    if (searchPrevBtn) {
-      searchPrevBtn.disabled = !hasMatches;
-    }
-
-    if (searchNextBtn) {
-      searchNextBtn.disabled = !hasMatches;
-    }
-
-    if (searchClearBtn) {
-      searchClearBtn.disabled = !hasQuery;
-      searchClearBtn.classList.toggle("visible", hasQuery);
-    }
+async function loadSavedSession(sessionId: string): Promise<State | null> {
+  try {
+    const session = await chrome.runtime.sendMessage({ type: "GET_SAVED_SESSION", sessionId });
+    if (!session) toast("Não encontrei esta reunião no histórico.", "error");
+    return session ?? null;
+  } catch (err) {
+    toast(`Não consegui abrir a reunião: ${(err as Error)?.message || err}`, "error");
+    return null;
   }
+}
 
-  function updateActiveSearchMatch(scrollToMatch = true): void {
-    searchMatches.forEach((match, index) => {
-      match.classList.toggle("active", index === currentMatchIndex);
-    });
+async function handleHistoryAction(button: HTMLButtonElement) {
+  const card = button.closest<HTMLElement>("[data-session]");
+  const sessionId = card?.dataset.session;
+  if (!sessionId) return;
+  const action = button.dataset.act;
 
-    updateTranscriptSearchControls();
-
-    if (!scrollToMatch) return;
-
-    const activeMatch = searchMatches[currentMatchIndex];
-
-    activeMatch?.scrollIntoView({
-      behavior: "smooth",
-      block: "center",
-      inline: "nearest",
-    });
-  }
-
-  function executeTranscriptSearch(preserveIndex = false): void {
-    if (
-      !searchInput ||
-      !searchCounter ||
-      !searchClearBtn ||
-      !searchPrevBtn ||
-      !searchNextBtn ||
-      !transcriptContainer
-    ) {
-      return;
-    }
-
-    const query = searchInput.value.trim();
-    const normalizedQuery = query.toLowerCase();
-    const previousIndex = currentMatchIndex;
-
-    unwrapTranscriptSearchMarks();
-
-    searchMatches = [];
-    currentMatchIndex = -1;
-
-    if (!normalizedQuery) {
-      updateTranscriptSearchControls();
-      return;
-    }
-
-    const textNodes: Text[] = [];
-    const walker = document.createTreeWalker(transcriptContainer, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const parentElement = node.parentElement;
-
-        if (!parentElement) {
-          return NodeFilter.FILTER_REJECT;
-        }
-
-        if (parentElement.closest(".empty-msg")) {
-          return NodeFilter.FILTER_REJECT;
-        }
-
-        if (!parentElement.closest(".transcript-text")) {
-          return NodeFilter.FILTER_REJECT;
-        }
-
-        if (!node.nodeValue?.trim()) {
-          return NodeFilter.FILTER_REJECT;
-        }
-
-        return NodeFilter.FILTER_ACCEPT;
+  if (action === "open") {
+    const session = await loadSavedSession(sessionId);
+    if (!session) return;
+    viewed = session;
+    renderAll();
+    selectTab("summary");
+    window.scrollTo({ top: 0 });
+  } else if (action === "download") {
+    const session = await loadSavedSession(sessionId);
+    if (session)
+      download(
+        buildMeetingMarkdown(session, { isActionDone: (t) => isActionDone(session, t) }),
+        exportFilename(session, "md"),
+        "text/markdown",
+      );
+  } else if (action === "send") {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "Enviando…";
+    const result = await chrome.runtime
+      .sendMessage({ type: "VB_SEND_SESSION", sessionId })
+      .catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    if (result?.ok) toast("Reunião enviada ao ValorBrain.");
+    else toast(`O envio falhou: ${result?.error || "erro desconhecido"}`, "error");
+    await renderHistory();
+  } else if (action === "delete") {
+    const dialog = $<HTMLDialogElement>("db-delete-dialog");
+    dialog.returnValue = "";
+    dialog.showModal();
+    dialog.addEventListener(
+      "close",
+      async () => {
+        if (dialog.returnValue !== "confirm") return;
+        await chrome.runtime.sendMessage({ type: "DELETE_SAVED_SESSION", sessionId });
+        if (viewed?.id === sessionId) viewed = null;
+        toast("Reunião excluída do histórico.");
+        renderAll();
+        await renderHistory();
       },
-    });
+      { once: true },
+    );
+  }
+}
 
-    let node = walker.nextNode();
+// ——— Export ———
 
-    while (node) {
-      textNodes.push(node as Text);
-      node = walker.nextNode();
-    }
+function download(content: string, filename: string, mime: string) {
+  const url = URL.createObjectURL(new Blob([content], { type: `${mime};charset=utf-8` }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`Baixado: ${filename}`);
+}
 
-    textNodes.forEach((textNode) => {
-      const textContent = textNode.nodeValue || "";
-      const lowerTextContent = textContent.toLowerCase();
+async function exportCurrent(kind: string) {
+  let session: State | null = viewed;
+  if (!session) {
+    session = await chrome.runtime.sendMessage({ type: "GET_FULL_STATE" }).catch(() => null);
+  }
+  if (!session || ((session.transcript?.length ?? 0) === 0 && !session.summary)) {
+    toast("Não há conteúdo para exportar. Abra uma reunião do histórico ou grave uma.", "error");
+    return;
+  }
+  const options = { isActionDone: (task: string) => isActionDone(session, task) };
+  if (kind === "md")
+    download(
+      buildMeetingMarkdown(session, options),
+      exportFilename(session, "md"),
+      "text/markdown",
+    );
+  else if (kind === "txt")
+    download(buildMeetingText(session, options), exportFilename(session, "txt"), "text/plain");
+  else if (kind === "json")
+    download(buildMeetingJson(session), exportFilename(session, "json"), "application/json");
+  else if (kind === "copy") await copyText(buildMeetingMarkdown(session, options));
+}
 
-      let matchIndex = lowerTextContent.indexOf(normalizedQuery);
-      let lastIndex = 0;
+// ——— Waveform ———
 
-      if (matchIndex === -1) {
+let waveCtx: CanvasRenderingContext2D | null = null;
+let waveWidth = 300;
+const WAVE_HEIGHT = 44;
+let smoothed = new Array(WAVE_BARS).fill(0);
+
+function cssVar(name: string, fallback: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+function initWave() {
+  const canvas = $<HTMLCanvasElement>("db-waveform");
+  waveCtx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  waveWidth = canvas.offsetWidth || 300;
+  canvas.width = Math.round(waveWidth * dpr);
+  canvas.height = Math.round(WAVE_HEIGHT * dpr);
+  waveCtx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawIdleWave();
+}
+
+function drawBars(values: number[], color: string) {
+  if (!waveCtx) return;
+  const gap = 3;
+  const barWidth = Math.max(2, (waveWidth - gap * (WAVE_BARS - 1)) / WAVE_BARS);
+  waveCtx.clearRect(0, 0, waveWidth, WAVE_HEIGHT);
+  waveCtx.fillStyle = color;
+  for (let i = 0; i < WAVE_BARS; i++) {
+    const height = Math.max(3, values[i] * WAVE_HEIGHT * 0.95);
+    waveCtx.globalAlpha = values[i] > 0.02 ? Math.min(1, 0.45 + values[i]) : 0.35;
+    waveCtx.beginPath();
+    waveCtx.roundRect(
+      i * (barWidth + gap),
+      (WAVE_HEIGHT - height) / 2,
+      barWidth,
+      height,
+      barWidth / 2,
+    );
+    waveCtx.fill();
+  }
+  waveCtx.globalAlpha = 1;
+}
+
+function drawIdleWave() {
+  smoothed = new Array(WAVE_BARS).fill(0);
+  drawBars(smoothed, cssVar("--vb-border-control", "#9DA39E"));
+}
+
+function drawWave(buckets: number[]) {
+  for (let i = 0; i < WAVE_BARS; i++) smoothed[i] = smoothed[i] * 0.55 + (buckets[i] || 0) * 0.45;
+  drawBars(smoothed, cssVar("--vb-green", "#3F9E5E"));
+}
+
+// ——— Recording control ———
+
+function getStreamId(tabId: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+      if (chrome.runtime.lastError || !streamId) {
+        reject(
+          new Error(
+            "O Chrome só libera a captura depois que você clica no ícone do ValorBrain Meet na aba da reunião. Clique no ícone e em Iniciar gravação.",
+          ),
+        );
         return;
       }
-
-      const fragment = document.createDocumentFragment();
-
-      while (matchIndex !== -1) {
-        if (matchIndex > lastIndex) {
-          fragment.appendChild(document.createTextNode(textContent.slice(lastIndex, matchIndex)));
-        }
-
-        const mark = document.createElement("mark");
-        mark.className = "search-match";
-        mark.dataset.transcriptMatch = "true";
-        mark.textContent = textContent.slice(matchIndex, matchIndex + query.length);
-
-        fragment.appendChild(mark);
-        searchMatches.push(mark);
-
-        lastIndex = matchIndex + query.length;
-        matchIndex = lowerTextContent.indexOf(normalizedQuery, lastIndex);
-      }
-
-      if (lastIndex < textContent.length) {
-        fragment.appendChild(document.createTextNode(textContent.slice(lastIndex)));
-      }
-
-      textNode.parentNode?.replaceChild(fragment, textNode);
+      resolve(streamId);
     });
+  });
+}
 
-    if (searchMatches.length === 0) {
-      updateTranscriptSearchControls();
-      return;
-    }
-
-    if (preserveIndex && previousIndex >= 0 && previousIndex < searchMatches.length) {
-      currentMatchIndex = previousIndex;
-    } else {
-      currentMatchIndex = 0;
-    }
-
-    updateActiveSearchMatch(true);
+async function toggleRecording(button: HTMLButtonElement) {
+  if (liveState?.audioActive) {
+    button.disabled = true;
+    await chrome.runtime.sendMessage({ type: "MANUAL_STOP_AUDIO" }).catch(() => {});
+    return;
   }
-
-  function clearTranscriptSearch(): void {
-    if (!searchInput || !transcriptContainer) return;
-
-    searchInput.value = "";
-    unwrapTranscriptSearchMarks();
-
-    searchMatches = [];
-    currentMatchIndex = -1;
-
-    updateTranscriptSearchControls();
-
-    transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
-    searchInput.focus();
-  }
-
-  function navigateTranscriptMatch(direction: 1 | -1): void {
-    if (searchMatches.length === 0) return;
-
-    currentMatchIndex =
-      (currentMatchIndex + direction + searchMatches.length) % searchMatches.length;
-
-    updateActiveSearchMatch(true);
-  }
-
-  searchInput?.addEventListener("input", () => {
-    if (searchDebounceTimer) {
-      globalThis.clearTimeout(searchDebounceTimer);
+  const tabId = liveState?.targetTabId;
+  if (typeof tabId !== "number") return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const streamId = await getStreamId(tabId);
+    let micGranted = true;
+    try {
+      const permission = await navigator.permissions.query({
+        name: "microphone" as PermissionName,
+      });
+      micGranted = permission.state === "granted";
+    } catch {
+      micGranted = true;
     }
+    const response = await chrome.runtime.sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId,
+      meetingId: liveState?.meetingId,
+      meetingUrl: liveState?.meetingUrl,
+      streamId,
+      includeMicrophone: micGranted,
+    });
+    if (!response?.success)
+      throw new Error(response?.error || "Não foi possível iniciar a gravação.");
+  } catch (err) {
+    toast((err as Error)?.message || String(err), "error");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
 
-    searchDebounceTimer = globalThis.setTimeout(() => {
-      executeTranscriptSearch(false);
-    }, 150);
+// ——— Tabs ———
+
+function selectTab(name: TabName) {
+  activeTab = name;
+  for (const tab of TABS) {
+    const button = $(`tabbtn-${tab}`);
+    const panel = $(`tab-${tab}`);
+    const selected = tab === name;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+    panel.hidden = !selected;
+    panel.classList.toggle("is-active", selected);
+  }
+  if (name === "history") void renderHistory();
+}
+
+// ——— Render all ———
+
+function renderAll() {
+  const s = current();
+  renderHeader();
+  renderControls();
+  renderViewingBanner();
+  renderNotice(liveState?.notice);
+  renderSummaryTab(s);
+  renderTranscriptTab(s);
+  renderActionsTab(s);
+  renderPeopleTab(s);
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  hydrateIcons();
+  initWave();
+  window.addEventListener("resize", initWave);
+
+  document.querySelectorAll<HTMLButtonElement>(".db-tab").forEach((button, index, all) => {
+    button.addEventListener("click", () => selectTab(button.dataset.tab as TabName));
+    button.addEventListener("keydown", (event) => {
+      const keys: Record<string, number> = { ArrowRight: 1, ArrowLeft: -1 };
+      if (event.key in keys) {
+        event.preventDefault();
+        const next = all[(index + keys[event.key] + all.length) % all.length];
+        next.focus();
+        next.click();
+      }
+    });
   });
 
-  searchInput?.addEventListener("keydown", (event) => {
+  document.body.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const ts = target.closest<HTMLButtonElement>("button.db-ts[data-chunk]");
+    if (ts?.dataset.chunk) {
+      navigateToChunk(ts.dataset.chunk);
+      return;
+    }
+    const copy = target.closest<HTMLButtonElement>("[data-copy]");
+    if (copy) {
+      void copyText(copy.dataset.copy || "");
+      return;
+    }
+    const historyButton = target.closest<HTMLButtonElement>("#db-history [data-act]");
+    if (historyButton) void handleHistoryAction(historyButton);
+  });
+
+  $("db-actions").addEventListener("change", (event) => {
+    const checkbox = event.target as HTMLInputElement;
+    if (!checkbox.matches(".db-check")) return;
+    const task = checkbox.dataset.task || "";
+    checkbox.closest(".db-item")?.classList.toggle("db-item--done", checkbox.checked);
+    void saveActionStatus(statusKey(current(), task), checkbox.checked);
+  });
+
+  $<HTMLButtonElement>("db-record-btn").addEventListener(
+    "click",
+    (event) => void toggleRecording(event.currentTarget as HTMLButtonElement),
+  );
+  $("db-back-live").addEventListener("click", () => {
+    viewed = null;
+    renderAll();
+  });
+  $("db-copy-summary").addEventListener("click", () => {
+    const summary = current()?.summary?.trim();
+    if (summary) void copyText(summary);
+    else toast("Ainda não há resumo para copiar.", "error");
+  });
+
+  // Search
+  searchInput().addEventListener("input", () => {
+    if (searchDebounce) clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => runSearch(false), 150);
+  });
+  searchInput().addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      navigateTranscriptMatch(event.shiftKey ? -1 : 1);
-    }
-
-    if (event.key === "Escape") {
-      event.preventDefault();
-      clearTranscriptSearch();
+      stepMatch(event.shiftKey ? -1 : 1);
+    } else if (event.key === "Escape") {
+      searchInput().value = "";
+      runSearch();
     }
   });
-
-  searchClearBtn?.addEventListener("click", clearTranscriptSearch);
-
-  searchPrevBtn?.addEventListener("click", () => {
-    navigateTranscriptMatch(-1);
-  });
-
-  searchNextBtn?.addEventListener("click", () => {
-    navigateTranscriptMatch(1);
-  });
-
+  $("db-search-prev").addEventListener("click", () => stepMatch(-1));
+  $("db-search-next").addEventListener("click", () => stepMatch(1));
   document.addEventListener("keydown", (event) => {
-    const isSearchShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f";
-
-    if (!isSearchShortcut) return;
-
-    const transcriptTab = document.querySelector('[data-tab="transcript"]') as HTMLElement | null;
-
-    event.preventDefault();
-    transcriptTab?.click();
-
-    globalThis.setTimeout(() => {
-      searchInput?.focus();
-      searchInput?.select();
-    }, 0);
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      selectTab("transcript");
+      searchInput().focus();
+      searchInput().select();
+    }
   });
 
-  updateTranscriptSearchControls();
-
-  // Load sessions on tab switch
-  document.querySelector('[data-tab="sessions"]')?.addEventListener("click", loadMeetingHistory);
-  // Load history on tab switch
-  document.querySelector('[data-tab="history"]')?.addEventListener("click", loadMeetingHistory);
-
-  // ——— ValorBrain sync badge (last send ok/fail, local status) ———
-  const vbSyncBadge = document.getElementById("vb-sync-badge") as HTMLDivElement | null;
-
-  function renderVbSyncBadge(status: VbSyncStatus | null | undefined) {
-    if (!vbSyncBadge) return;
-    if (!status || typeof status.at !== "number") {
-      vbSyncBadge.hidden = true;
-      return;
+  // Export menu
+  const exportButton = $<HTMLButtonElement>("db-export-btn");
+  const exportMenu = $("db-export-menu");
+  const closeMenu = () => {
+    exportMenu.hidden = true;
+    exportButton.setAttribute("aria-expanded", "false");
+  };
+  exportButton.addEventListener("click", () => {
+    const open = exportMenu.hidden;
+    exportMenu.hidden = !open;
+    exportButton.setAttribute("aria-expanded", String(open));
+    if (open) exportMenu.querySelector<HTMLButtonElement>("button")?.focus();
+  });
+  exportMenu.addEventListener("click", (event) => {
+    const item = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-export]");
+    if (!item) return;
+    closeMenu();
+    void exportCurrent(item.dataset.export || "md");
+  });
+  exportMenu.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeMenu();
+      exportButton.focus();
     }
-    const time = new Date(status.at).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    vbSyncBadge.hidden = false;
-    vbSyncBadge.classList.toggle("vb-sync-ok", status.ok === true);
-    vbSyncBadge.classList.toggle("vb-sync-fail", status.ok !== true);
-    vbSyncBadge.textContent = status.ok === true ? `ValorBrain ✓ ${time}` : `ValorBrain ✗ ${time}`;
-    vbSyncBadge.title =
-      status.ok === true
-        ? `Last ValorBrain sync succeeded${status.docRef ? ` (${status.docRef})` : ""}`
-        : `Last ValorBrain sync failed: ${status.error || "unknown error"}`;
+  });
+  document.addEventListener("click", (event) => {
+    if (!(event.target as HTMLElement).closest(".db-export")) closeMenu();
+  });
+
+  await loadActionStatuses();
+  try {
+    liveState = await chrome.runtime.sendMessage({ type: "GET_STATE" });
+  } catch {
+    liveState = null;
+  }
+  renderAll();
+
+  const initial = (await chrome.storage.local.get(DASHBOARD_TAB_KEY))[DASHBOARD_TAB_KEY] as
+    | TabName
+    | undefined;
+  if (initial && TABS.includes(initial)) {
+    selectTab(initial);
+    void chrome.storage.local.remove(DASHBOARD_TAB_KEY);
   }
 
-  chrome.storage.local.get(VB_SYNC_STATUS_KEY).then((values) => {
-    renderVbSyncBadge(values[VB_SYNC_STATUS_KEY] as VbSyncStatus | undefined);
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.type === "STATE_UPDATE" && message.state) {
+      liveState = message.state;
+      if (viewed) {
+        renderHeader();
+        renderControls();
+      } else {
+        renderAll();
+      }
+    } else if (message?.type === "WAVEFORM_DATA" && Array.isArray(message.buckets)) {
+      const wasReceiving = Date.now() - lastWaveAt < 1500;
+      lastWaveAt = Date.now();
+      if (!viewed) {
+        drawWave(message.buckets);
+        if (!wasReceiving) renderAudioCard(liveState);
+      }
+    } else if (message?.type === "SESSION_ENDED") {
+      if (message.saved) toast("Reunião salva. Ela está no Histórico.");
+      if (activeTab === "history") void renderHistory();
+    }
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes[VB_SYNC_STATUS_KEY]) return;
-    renderVbSyncBadge(changes[VB_SYNC_STATUS_KEY].newValue as VbSyncStatus | undefined);
+    if (area !== "local") return;
+    if (changes.savedSessionIndex && activeTab === "history") void renderHistory();
+    if (changes[ACTION_STATUS_KEY])
+      void loadActionStatuses().then(() => renderActionsTab(current()));
   });
 
-  // ——— Copy Transcript Message (Event Delegation) ———
-  transcriptContainer?.addEventListener("click", (e) => {
-    const target = e.target as HTMLElement;
-    const btn = target.closest(".copy-transcript-btn") as HTMLButtonElement | null;
-    if (!btn) return;
-
-    e.stopPropagation();
-    const speaker = btn.dataset.speaker || "Unknown";
-    const time = btn.dataset.time || "";
-    const message = btn.dataset.message || "";
-
-    const copyText = `Speaker: ${speaker}\nTime: ${time}\nMessage: ${message}`;
-
-    navigator.clipboard
-      .writeText(copyText)
-      .then(() => showToast("Copiado!", "success"))
-      .catch((err) => {
-        console.error("Failed to copy transcript message:", err);
-        showToast("Falha ao copiar!", "error");
-      });
-  });
-
-  // ——— Copy Summary Button ———
-  document.getElementById("copy-summary-btn")?.addEventListener("click", async () => {
-    try {
-      const summaryEl = document.getElementById("dash-summary");
-      const text = summaryEl?.textContent?.trim() || "";
-      if (!text || text === "Aguardando a conversa começar...") {
-        showToast("Sem resumo para copiar", "error");
-        return;
-      }
-      await navigator.clipboard.writeText(text);
-      showToast("Resumo copiado!", "success");
-    } catch {
-      showToast("Failed to copy summary", "error");
-    }
-  });
-
-  // ——— Header Export Buttons ———
-  const headerMdBtn = document.getElementById("header-export-md-btn");
-  const headerPdfBtn = document.getElementById("header-export-pdf-btn");
-
-  if (headerMdBtn) {
-    headerMdBtn.addEventListener("click", async () => {
-      try {
-        const state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-        if (!state) throw new Error("Sem dados de reunião");
-
-        const markdown = generateMarkdown(state);
-        const filename = `meeting-summary-${new Date().toISOString().slice(0, 10)}.md`;
-
-        downloadFile(markdown, filename, "text/markdown");
-        showToast("Baixado como .md", "success");
-      } catch (err) {
-        showToast(
-          "Falha ao exportar: " + (err instanceof Error ? err.message : String(err)),
-          "error",
-        );
-      }
-    });
-  }
-
-  if (headerPdfBtn) {
-    headerPdfBtn.addEventListener("click", () => {
-      showToast("PDF UI active! Ready for Phase 2 library integration.", "success");
-    });
-  }
+  // Keep the audio chip honest when the waveform stream stops.
+  setInterval(() => {
+    if (!viewed && liveState?.audioActive) renderAudioCard(liveState);
+  }, 2000);
 });
-
-// --- Empty State Utility ---
-function getEmptyStateHTML(message: string, isList: boolean = false): string {
-  const tag = isList ? "li" : "div";
-  return `
-    <${tag} class="empty-state-container">
-      <div class="empty-state-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-          <line x1="12" x2="12" y1="19" y2="22"></line>
-        </svg>
-      </div>
-      <div class="empty-state-title">${message}</div>
-    </${tag}>
-  `;
-}

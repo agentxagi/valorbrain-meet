@@ -25,6 +25,7 @@ export class AudioChunkQueue<T> {
   private pendingItems: AudioChunkQueueItem<T>[] = [];
   private processing = false;
   private nextId = 1;
+  private idleWaiters: Array<() => void> = [];
 
   constructor(options: AudioChunkQueueOptions<T>) {
     this.maxPending = Math.max(1, options.maxPending);
@@ -68,6 +69,19 @@ export class AudioChunkQueue<T> {
 
   clear() {
     this.pendingItems = [];
+    if (!this.processing) this.resolveIdleWaiters();
+  }
+
+  /** Resolves once nothing is queued and no item is being processed. */
+  whenIdle(): Promise<void> {
+    if (!this.processing && this.pendingItems.length === 0) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
+  }
+
+  private resolveIdleWaiters() {
+    const waiters = this.idleWaiters;
+    this.idleWaiters = [];
+    waiters.forEach((resolve) => resolve());
   }
 
   private async drain() {
@@ -96,6 +110,7 @@ export class AudioChunkQueue<T> {
       if (wasFull && this.pendingItems.length < this.maxPending) {
         this.onDrain?.();
       }
+      if (this.pendingItems.length === 0) this.resolveIdleWaiters();
     }
   }
 }

@@ -126,7 +126,7 @@ test("manual Meet tab resolution rejects ambiguous background meetings", async (
   ]);
 
   try {
-    await assert.rejects(resolveManualMeetTab(), /Multiple Meet tabs/);
+    await assert.rejects(resolveManualMeetTab(), /mais de uma reunião/);
   } finally {
     cleanup();
   }

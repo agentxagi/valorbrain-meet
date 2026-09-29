@@ -131,8 +131,15 @@ test("formatMeetingTimestamp renders YYYY-MM-DD HH:mm in local time", () => {
 
 test("buildValorBrainTitle follows 'Reunião: <title> (YYYY-MM-DD HH:mm)'", () => {
   const title = buildValorBrainTitle(makeSession());
-  const expectedWhen = formatMeetingTimestamp(Date.UTC(2026, 0, 15, 15, 0, 0));
+  const expectedWhen = formatMeetingTimestamp(Date.UTC(2026, 0, 15, 14, 0, 0));
   assert.equal(title, `Reunião: abc-defg-hij (${expectedWhen})`);
+});
+
+test("buildValorBrainTitle prefers the first discussed topic over the Meet code", () => {
+  const title = buildValorBrainTitle(
+    makeSession({ topics: [{ name: "Planejamento do Q1", status: "completed" }] }),
+  );
+  assert.match(title, /^Reunião: Planejamento do Q1 \(\d{4}-\d{2}-\d{2} \d{2}:\d{2}\)$/);
 });
 
 test("buildValorBrainPayload matches the PRD contract", () => {
@@ -149,11 +156,31 @@ test("buildValorBrainContent concatenates the existing summary under ## Resumo",
   assert.ok(content.startsWith("## Resumo\nDiscutimos o roadmap do Q1.\n\n"));
 });
 
-test("buildValorBrainContent renders decisions, action items, and transcript", () => {
-  const content = buildValorBrainContent(makeSession());
+test("buildValorBrainContent renders decisions, next steps, participants and transcript", () => {
+  const content = buildValorBrainContent(makeSession({ duration: 3600 }));
   assert.ok(content.includes("## Decisões\n- Adotar REST — Gus\n"));
-  assert.ok(content.includes("## Action Items\n- [ ] Publicar o PRD — Ana (prazo: 2026-02-01)\n"));
-  assert.ok(content.includes("## Transcript\n[01:05] Gus: Vamos usar REST."));
+  assert.ok(
+    content.includes("## Próximos passos\n- [ ] Publicar o PRD — Ana (prazo: 2026-02-01)\n"),
+  );
+  assert.ok(content.includes("## Participantes\nGus, Ana\n"));
+  assert.ok(content.includes("- Duração: 1:00:00"));
+  assert.ok(content.includes("- Reunião: https://meet.google.com/abc-defg-hij"));
+  assert.ok(content.includes("## Transcrição\n[01:05] Gus: Vamos usar REST."));
+});
+
+test("buildValorBrainContent lists topics and open points only when present", () => {
+  const without = buildValorBrainContent(makeSession());
+  assert.ok(!without.includes("## Assuntos"));
+  assert.ok(!without.includes("## Pontos em aberto"));
+
+  const withTopics = buildValorBrainContent(
+    makeSession({
+      topics: [{ name: "Roadmap", status: "unresolved" }],
+      questionsRaised: ["Quando lançamos?"],
+    }),
+  );
+  assert.ok(withTopics.includes("## Assuntos\n- Roadmap (sem conclusão)\n"));
+  assert.ok(withTopics.includes("## Pontos em aberto\n- Quando lançamos?\n"));
 });
 
 test("buildValorBrainContent fills placeholders for empty sections", () => {
@@ -162,8 +189,8 @@ test("buildValorBrainContent fills placeholders for empty sections", () => {
   );
   assert.ok(content.includes("## Resumo\n_(sem resumo)_"));
   assert.ok(content.includes("## Decisões\n_(nenhuma)_"));
-  assert.ok(content.includes("## Action Items\n_(nenhum)_"));
-  assert.ok(content.includes("## Transcript\n_(sem transcrição)_"));
+  assert.ok(content.includes("## Próximos passos\n_(nenhum)_"));
+  assert.ok(content.includes("## Transcrição\n_(sem transcrição)_"));
 });
 
 test("buildValorBrainContent falls back to computed labels when timestampLabel is absent", () => {

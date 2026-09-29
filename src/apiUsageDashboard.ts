@@ -1,236 +1,129 @@
-// ——— API Cost & Token Usage Dashboard ———
-// Renders a summary of historical API usage from chrome.storage.local.
-// Used in both the options page and the side panel Usage tab.
-
+// AI usage (tokens, audio seconds, estimated cost) from chrome.storage.local.
 import { getUsageStats } from "./usageTracker";
 import { DayStats } from "./types";
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+import { escapeHtml } from "./utils/domHelpers";
 
 export async function renderApiUsageDashboard(container: HTMLElement): Promise<void> {
-  container.innerHTML = '<p class="usage-loading">Loading API usage stats…</p>';
-
+  container.innerHTML = '<p class="ud-muted">Carregando o uso…</p>';
   try {
     const stats = await getUsageStats();
     container.innerHTML = buildDashboardHTML(stats);
     attachEventListeners(container);
   } catch (err) {
-    console.error("[LateMeet] Failed to load API usage dashboard:", err);
-    container.innerHTML = '<p class="usage-error">Failed to load API usage data.</p>';
+    console.error("[ValorBrainMeet] Failed to load usage dashboard:", err);
+    container.innerHTML = '<p class="ud-error">Não foi possível ler o histórico de uso.</p>';
   }
 }
 
-// ——— Helpers ———
-
-function getWindowStats(
-  stats: Record<string, DayStats>,
-  window: number | "month",
-): { tokens: number; cost: number; audioSeconds: number } {
-  let tokens = 0;
-  let cost = 0;
-  let audioSeconds = 0;
-  const now = new Date();
-
-  if (window === "month") {
-    const prefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    for (const [key, val] of Object.entries(stats)) {
-      if (key.startsWith(prefix)) {
-        tokens += val.totalTokens;
-        cost += val.estimatedCost;
-        audioSeconds += val.audioSeconds;
-      }
-    }
-  } else {
-    for (let i = 0; i < window; i++) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const key = dateKey(d);
-      if (stats[key]) {
-        tokens += stats[key].totalTokens;
-        cost += stats[key].estimatedCost;
-        audioSeconds += stats[key].audioSeconds;
-      }
-    }
-  }
-
-  return { tokens, cost, audioSeconds };
+interface WindowStats {
+  tokens: number;
+  cost: number;
+  audioSeconds: number;
 }
 
 function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function formatAudio(secs: number): string {
-  const totalSecs = Math.round(secs);
-  if (totalSecs < 1) return "0s";
-  const h = Math.floor(totalSecs / 3600);
-  const m = Math.floor((totalSecs % 3600) / 60);
-  const s = totalSecs % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+function windowStats(stats: Record<string, DayStats>, days: number | "month"): WindowStats {
+  const total: WindowStats = { tokens: 0, cost: 0, audioSeconds: 0 };
+  const now = new Date();
+  const add = (day?: DayStats) => {
+    if (!day) return;
+    total.tokens += day.totalTokens || 0;
+    total.cost += day.estimatedCost || 0;
+    total.audioSeconds += day.audioSeconds || 0;
+  };
+  if (days === "month") {
+    const prefix = dateKey(now).slice(0, 7);
+    for (const [key, day] of Object.entries(stats)) if (key.startsWith(prefix)) add(day);
+  } else {
+    for (let i = 0; i < days; i++) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      add(stats[dateKey(d)]);
+    }
+  }
+  return total;
 }
 
-// ——— HTML builders ———
+function formatAudio(seconds: number): string {
+  const total = Math.round(seconds);
+  if (total < 60) return `${total} s`;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return h > 0 ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`;
+}
 
-function summaryCardHTML(
-  label: string,
-  data: { tokens: number; cost: number; audioSeconds: number },
-): string {
-  return `
-    <div class="usage-card">
-      <div class="usage-card-header">
-        <span class="usage-label">${escapeHtml(label)}</span>
-      </div>
-      <div class="usage-summary-stat">
-        <div class="summary-row">
-          <span>Tokens</span>
-          <strong>${data.tokens.toLocaleString()}</strong>
-        </div>
-        <div class="summary-row">
-          <span>Audio</span>
-          <strong>${formatAudio(data.audioSeconds)}</strong>
-        </div>
-        <div class="summary-row accent-row">
-          <span>Est. cost</span>
-          <strong class="cost-val">$${data.cost.toFixed(4)}</strong>
-        </div>
-      </div>
+function formatCost(cost: number): string {
+  return cost > 0 ? `US$ ${cost.toFixed(cost < 0.01 ? 4 : 2).replace(".", ",")}` : "—";
+}
+
+function card(label: string, data: WindowStats): string {
+  return `<div class="ud-card">
+      <div class="ud-card-label">${escapeHtml(label)}</div>
+      <dl class="ud-rows">
+        <div><dt>Tokens</dt><dd>${data.tokens.toLocaleString("pt-BR")}</dd></div>
+        <div><dt>Áudio transcrito</dt><dd>${formatAudio(data.audioSeconds)}</dd></div>
+        <div><dt>Custo estimado</dt><dd>${formatCost(data.cost)}</dd></div>
+      </dl>
     </div>`;
 }
 
 function buildDashboardHTML(stats: Record<string, DayStats>): string {
-  const isEmpty = Object.keys(stats).length === 0;
-
-  if (isEmpty) {
-    return `
-      <div class="usage-dashboard">
-        <div class="usage-card">
-          <div class="usage-empty-state">
-            <div class="usage-empty-icon">💳</div>
-            <div class="usage-empty-title">No usage recorded yet</div>
-            <p class="usage-empty-desc">
-              Start a Google Meet session to begin tracking token consumption
-              and estimated API costs in real time.
-            </p>
-          </div>
-        </div>
-        <div class="usage-action-row">
-          <button class="usage-refresh-btn" id="usage-refresh">↻ Refresh</button>
-        </div>
-        <p class="usage-footnote">
-          Costs estimated using OpenAI published pricing.<br>
-          Other providers are shown without cost estimates.
-        </p>
+  const footnote =
+    '<p class="ud-muted">O custo só é estimado para modelos da OpenAI (tabela pública). Whisper local e Z.ai GLM aparecem sem custo.</p>';
+  if (Object.keys(stats).length === 0) {
+    return `<div class="ud">
+        <p class="ud-muted">Nenhum uso registrado ainda. Os números aparecem depois da primeira reunião gravada.</p>
+        ${footnote}
       </div>`;
   }
 
-  const weekly = getWindowStats(stats, 7);
-  const monthly = getWindowStats(stats, "month");
-  const allTime = Object.values(stats).reduce(
-    (acc, d) => ({
-      tokens: acc.tokens + d.totalTokens,
-      cost: acc.cost + d.estimatedCost,
-      audioSeconds: acc.audioSeconds + d.audioSeconds,
-    }),
-    { tokens: 0, cost: 0, audioSeconds: 0 },
-  );
-
-  const sortedDays = Object.entries(stats)
+  const days = Object.entries(stats)
     .sort((a, b) => b[0].localeCompare(a[0]))
     .slice(0, 14);
 
-  return `
-    <div class="usage-dashboard">
-
-      <!-- Weekly / Monthly summary cards -->
-      <div class="usage-grid-summary">
-        ${summaryCardHTML("This Week (7 days)", weekly)}
-        ${summaryCardHTML("This Month", monthly)}
+  return `<div class="ud">
+      <div class="ud-grid">
+        ${card("Últimos 7 dias", windowStats(stats, 7))}
+        ${card("Este mês", windowStats(stats, "month"))}
       </div>
-
-      <!-- All-time totals banner -->
-      <div class="usage-card">
-        <div class="usage-alltime-banner">
-          <div>
-            <div class="usage-alltime-heading">All Time · Tokens</div>
-            <div class="usage-alltime-value">
-              ${allTime.tokens.toLocaleString()}
-              <span>tokens</span>
-            </div>
-          </div>
-          <div class="usage-alltime-right">
-            <div class="usage-alltime-heading">All Time · Est. Cost</div>
-            <div class="usage-alltime-cost">$${allTime.cost.toFixed(4)}</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 14-day daily breakdown table -->
-      <div class="usage-card">
-        <div class="usage-card-header">
-          <span class="usage-label">Daily Breakdown · Last 14 Days</span>
-        </div>
-        <div class="usage-table-wrapper">
-          <table class="usage-table" aria-label="Daily API usage breakdown">
-            <thead>
-              <tr>
-                <th scope="col">Date</th>
-                <th scope="col">Tokens</th>
-                <th scope="col">Audio</th>
-                <th scope="col">Est. Cost</th>
-              </tr>
-            </thead>
+      <details class="ud-details">
+        <summary>Por dia (últimos 14 dias)</summary>
+        <div class="ud-table-wrap">
+          <table class="ud-table">
+            <thead><tr><th scope="col">Dia</th><th scope="col">Tokens</th><th scope="col">Áudio</th><th scope="col">Custo</th></tr></thead>
             <tbody>
-              ${sortedDays
+              ${days
                 .map(
-                  ([date, day]) => `
-                <tr>
-                  <td>${escapeHtml(date)}</td>
-                  <td>${day.totalTokens.toLocaleString()}</td>
-                  <td>${formatAudio(day.audioSeconds)}</td>
-                  <td class="cost-val">$${day.estimatedCost.toFixed(4)}</td>
-                </tr>`,
+                  ([date, day]) => `<tr>
+                    <td class="vb-mono">${escapeHtml(date.split("-").reverse().join("/"))}</td>
+                    <td>${(day.totalTokens || 0).toLocaleString("pt-BR")}</td>
+                    <td>${formatAudio(day.audioSeconds || 0)}</td>
+                    <td>${formatCost(day.estimatedCost || 0)}</td>
+                  </tr>`,
                 )
                 .join("")}
             </tbody>
           </table>
         </div>
+      </details>
+      <div class="ud-actions">
+        <button class="vb-btn vb-btn--sm" id="usage-refresh" type="button">Atualizar</button>
+        <button class="vb-btn vb-btn--sm vb-btn--danger-outline" id="usage-clear" type="button">Zerar histórico de uso</button>
       </div>
-
-      <!-- Actions -->
-      <div class="usage-action-row">
-        <button class="usage-refresh-btn" id="usage-refresh">↻ Refresh</button>
-        <button class="usage-clear-btn" id="usage-clear">✕ Reset History</button>
-      </div>
-
-      <p class="usage-footnote">
-        Costs estimated using OpenAI published pricing.<br>
-        Other providers are shown without cost estimates.
-      </p>
+      ${footnote}
     </div>`;
 }
 
-// ——— Event listeners ———
-
 function attachEventListeners(container: HTMLElement): void {
   container.querySelector("#usage-refresh")?.addEventListener("click", () => {
-    renderApiUsageDashboard(container);
+    void renderApiUsageDashboard(container);
   });
-
   container.querySelector("#usage-clear")?.addEventListener("click", async () => {
-    if (
-      confirm("Permanently clear all local API usage and token history?\nThis cannot be undone.")
-    ) {
-      await chrome.storage.local.remove("usageStats");
-      renderApiUsageDashboard(container);
-    }
+    if (!confirm("Zerar o histórico de uso de IA deste navegador?")) return;
+    await chrome.storage.local.remove("usageStats");
+    void renderApiUsageDashboard(container);
   });
 }

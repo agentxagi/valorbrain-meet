@@ -1,1157 +1,321 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR" data-theme="paper">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ValorBrain Meet — Dashboard</title>
+    <title>ValorBrain Meet — Painel da reunião</title>
     <link rel="stylesheet" href="fonts/fonts.css" />
     <link rel="stylesheet" href="dashboard.css" />
-    <link rel="stylesheet" href="apiUsageDashboard.css" />
   </head>
 
   <body>
-    <!-- Header -->
-    <header class="dash-header">
-      <div class="dash-header-left">
-        <span class="dash-logo">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="28"
-            height="28"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="icon"
-            aria-hidden="true"
-          >
-            <path
-              d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"
-            ></path>
-            <path
-              d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 0 2.526 5.77 4 4 0 0 0-.556 6.588A4 4 0 1 1 12 18Z"
-            ></path>
-            <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"></path>
-            <path d="M17.599 6.5a4.5 4.5 0 0 0 .399-1.375"></path>
-            <path d="M6.003 5.125A4.5 4.5 0 0 1 6.401 6.5"></path>
-            <path d="M3.477 10.896a4.5 4.5 0 0 1 .585-.396"></path>
-            <path d="M19.938 10.5a4.5 4.5 0 0 1 .585-.396"></path>
-            <path d="M21 12c.5.5 1 1 1 2"></path>
-            <path d="M3 12c-.5.5-1 1-1 2"></path>
-          </svg>
-        </span>
-        <div>
-          <div class="dash-title">Inteligência da reunião</div>
-          <div id="dash-status" class="dash-status">
-            <span class="dash-status-dot active"></span>
-            <span id="dash-status-text">Conectando...</span>
-          </div>
-        </div>
+    <header class="db-header">
+      <div class="vb-brand">
+        <span data-brand-symbol></span>
+        <div class="vb-brand-name">ValorBrain <span>Meet</span></div>
       </div>
-      <div class="dash-header-right">
-        <!-- Export Controls -->
-        <div class="export-controls u-export-controls">
-          <button
-            id="header-export-md-btn"
-            class="btn-glass"
-            title="Export as Markdown"
-            class="u-header-export-btn"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="icon"
-            >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="7 10 12 15 17 10"></polyline>
-              <line x1="12" y1="15" x2="12" y2="3"></line>
-            </svg>
-            .MD
-          </button>
-          <button
-            id="header-export-pdf-btn"
-            class="btn-glass"
-            title="Export as PDF"
-            class="u-header-export-btn"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="icon"
-            >
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-              <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>
-            .PDF
-          </button>
-        </div>
-        <button id="dash-start-audio-btn" class="dash-audio-btn" title="Start audio capture">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="icon"
-            class="u-svg-mr"
-            aria-hidden="true"
-          >
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" x2="12" y1="19" y2="22"></line>
-          </svg>
-          Iniciar áudio
-        </button>
-        <div id="dash-timer" class="dash-timer">00:00:00</div>
+      <div class="db-header-right">
+        <span id="db-state-chip" class="vb-chip vb-chip--neutral">Sem reunião</span>
+        <span id="db-timer" class="db-timer vb-mono" aria-label="Tempo de gravação" hidden
+          >00:00</span
+        >
       </div>
     </header>
 
-    <!-- Tabs -->
-    <nav class="dash-tabs" role="tablist" aria-label="Dashboard Navigation">
+    <div class="db-controls">
+      <div class="db-meeting">
+        <div id="db-meeting-label" class="vb-eyebrow">Reunião</div>
+        <div id="db-meeting-title" class="db-meeting-title">Nenhuma reunião aberta</div>
+      </div>
+      <button id="db-record-btn" class="vb-btn vb-btn--primary" type="button" hidden>
+        <span data-icon="mic"></span><span class="db-record-label">Iniciar gravação</span>
+      </button>
+    </div>
+
+    <div id="db-viewing" class="db-viewing" hidden>
+      <span data-icon="history"></span>
+      <span id="db-viewing-text" class="db-viewing-text"></span>
+      <button id="db-back-live" class="vb-btn vb-btn--sm" type="button">Voltar ao ao vivo</button>
+    </div>
+
+    <div id="db-notice" class="db-notice-host" hidden></div>
+
+    <nav class="db-tabs" role="tablist" aria-label="Seções do painel">
       <button
-        class="dash-tab active"
-        data-tab="overview"
+        class="db-tab is-active"
+        type="button"
         role="tab"
-        id="tab-btn-overview"
-        aria-controls="tab-overview"
+        id="tabbtn-summary"
+        aria-controls="tab-summary"
         aria-selected="true"
-        tabindex="0"
+        data-tab="summary"
       >
-        Visão geral
+        Resumo
       </button>
       <button
-        class="dash-tab"
-        data-tab="transcript"
+        class="db-tab"
+        type="button"
         role="tab"
-        id="tab-btn-transcript"
+        id="tabbtn-transcript"
         aria-controls="tab-transcript"
         aria-selected="false"
         tabindex="-1"
+        data-tab="transcript"
       >
         Transcrição
       </button>
       <button
-        class="dash-tab"
-        data-tab="topics"
+        class="db-tab"
+        type="button"
         role="tab"
-        id="tab-btn-topics"
-        aria-controls="tab-topics"
+        id="tabbtn-actions"
+        aria-controls="tab-actions"
         aria-selected="false"
         tabindex="-1"
-      >
-        Tópicos
-      </button>
-      <button
-        class="dash-tab"
-        data-tab="decisions"
-        role="tab"
-        id="tab-btn-decisions"
-        aria-controls="tab-decisions"
-        aria-selected="false"
-        tabindex="-1"
+        data-tab="actions"
       >
         Decisões
       </button>
       <button
-        class="dash-tab"
-        data-tab="actions"
+        class="db-tab"
+        type="button"
         role="tab"
-        id="tab-btn-actions"
-        aria-controls="tab-actions"
-        aria-selected="false"
-        tabindex="-1"
-      >
-        Ações
-      </button>
-      <button
-        class="dash-tab"
-        data-tab="people"
-        role="tab"
-        id="tab-btn-people"
+        id="tabbtn-people"
         aria-controls="tab-people"
         aria-selected="false"
         tabindex="-1"
+        data-tab="people"
       >
         Pessoas
       </button>
       <button
-        class="dash-tab"
-        data-tab="timeline"
+        class="db-tab"
+        type="button"
         role="tab"
-        id="tab-btn-timeline"
-        aria-controls="tab-timeline"
-        aria-selected="false"
-        tabindex="-1"
-      >
-        Linha do tempo
-      </button>
-      <button
-        class="dash-tab"
-        data-tab="usage"
-        role="tab"
-        id="tab-btn-usage"
-        aria-controls="tab-usage"
-        aria-selected="false"
-        tabindex="-1"
-      >
-        Uso
-      </button>
-      <button
-        class="dash-tab"
-        data-tab="history"
-        role="tab"
-        id="tab-btn-history"
+        id="tabbtn-history"
         aria-controls="tab-history"
         aria-selected="false"
         tabindex="-1"
+        data-tab="history"
       >
         Histórico
       </button>
     </nav>
 
-    <!-- Tab Content -->
-    <main class="dash-content">
-      <!-- OVERVIEW TAB -->
+    <main class="db-main">
+      <!-- RESUMO -->
       <section
-        id="tab-overview"
-        class="tab-panel active"
+        id="tab-summary"
+        class="db-panel is-active"
         role="tabpanel"
-        aria-labelledby="tab-btn-overview"
+        aria-labelledby="tabbtn-summary"
       >
-        <!-- Audio Waveform Visualizer -->
-        <div class="dash-card waveform-card" id="waveform-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-                <line x1="12" x2="12" y1="19" y2="22"></line>
-              </svg>
-            </span>
-            <span class="dash-card-title">Entrada de áudio</span>
-            <span id="waveform-status" class="waveform-status-badge"> PARADO </span>
+        <div id="db-audio-card" class="vb-card db-audio">
+          <div class="vb-card-title">
+            <span data-icon="mic"></span>Entrada de áudio
+            <span id="db-audio-chip" class="vb-chip vb-chip--neutral vb-card-aside">Parada</span>
           </div>
-          <canvas id="waveform-canvas" class="waveform-canvas"></canvas>
+          <canvas id="db-waveform" class="db-waveform" aria-hidden="true"></canvas>
+          <div id="db-audio-meta" class="vb-hint"></div>
         </div>
 
-        <!-- Live Session Token & Cost Tracker -->
-        <div class="dash-card live-tracker-card u-hidden-init" id="live-tracker-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <line x1="12" y1="1" x2="12" y2="23"></line>
-                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-              </svg>
-            </span>
-            <span class="dash-card-title">Uso da sessão ao vivo</span>
-            <span class="usage-badge-live">ATIVO</span>
-          </div>
-          <div class="usage-metric-row">
-            <div class="usage-metric">
-              <span class="usage-metric-label">Tokens consumidos</span>
-              <span class="usage-metric-value" id="live-tokens">0</span>
-            </div>
-            <div class="usage-metric u-text-right">
-              <span class="usage-metric-label">Custo estimado (USD)</span>
-              <span class="usage-metric-value accent" id="live-cost">$0.0000</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Live Summary -->
-        <div class="dash-card glow-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path
-                  d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"
-                ></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                <line x1="16" x2="8" y1="13" y2="13"></line>
-                <line x1="16" x2="8" y1="17" y2="17"></line>
-                <line x1="10" x2="8" y1="9" y2="9"></line>
-              </svg>
-            </span>
-            <span class="dash-card-title">Resumo ao vivo</span>
+        <div class="vb-card">
+          <div class="vb-card-title">
+            <span data-icon="fileText"></span>Resumo
             <button
+              id="db-copy-summary"
+              class="vb-icon-btn vb-card-aside"
               type="button"
-              id="copy-summary-btn"
-              class="copy-item-btn"
-              title="Copy entire summary"
-              aria-label="Copy entire summary"
-              class="u-copy-summary-btn u-copy-summary-btn-row"
+              aria-label="Copiar o resumo"
+              title="Copiar o resumo"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-              >
-                <rect width="8" height="4" x="8" y="2" rx="1" ry="1"></rect>
-                <path
-                  d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"
-                ></path>
-              </svg>
+              <span data-icon="copy"></span>
             </button>
-            <span class="live-indicator"> <span class="live-dot"></span> AO VIVO </span>
           </div>
-          <div id="dash-summary" class="dash-summary-text">Aguardando a conversa começar...</div>
+          <p id="db-summary" class="db-summary vb-muted">
+            O resumo aparece alguns minutos depois que a conversa começa.
+          </p>
+          <ul id="db-summary-items" class="db-points" hidden></ul>
         </div>
 
-        <!-- Current Topic -->
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="10"></circle>
-                <circle cx="12" cy="12" r="6"></circle>
-                <circle cx="12" cy="12" r="2"></circle>
-              </svg>
-            </span>
-            <span class="dash-card-title">Tópico atual</span>
+        <div class="db-stats">
+          <div class="db-stat">
+            <span id="db-stat-lines" class="db-stat-value">0</span
+            ><span class="db-stat-label">Falas</span>
           </div>
-          <div id="dash-current-topic" class="current-topic-box">Detectando...</div>
-        </div>
-
-        <!-- Quick Stats Grid -->
-        <div class="stats-grid">
-          <div class="stat-card" id="stat-topics">
-            <div class="stat-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-              </svg>
-            </div>
-            <div class="stat-card-value" id="dash-topic-count">0</div>
-            <div class="stat-card-label">Tópicos</div>
+          <div class="db-stat">
+            <span id="db-stat-topics" class="db-stat-value">0</span
+            ><span class="db-stat-label">Assuntos</span>
           </div>
-          <div class="stat-card" id="stat-decisions">
-            <div class="stat-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                <polyline points="22 4 12 14.01 9 11.01"></polyline>
-              </svg>
-            </div>
-            <div class="stat-card-value" id="dash-decision-count">0</div>
-            <div class="stat-card-label">Decisões</div>
+          <div class="db-stat">
+            <span id="db-stat-decisions" class="db-stat-value">0</span
+            ><span class="db-stat-label">Decisões</span>
           </div>
-          <div class="stat-card" id="stat-actions">
-            <div class="stat-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <rect width="8" height="4" x="8" y="2" rx="1" ry="1"></rect>
-                <path
-                  d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"
-                ></path>
-                <path d="M12 11h4"></path>
-                <path d="M12 16h4"></path>
-                <path d="M8 11h.01"></path>
-                <path d="M8 16h.01"></path>
-              </svg>
-            </div>
-            <div class="stat-card-value" id="dash-action-count">0</div>
-            <div class="stat-card-label">Ações</div>
-          </div>
-          <div class="stat-card" id="stat-people">
-            <div class="stat-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
-                <circle cx="9" cy="7" r="4"></circle>
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
-                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-              </svg>
-            </div>
-            <div class="stat-card-value" id="dash-people-count">0</div>
-            <div class="stat-card-label">Pessoas</div>
+          <div class="db-stat">
+            <span id="db-stat-actions" class="db-stat-value">0</span
+            ><span class="db-stat-label">Ações</span>
           </div>
         </div>
 
-        <!-- Sentiment -->
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-              </svg>
-            </span>
-            <span class="dash-card-title">Sentimento da reunião</span>
-          </div>
-          <div class="sentiment-bar">
-            <div id="dash-sentiment-fill" class="sentiment-fill"></div>
-          </div>
-          <div class="sentiment-labels">
-            <span>Negativo</span>
-            <span id="dash-sentiment-label" class="u-sentiment-label">Neutro</span>
-            <span>Positivo</span>
-          </div>
+        <div class="vb-card">
+          <div class="vb-card-title"><span data-icon="target"></span>Assuntos</div>
+          <div id="db-current-topic" class="db-current-topic" hidden></div>
+          <ul id="db-topics" class="db-list"></ul>
         </div>
 
-        <!-- Key Insights -->
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-              </svg>
-            </span>
-            <span class="dash-card-title">Insights principais</span>
-          </div>
-          <ul id="dash-insights-list" class="insight-list">
-            <li class="empty-msg">Os insights aparecem conforme a conversa avança</li>
-          </ul>
+        <div class="vb-card">
+          <div class="vb-card-title"><span data-icon="sparkles"></span>Destaques</div>
+          <div id="db-highlights" class="db-highlights"></div>
         </div>
 
-        <!-- Unresolved Discussions -->
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                <line x1="12" x2="12.01" y1="17" y2="17"></line>
-              </svg>
-            </span>
-            <span class="dash-card-title">Assuntos não resolvidos</span>
+        <div class="vb-card">
+          <div class="vb-card-title">
+            <span data-icon="activity"></span>Clima da reunião
+            <span id="db-sentiment-label" class="vb-card-aside">Neutro</span>
           </div>
-          <ul id="dash-unresolved-list" class="insight-list">
-            <li class="empty-msg">Nenhum assunto em aberto ainda</li>
-          </ul>
+          <div class="db-sentiment" role="img" aria-labelledby="db-sentiment-label">
+            <div id="db-sentiment-fill" class="db-sentiment-fill"></div>
+          </div>
+          <div class="db-sentiment-scale vb-hint"><span>Negativo</span><span>Positivo</span></div>
         </div>
 
-        <!-- Contradictions -->
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path
-                  d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"
-                ></path>
-                <line x1="12" x2="12" y1="9" y2="13"></line>
-                <line x1="12" x2="12.01" y1="17" y2="17"></line>
-              </svg>
-            </span>
-            <span class="dash-card-title">Contradições</span>
-          </div>
-          <ul id="dash-contradictions-list" class="insight-list">
-            <li class="empty-msg">Nenhuma contradição detectada</li>
-          </ul>
-        </div>
+        <p id="db-usage" class="db-usage vb-hint"></p>
       </section>
 
-      <!-- TOPICS TAB -->
-      <section id="tab-topics" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-topics">
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-              </svg>
-            </span>
-            <span class="dash-card-title">Tópicos da discussão</span>
-          </div>
-          <div id="dash-topics-full" class="topics-full-list">
-            <div class="empty-msg">Nenhum tópico detectado ainda</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- DECISIONS TAB -->
-      <section
-        id="tab-decisions"
-        class="tab-panel"
-        role="tabpanel"
-        aria-labelledby="tab-btn-decisions"
-      >
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                <polyline points="22 4 12 14.01 9 11.01"></polyline>
-              </svg>
-            </span>
-            <span class="dash-card-title">Decisões tomadas</span>
-          </div>
-          <div id="dash-decisions-list" class="decisions-full-list">
-            <div class="empty-msg">Nenhuma decisão detectada ainda</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ACTIONS TAB -->
-      <section id="tab-actions" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-actions">
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <rect width="8" height="4" x="8" y="2" rx="1" ry="1"></rect>
-                <path
-                  d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"
-                ></path>
-                <path d="M12 11h4"></path>
-                <path d="M12 16h4"></path>
-                <path d="M8 11h.01"></path>
-                <path d="M8 16h.01"></path>
-              </svg>
-            </span>
-            <span class="dash-card-title">Itens de ação</span>
-          </div>
-          <div id="dash-actions-list" class="actions-full-list">
-            <div class="empty-msg">Nenhum item de ação detectado ainda</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- PEOPLE TAB -->
-      <section id="tab-people" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-people">
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
-                <circle cx="9" cy="7" r="4"></circle>
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
-                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-              </svg>
-            </span>
-            <span class="dash-card-title">Participantes</span>
-          </div>
-          <div id="dash-participants-list" class="participants-list">
-            <div class="empty-msg">Nenhum participante detectado</div>
-          </div>
-        </div>
-        <div class="dash-card u-hidden-init" id="late-joiners-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
-                <polyline points="10 17 15 12 10 7"></polyline>
-                <line x1="15" x2="3" y1="12" y2="12"></line>
-              </svg>
-            </span>
-            <span class="dash-card-title">Atrasados</span>
-          </div>
-          <div id="dash-late-joiners" class="late-joiner-list"></div>
-        </div>
-      </section>
-
-      <!-- TIMELINE TAB -->
-      <section
-        id="tab-timeline"
-        class="tab-panel"
-        role="tabpanel"
-        aria-labelledby="tab-btn-timeline"
-      >
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="12 6 12 12 16 14"></polyline>
-              </svg>
-            </span>
-            <span class="dash-card-title">Linha do tempo da reunião</span>
-          </div>
-          <div id="dash-timeline" class="timeline-list">
-            <div class="empty-msg">A linha do tempo se constrói conforme a reunião avança</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- TRANSCRIPT TAB -->
+      <!-- TRANSCRIÇÃO -->
       <section
         id="tab-transcript"
-        class="tab-panel"
+        class="db-panel"
         role="tabpanel"
-        aria-labelledby="tab-btn-transcript"
+        aria-labelledby="tabbtn-transcript"
+        hidden
       >
-        <div class="dash-card glow-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                <line x1="12" x2="12" y1="19" y2="22" />
-              </svg>
-            </span>
-            <span class="dash-card-title"> Transcrição ao vivo </span>
-            <span class="live-indicator"> <span class="live-dot"></span> AO VIVO </span>
+        <div class="db-search">
+          <div class="db-search-field">
+            <span data-icon="search"></span>
+            <input
+              id="db-search"
+              class="db-search-input"
+              type="search"
+              placeholder="Buscar na transcrição"
+              autocomplete="off"
+              aria-label="Buscar na transcrição"
+            />
           </div>
+          <span id="db-search-count" class="db-search-count vb-mono" aria-live="polite">0/0</span>
+          <button
+            id="db-search-prev"
+            class="vb-icon-btn"
+            type="button"
+            aria-label="Resultado anterior"
+            disabled
+          >
+            <span data-icon="chevronUp"></span>
+          </button>
+          <button
+            id="db-search-next"
+            class="vb-icon-btn"
+            type="button"
+            aria-label="Próximo resultado"
+            disabled
+          >
+            <span data-icon="chevronDown"></span>
+          </button>
+        </div>
+        <div id="db-transcript" class="db-transcript" aria-live="polite"></div>
+      </section>
 
-          <!-- Transcript Search Header -->
-          <div class="transcript-search-header" id="transcript-search-bar">
-            <div class="search-input-wrapper">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon search-icon"
-                aria-hidden="true"
-              >
-                <circle cx="11" cy="11" r="8"></circle>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-              </svg>
-
-              <input
-                type="search"
-                id="transcript-search-input"
-                class="search-input"
-                placeholder="Search transcript..."
-                autocomplete="off"
-                aria-label="Search transcript"
-              />
-
-              <button
-                id="search-clear"
-                class="search-clear-btn"
-                type="button"
-                title="Clear search"
-                aria-label="Clear transcript search"
-                disabled
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  class="icon"
-                  aria-hidden="true"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
-
-            <div class="search-controls">
-              <span id="transcript-search-counter" class="search-counter" aria-live="polite">
-                0/0
-              </span>
-
-              <div class="search-nav-buttons">
-                <button
-                  id="search-prev"
-                  class="search-action-btn"
-                  type="button"
-                  title="Previous match"
-                  aria-label="Previous transcript match"
-                  disabled
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    class="icon"
-                    aria-hidden="true"
-                  >
-                    <polyline points="18 15 12 9 6 15"></polyline>
-                  </svg>
-                </button>
-
-                <button
-                  id="search-next"
-                  class="search-action-btn"
-                  type="button"
-                  title="Next match"
-                  aria-label="Next transcript match"
-                  disabled
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    class="icon"
-                    aria-hidden="true"
-                  >
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="transcript-info">
-            Each entry shows who spoke, what was said, and when. Audio entries are from the Whisper
-            transcription.
-          </div>
-          <div id="dash-transcript-list" class="transcript-list">
-            <div class="empty-msg">Sem transcrição ainda. Inicie o áudio para capturar a fala.</div>
-          </div>
+      <!-- DECISÕES E AÇÕES -->
+      <section
+        id="tab-actions"
+        class="db-panel"
+        role="tabpanel"
+        aria-labelledby="tabbtn-actions"
+        hidden
+      >
+        <div class="vb-card">
+          <div class="vb-card-title"><span data-icon="checkCircle"></span>Decisões</div>
+          <ul id="db-decisions" class="db-list"></ul>
+        </div>
+        <div class="vb-card">
+          <div class="vb-card-title"><span data-icon="listChecks"></span>Próximos passos</div>
+          <ul id="db-actions" class="db-list"></ul>
         </div>
       </section>
-      <section id="tab-history" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-history">
-        <div class="dash-card">
-          <div class="dash-card-head">
-            <span class="dash-card-icon">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="icon"
-                aria-hidden="true"
-              >
-                <path
-                  d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
-                ></path>
-                <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"></path>
-                <path d="M7 3v4a1 1 0 0 0 1 1h7"></path>
-              </svg>
-            </span>
-            <span class="dash-card-title">Histórico de reuniões</span>
-          </div>
-          <div id="dash-history-list" class="sessions-list">
-            <div class="empty-msg">Nenhum histórico ainda.</div>
-          </div>
+
+      <!-- PARTICIPANTES -->
+      <section
+        id="tab-people"
+        class="db-panel"
+        role="tabpanel"
+        aria-labelledby="tabbtn-people"
+        hidden
+      >
+        <div class="vb-card">
+          <div class="vb-card-title"><span data-icon="users"></span>Participantes</div>
+          <ul id="db-people" class="db-list"></ul>
+        </div>
+        <div class="vb-card">
+          <div class="vb-card-title"><span data-icon="clock"></span>Linha do tempo</div>
+          <ol id="db-timeline" class="db-timeline"></ol>
         </div>
       </section>
-      <!-- USAGE TAB -->
-      <section id="tab-usage" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-usage">
-        <div id="sidepanel-usage-container"></div>
+
+      <!-- HISTÓRICO -->
+      <section
+        id="tab-history"
+        class="db-panel"
+        role="tabpanel"
+        aria-labelledby="tabbtn-history"
+        hidden
+      >
+        <div id="db-history" class="db-history"></div>
       </section>
     </main>
 
-    <!-- Footer -->
-    <footer class="dash-footer">
-      <div class="export-wrapper" id="export-wrapper">
-        <button id="export-btn" class="export-btn" aria-haspopup="true" aria-expanded="false">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="icon"
-            class="u-svg-mr"
-            aria-hidden="true"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="7 10 12 15 17 10"></polyline>
-            <line x1="12" x2="12" y1="15" y2="3"></line>
-          </svg>
-          Exportar resumo
+    <footer class="db-footer">
+      <div class="db-export">
+        <button
+          id="db-export-btn"
+          class="vb-btn vb-btn--block"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span data-icon="download"></span>Exportar esta reunião
         </button>
-
-        <div class="export-dropdown" id="export-dropdown" role="menu" hidden>
-          <button class="export-option" id="export-md-btn" role="menuitem">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="icon"
-              aria-hidden="true"
-              class="u-svg-mr-8"
-            >
-              <path
-                d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"
-              ></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-            </svg>
-            Download .md File
+        <div id="db-export-menu" class="db-menu" role="menu" hidden>
+          <button class="db-menu-item" type="button" role="menuitem" data-export="md">
+            <span data-icon="fileText"></span>Baixar em Markdown (.md)
           </button>
-          <button class="export-option" id="export-txt-btn" role="menuitem">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="icon"
-              aria-hidden="true"
-              class="u-svg-mr-8"
-            >
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" x2="8" y1="13" y2="13"></line>
-              <line x1="16" x2="8" y1="17" y2="17"></line>
-              <line x1="10" x2="8" y1="9" y2="9"></line>
-            </svg>
-            Download .txt File
+          <button class="db-menu-item" type="button" role="menuitem" data-export="txt">
+            <span data-icon="fileText"></span>Baixar em texto (.txt)
           </button>
-          <button class="export-option" id="export-json-btn" role="menuitem">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="icon"
-              class="u-svg-mr-8"
-              aria-hidden="true"
-            >
-              <path
-                d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"
-              ></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" x2="8" y1="13" y2="13"></line>
-            </svg>
-            Download .json Backup
+          <button class="db-menu-item" type="button" role="menuitem" data-export="json">
+            <span data-icon="database"></span>Baixar dados (.json)
           </button>
-          <button class="export-option" id="export-clipboard-btn" role="menuitem">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="icon"
-              class="u-svg-mr-8"
-              aria-hidden="true"
-            >
-              <rect width="8" height="4" x="8" y="2" rx="1" ry="1"></rect>
-              <path
-                d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"
-              ></path>
-            </svg>
-            Copy to Clipboard
+          <button class="db-menu-item" type="button" role="menuitem" data-export="copy">
+            <span data-icon="copy"></span>Copiar em Markdown
           </button>
         </div>
       </div>
-
-      <div class="vb-sync-badge" id="vb-sync-badge" role="status" hidden></div>
-
-      <div class="export-toast" id="export-toast" role="status" aria-live="polite"></div>
     </footer>
 
-    <!-- Delete Confirmation Modal -->
-    <div id="delete-confirm-modal" class="modal-overlay hidden">
-      <div class="dash-card modal-content glow-card">
-        <div class="dash-card-head">
-          <span class="dash-card-icon u-danger-soft">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="icon"
-              aria-hidden="true"
-            >
-              <path d="M3 6h18"></path>
-              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-            </svg>
-          </span>
-          <span class="dash-card-title u-danger-soft">Excluir sessão</span>
+    <dialog id="db-delete-dialog" class="db-dialog" aria-labelledby="db-delete-title">
+      <form method="dialog">
+        <h2 id="db-delete-title" class="db-dialog-title">Excluir esta reunião?</h2>
+        <p class="vb-muted">
+          A reunião sai do histórico deste navegador. O que já foi enviado ao ValorBrain continua na
+          memória da empresa.
+        </p>
+        <div class="db-dialog-actions">
+          <button class="vb-btn" value="cancel" type="submit">Cancelar</button>
+          <button class="vb-btn vb-btn--danger" value="confirm" type="submit">Excluir</button>
         </div>
-        <div class="modal-body">
-          <p>Excluir esta sessão? Esta ação não pode ser desfeita.</p>
-        </div>
-        <div class="modal-actions">
-          <button id="cancel-delete-btn" class="dash-tab">Cancelar</button>
-          <button id="confirm-delete-btn" class="session-delete-btn" class="u-danger-ghost">
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
+      </form>
+    </dialog>
 
+    <div id="db-toast" class="vb-toast" role="status" aria-live="polite"></div>
     <script type="module" src="dashboard.ts"></script>
   </body>
 </html>

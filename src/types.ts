@@ -66,6 +66,30 @@ export interface Contradiction {
   persists: boolean;
 }
 
+/** A user-facing problem or hint raised by the pipeline (shown as a banner). */
+export interface MeetingNotice {
+  scope: "transcription" | "summary" | "capture" | "valorbrain";
+  severity: "error" | "warning" | "info";
+  message: string;
+  at: number;
+}
+
+/** Counters for the live pipeline, shown as "N trechos transcritos". */
+export interface MeetingStats {
+  chunksReceived: number;
+  chunksTranscribed: number;
+  chunksFiltered: number;
+  chunksFailed: number;
+}
+
+/** Outcome of delivering a saved session to ValorBrain. */
+export interface VbDeliveryStatus {
+  status: "sent" | "failed" | "skipped";
+  at: number;
+  docRef?: string | null;
+  error?: string;
+}
+
 /** Full application state for an active or saved meeting session. */
 export interface State {
   id?: string;
@@ -101,6 +125,19 @@ export interface State {
   truncatedCounts?: Record<string, number>;
   tokensUsed?: number;
   estimatedCost?: number;
+  /** Latest pipeline problem/hint for the UI banner (null when all is well). */
+  notice?: MeetingNotice | null;
+  /** Whether the microphone joined the capture (null before capture starts). */
+  micActive?: boolean | null;
+  /** True between "stop" and the session being saved (final chunk + summary). */
+  finalizing?: boolean;
+  /** Transcript index up to which the summary is current. */
+  lastSummarizedIndex?: number;
+  stats?: MeetingStats;
+  /** ValorBrain delivery outcome (saved sessions only). */
+  vb?: VbDeliveryStatus;
+  /** Why the session ended (saved sessions only). */
+  endReason?: string;
 }
 
 /** Storage metadata summary for a single saved meeting, used in storage usage reports. */

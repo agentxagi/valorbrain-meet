@@ -1,30 +1,32 @@
+// Content script for Google Meet: participant names, active speaker, the
+// in-page status pill, the private late-joiner brief and leave-call detection.
+// It never restyles Meet itself (all styles are scoped, see content.css).
 import {
   collectParticipantNames,
   participantNameFromCandidate,
   type ParticipantNameCandidate,
 } from "./participantDetection.ts";
 
-import { initTheme } from "./theme.js";
-
-void initTheme().catch((err) => console.error(err));
-
 (() => {
-  const COPILOT_PREFIX = "[LateMeet]";
+  const LOG = "[ValorBrainMeet]";
 
   const SELECTORS = {
     chatToggleButtons: [
       'button[aria-label*="Chat"]',
+      'button[aria-label*="chat" i]',
       'button[data-panel-id="chat-pane"]',
-      'button[jsname][aria-label*="chat"]',
     ],
     chatInput: [
       'textarea[aria-label="Chat text input"]',
       'textarea[name="chatTextInput"]',
-      'div[contenteditable="true"][aria-label*="message"]',
-      'textarea[placeholder*="message"]',
+      'textarea[aria-label*="mensagem" i]',
+      'div[contenteditable="true"][aria-label*="message" i]',
+      'div[contenteditable="true"][aria-label*="mensagem" i]',
+      'textarea[placeholder*="message" i]',
     ],
     sendButton: [
       'button[aria-label="Send message"]',
+      'button[aria-label*="Enviar mensagem" i]',
       'button[data-tooltip="Send message"]',
       'button[jsname][aria-label*="Send"]',
     ],
@@ -33,9 +35,9 @@ void initTheme().catch((err) => console.error(err));
       '[data-participant-id] [role="heading"]',
       '[data-participant-id] span[class="notranslate"]',
       '[data-participant-id][aria-label^="Participant:"]',
-      "[data-self-name]", // The tile for the local user
-      'div[jsname="NfX98"]', // Common class for names on video tiles
-      '[aria-label^="Participant:"]', // Tile aria-labels
+      "[data-self-name]",
+      'div[jsname="NfX98"]',
+      '[aria-label^="Participant:"]',
     ],
     participantTile: [
       "[data-participant-id]",
@@ -46,29 +48,28 @@ void initTheme().catch((err) => console.error(err));
     ],
     activeSpeakerIndicators: [
       '[aria-label*="speaking" i]',
-      '[aria-label*="hablando" i]',
-      '[aria-label*="parle" i]',
-      '[aria-label*="spricht" i]',
       '[aria-label*="falando" i]',
-      '[aria-label*="parlando" i]',
-      '[aria-label*="говорит" i]',
-      '[aria-label*="正在讲话" i]',
-      '[aria-label*="話しています" i]',
+      '[aria-label*="hablando" i]',
       '[data-tooltip*="speaking" i]',
-      '[data-tooltip*="hablando" i]',
-      '[data-tooltip*="parle" i]',
-      '[data-tooltip*="spricht" i]',
       '[data-tooltip*="falando" i]',
-      '[data-tooltip*="parlando" i]',
-      '[data-tooltip*="говорит" i]',
-      '[data-tooltip*="正在讲话" i]',
-      '[data-tooltip*="話しています" i]',
       '[data-is-speaking="true"]',
       '[data-speaking="true"]',
       '[data-active-speaker="true"]',
     ],
-    showEveryoneBtn: '[aria-label*="Show everyone"]',
   };
+
+  /** Labels of the buttons Meet shows only after you leave or the call ends. */
+  const POST_CALL_LABELS =
+    /^(participar novamente|voltar à tela inicial|voltar para a tela inicial|rejoin|return to home screen|volver a unirse|volver a la pantalla principal)$/i;
+  const POST_CALL_TEXTS =
+    /(você saiu da reunião|você saiu da chamada|a reunião terminou|a chamada terminou|you left the meeting|you've left the meeting|the meeting has ended|you've been removed|você foi removido)/i;
+
+  const SYMBOL_SVG =
+    '<svg class="vbm-symbol" aria-hidden="true" viewBox="0 0 1000 1000" xmlns="http://www.w3.org/2000/svg"><rect width="1000" height="1000" rx="225" fill="#111317"/><path d="M448.85395478 750.0 245.0 250.00000145999996H397.129817L505.64908646000004 568.45841838L616.19675348 250.00000145999996H766.2981729200001L562.44421814 750.0Z" fill="#FFFFFF"/><circle cx="731" cy="676" r="74" fill="#3F9E5E"/></svg>';
+  const STOP_SVG =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+  const CLOSE_SVG =
+    '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
   function queryFirst(
     selectors: string[],
@@ -87,120 +88,47 @@ void initTheme().catch((err) => console.error(err));
     return String(el.textContent || "").trim();
   }
 
-  function closestParticipantTile(el: Element): HTMLElement | null {
-    for (const selector of SELECTORS.participantTile) {
-      const tile = el.closest(selector);
-      if (tile) return tile as HTMLElement;
-    }
-
-    return null;
+  function wait(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  function classListIncludesSpeakingCue(el: Element): boolean {
-    const className = String(el.getAttribute("class") || "");
-    return /\b(active[-_\s]?speaker|speaking|is[-_\s]?speaking|voice[-_\s]?active)\b/i.test(
-      className,
-    );
+  function isMeetingRoomPath(): boolean {
+    return /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(location.pathname);
   }
 
-  function hasActiveSpeakerCue(el: Element): boolean {
-    const ariaLabel = String(el.getAttribute("aria-label") || "");
-    if (
-      /(speaking|hablando|parle|spricht|falando|parlando|говорит|正在讲话|話しています)/i.test(
-        ariaLabel,
-      )
-    )
-      return true;
-
-    if (
-      el.getAttribute("data-is-speaking") === "true" ||
-      el.getAttribute("data-speaking") === "true" ||
-      el.getAttribute("data-active-speaker") === "true"
-    ) {
-      return true;
-    }
-
-    if (classListIncludesSpeakingCue(el)) return true;
-
-    return SELECTORS.activeSpeakerIndicators.some((selector) =>
-      Boolean(el.querySelector(selector)),
-    );
-  }
-
-  function participantNameFromTile(tile: HTMLElement): string | null {
-    const directName = participantNameFromCandidate({
-      ariaLabel: tile.getAttribute("aria-label"),
-      selfName: tile.getAttribute("data-self-name"),
-      text: getTextValue(tile),
-    });
-    if (directName) return directName;
-
-    const nameElement = queryFirst(SELECTORS.participantNodes, tile);
-    return participantNameFromCandidate({
-      ariaLabel: nameElement?.getAttribute("aria-label"),
-      selfName: nameElement?.getAttribute("data-self-name"),
-      text: getTextValue(nameElement),
-    });
-  }
+  // ——— Chat (optional public late-joiner message) ———
 
   function setInputValue(el: HTMLElement, value: string) {
     el.focus();
     try {
       document.execCommand("selectAll", false, undefined);
       document.execCommand("insertText", false, value);
-    } catch (e) {
-      console.warn(`${COPILOT_PREFIX} execCommand failed, falling back to property set`, e);
-      if ("value" in el) {
-        (el as HTMLInputElement).value = value;
-      } else {
-        el.textContent = value;
-      }
+    } catch {
+      if ("value" in el) (el as HTMLInputElement).value = value;
+      else el.textContent = value;
     }
-
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  async function wait(ms: number) {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  async function findChatInputWithRetry(attempts = 6): Promise<HTMLElement | null> {
-    for (let i = 0; i < attempts; i += 1) {
+  async function ensureChatPanelOpen(): Promise<HTMLElement | null> {
+    const existing = queryFirst(SELECTORS.chatInput);
+    if (existing) return existing;
+    queryFirst(SELECTORS.chatToggleButtons)?.click();
+    for (let i = 0; i < 10; i += 1) {
+      await wait(300);
       const input = queryFirst(SELECTORS.chatInput);
       if (input) return input;
-      await wait(300);
     }
-    return null;
-  }
-
-  async function ensureChatPanelOpen(): Promise<HTMLElement | null> {
-    const existingInput = queryFirst(SELECTORS.chatInput);
-    if (existingInput) return existingInput;
-
-    const chatToggle = queryFirst(SELECTORS.chatToggleButtons);
-    if (chatToggle) {
-      chatToggle.click();
-      await wait(500);
-      return findChatInputWithRetry(10);
-    }
-
     return null;
   }
 
   async function sendChatMessage(message: string): Promise<boolean> {
-    console.log(`${COPILOT_PREFIX} Attempting to send chat message.`);
-
     try {
       const chatInput = await ensureChatPanelOpen();
-      if (!chatInput) {
-        console.error(`${COPILOT_PREFIX} Could not find chat input box.`);
-        return false;
-      }
-
+      if (!chatInput) return false;
       setInputValue(chatInput, message);
       await wait(150);
-
       const sendButton = queryFirst(SELECTORS.sendButton) as HTMLButtonElement | null;
       if (
         sendButton &&
@@ -209,208 +137,116 @@ void initTheme().catch((err) => console.error(err));
       ) {
         sendButton.click();
       } else {
-        // Fallback: try to requestSubmit on parent form if available
-        const parentForm = (chatInput as HTMLTextAreaElement).form || chatInput.closest("form");
-        if (parentForm && typeof parentForm.requestSubmit === "function") {
-          parentForm.requestSubmit();
-        } else {
-          // Additional fallback: find any element that has role="button" or similar matching Send inside the parent form or context
-          const fallbackSendButton = chatInput.parentElement?.querySelector(
-            '[role="button"]',
-          ) as HTMLElement | null;
-          if (fallbackSendButton) {
-            fallbackSendButton.click();
-          } else {
-            // Dispatches synthetic Enter key event as final keyboard fallback
-            chatInput.dispatchEvent(
-              new KeyboardEvent("keydown", {
-                key: "Enter",
-                code: "Enter",
-                keyCode: 13,
-                bubbles: true,
-              }),
-            );
-            console.warn(
-              `${COPILOT_PREFIX} Primary send button not clickable; fallback synthetic Enter dispatched.`,
-            );
-          }
-        }
+        chatInput.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }),
+        );
       }
-
-      console.log(`${COPILOT_PREFIX} Chat message send attempted.`);
       return true;
     } catch (err) {
-      console.error(`${COPILOT_PREFIX} Error sending chat message:`, err);
+      console.error(`${LOG} could not send the chat message:`, err);
       return false;
     }
   }
 
-  function upsertBriefOverlay(briefContent: string, targetName?: string) {
-    const overlayId = "mc-brief-overlay";
-    const titleId = "mc-brief-title-label";
-    let overlay = document.getElementById(overlayId);
+  // ——— Private late-joiner brief ———
 
-    // Track the element that had focus before the overlay opens so we can
-    // restore it when the overlay closes (WCAG 2.4.3 focus order).
+  function showBrief(briefContent: string, targetName?: string) {
+    let overlay = document.getElementById("vbm-brief");
     const previouslyFocused = document.activeElement as HTMLElement | null;
-
-    const closeOverlay = () => {
-      if (!overlay) return;
-      overlay.classList.remove("mc-visible");
-      window.setTimeout(() => {
-        overlay?.remove();
-        overlay = null;
-        if (previouslyFocused && document.contains(previouslyFocused)) {
-          previouslyFocused.focus();
-        }
-      }, 550);
-    };
-
     if (!overlay) {
       overlay = document.createElement("div");
-      overlay.id = overlayId;
-
-      const card = document.createElement("div");
-      card.className = "mc-brief-card";
-      card.setAttribute("role", "dialog");
-      card.setAttribute("aria-modal", "true");
-      card.setAttribute("aria-labelledby", titleId);
-
-      const header = document.createElement("div");
-      header.className = "mc-brief-header";
-
-      const icon = document.createElement("div");
-      icon.className = "mc-brief-icon";
-      icon.textContent = "🧠";
-
-      const title = document.createElement("div");
-      title.className = "mc-brief-title";
-      title.id = titleId;
-      title.textContent = targetName ? `Brief for ${targetName}` : "Meeting brief";
-
-      const closeBtn = document.createElement("button");
-      closeBtn.type = "button";
-      closeBtn.className = "mc-brief-close";
-      closeBtn.setAttribute("aria-label", "Close brief");
-      closeBtn.textContent = "✕";
-      closeBtn.addEventListener("click", closeOverlay);
-
-      header.append(icon, title, closeBtn);
-
-      const greeting = document.createElement("div");
-      greeting.className = "mc-brief-greeting";
-      greeting.textContent = targetName ? `Welcome, ${targetName}` : "Welcome back";
-
-      const text = document.createElement("div");
-      text.className = "mc-brief-text";
-      text.textContent = String(briefContent || "Sem briefing disponível.");
-
-      const footer = document.createElement("div");
-      footer.className = "mc-brief-footer";
-      footer.textContent = "Late Meet — private brief (only visible to you)";
-
-      card.append(header, greeting, text, footer);
-
-      card.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          closeOverlay();
-          return;
-        }
-        if (event.key === "Tab") {
-          const focusable = Array.from(
-            card.querySelectorAll<HTMLElement>(
-              'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-            ),
-          ).filter((el) => el.offsetParent !== null);
-          if (focusable.length === 0) return;
-          const first = focusable[0];
-          const last = focusable.at(-1)!;
-          if (event.shiftKey) {
-            if (document.activeElement === first) {
-              event.preventDefault();
-              last.focus();
-            }
-          } else if (document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
-          }
-        }
-      });
-
-      overlay.appendChild(card);
-
-      overlay.addEventListener("click", (event) => {
-        if (event.target === overlay) closeOverlay();
-      });
-
+      overlay.id = "vbm-brief";
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-modal", "false");
+      overlay.setAttribute("aria-labelledby", "vbm-brief-title");
+      overlay.innerHTML = `
+        <div class="vbm-brief-head">
+          ${SYMBOL_SVG}
+          <span class="vbm-brief-eyebrow">ValorBrain Meet</span>
+          <button type="button" class="vbm-brief-close" aria-label="Fechar">${CLOSE_SVG}</button>
+        </div>
+        <h2 class="vbm-brief-title" id="vbm-brief-title"></h2>
+        <p class="vbm-brief-text"></p>
+        <p class="vbm-brief-footer">Resumo privado: só você vê esta janela.</p>`;
       document.body.appendChild(overlay);
-      requestAnimationFrame(() => {
-        overlay?.classList.add("mc-visible");
-        // Move focus to the close button so keyboard users can immediately
-        // dismiss the dialog without tabbing through the entire Meet UI.
-        closeBtn.focus();
+      const close = () => {
+        overlay?.classList.remove("vbm-visible");
+        setTimeout(() => {
+          overlay?.remove();
+          if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus();
+        }, 300);
+      };
+      overlay.querySelector(".vbm-brief-close")?.addEventListener("click", close);
+      overlay.addEventListener("keydown", (event) => {
+        if ((event as KeyboardEvent).key === "Escape") close();
       });
-    } else {
-      const title = overlay.querySelector(".mc-brief-title");
-      if (title) title.textContent = targetName ? `Brief for ${targetName}` : "Meeting brief";
-
-      const greeting = overlay.querySelector(".mc-brief-greeting");
-      if (greeting) greeting.textContent = targetName ? `Welcome, ${targetName}` : "Welcome back";
-
-      const text = overlay.querySelector(".mc-brief-text");
-      if (text) text.textContent = String(briefContent || "Sem briefing disponível.");
-
-      overlay.classList.add("mc-visible");
     }
+    const title = overlay.querySelector(".vbm-brief-title");
+    if (title)
+      title.textContent = targetName ? `${targetName} acabou de entrar` : "Resumo da reunião";
+    const text = overlay.querySelector(".vbm-brief-text");
+    if (text) text.textContent = String(briefContent || "Sem resumo disponível ainda.");
+    requestAnimationFrame(() => overlay?.classList.add("vbm-visible"));
   }
 
-  // Configurable option to enable expanding hidden participants
-  const includeHiddenParticipants = true;
+  // ——— Participants & active speaker ———
 
-  async function collectParticipants(): Promise<{
-    participants: string[];
-    selfName: string | null;
-  }> {
-    let closedPanelAfterScrape = false;
-
-    // If includeHiddenParticipants option is enabled, check if the panel is closed.
-    // Expand the participant list temporarily to ensure full collection.
-    if (includeHiddenParticipants) {
-      const chatInputEl = queryFirst(SELECTORS.chatInput);
-      const listPane = document.querySelector('[role="list"]'); // common element containing everyone list in meet pane
-      const isPanelOpen = !!chatInputEl || !!listPane;
-
-      if (!isPanelOpen) {
-        const showEveryoneBtn = document.querySelector(
-          SELECTORS.showEveryoneBtn,
-        ) as HTMLButtonElement | null;
-        if (showEveryoneBtn) {
-          showEveryoneBtn.click();
-          closedPanelAfterScrape = true;
-          await wait(400); // Wait briefly for DOM to render list of participants
-        }
-      }
+  function closestParticipantTile(el: Element): HTMLElement | null {
+    for (const selector of SELECTORS.participantTile) {
+      const tile = el.closest(selector);
+      if (tile) return tile as HTMLElement;
     }
+    return null;
+  }
 
+  function hasActiveSpeakerCue(el: Element): boolean {
+    const ariaLabel = String(el.getAttribute("aria-label") || "");
+    if (/(speaking|falando|hablando)/i.test(ariaLabel)) return true;
+    if (
+      el.getAttribute("data-is-speaking") === "true" ||
+      el.getAttribute("data-speaking") === "true" ||
+      el.getAttribute("data-active-speaker") === "true"
+    ) {
+      return true;
+    }
+    if (
+      /\b(active[-_\s]?speaker|is[-_\s]?speaking|voice[-_\s]?active)\b/i.test(
+        String(el.getAttribute("class") || ""),
+      )
+    ) {
+      return true;
+    }
+    return SELECTORS.activeSpeakerIndicators.some((selector) =>
+      Boolean(el.querySelector(selector)),
+    );
+  }
+
+  function participantNameFromTile(tile: HTMLElement): string | null {
+    const direct = participantNameFromCandidate({
+      ariaLabel: tile.getAttribute("aria-label"),
+      selfName: tile.getAttribute("data-self-name"),
+      text: getTextValue(tile),
+    });
+    if (direct) return direct;
+    const nameElement = queryFirst(SELECTORS.participantNodes, tile);
+    return participantNameFromCandidate({
+      ariaLabel: nameElement?.getAttribute("aria-label"),
+      selfName: nameElement?.getAttribute("data-self-name"),
+      text: getTextValue(nameElement),
+    });
+  }
+
+  function collectParticipants(): { participants: string[]; selfName: string | null } {
     const candidates: ParticipantNameCandidate[] = [];
-    // We scrape participant elements already present in the DOM (video tiles or side panel).
-    const participantElements = new Set<HTMLElement>();
+    const elements = new Set<HTMLElement>();
     let selfName: string | null = null;
-
     for (const selector of SELECTORS.participantNodes) {
-      document.querySelectorAll(selector).forEach((node) => {
-        participantElements.add(node as HTMLElement);
-      });
+      document.querySelectorAll(selector).forEach((node) => elements.add(node as HTMLElement));
     }
-
-    for (const element of participantElements) {
+    for (const element of elements) {
       if (!selfName) {
-        const rawSelfName = element.getAttribute("data-self-name");
-        if (rawSelfName) {
-          selfName = participantNameFromCandidate({ selfName: rawSelfName });
-        }
+        const rawSelf = element.getAttribute("data-self-name");
+        if (rawSelf) selfName = participantNameFromCandidate({ selfName: rawSelf });
       }
       candidates.push({
         ariaLabel: element.getAttribute("aria-label"),
@@ -418,136 +254,77 @@ void initTheme().catch((err) => console.error(err));
         text: getTextValue(element),
       });
     }
-
-    // Restore UI state: close the panel if we opened it ourselves
-    if (closedPanelAfterScrape) {
-      const showEveryoneBtn = document.querySelector(
-        SELECTORS.showEveryoneBtn,
-      ) as HTMLButtonElement | null;
-      if (showEveryoneBtn) {
-        showEveryoneBtn.click();
-      }
-    }
-
     return { participants: collectParticipantNames(candidates), selfName };
   }
 
-  let participantPollTimer: number | NodeJS.Timeout | null = null;
-  let activeSpeakerObserver: MutationObserver | null = null;
-  let activeSpeakerCheckTimer: number | NodeJS.Timeout | null = null;
-  let lastActiveSpeakerName: string | null = null;
+  let participantTimer: ReturnType<typeof setInterval> | null = null;
+  let lastParticipantsKey = "";
 
   function startParticipantPolling() {
-    if (participantPollTimer) return;
-
-    participantPollTimer = setInterval(async () => {
-      const { participants, selfName } = await collectParticipants();
-
+    if (participantTimer) return;
+    const tick = async () => {
+      if (document.visibilityState === "hidden") return;
+      const { participants, selfName } = collectParticipants();
+      const key = `${selfName ?? ""}|${participants.join("\u0001")}`;
+      if (key === lastParticipantsKey) return;
+      lastParticipantsKey = key;
       try {
-        await chrome.runtime.sendMessage({
-          type: "PARTICIPANTS_UPDATED",
-          participants,
-          selfName,
-        });
+        await chrome.runtime.sendMessage({ type: "PARTICIPANTS_UPDATED", participants, selfName });
       } catch {
-        // Service worker idle
+        lastParticipantsKey = ""; // service worker asleep: resend next tick
       }
-    }, 5000);
+    };
+    void tick();
+    participantTimer = setInterval(tick, 5000);
   }
 
   function stopParticipantPolling() {
-    if (participantPollTimer) {
-      clearInterval(participantPollTimer);
-      participantPollTimer = null;
-    }
+    if (participantTimer) clearInterval(participantTimer);
+    participantTimer = null;
+    lastParticipantsKey = "";
   }
 
-  function scheduleActiveSpeakerCheck() {
-    if (activeSpeakerCheckTimer) return;
-
-    activeSpeakerCheckTimer = setTimeout(() => {
-      activeSpeakerCheckTimer = null;
-      detectActiveSpeaker();
-    }, 250);
-  }
-
-  async function publishActiveSpeaker(name: string) {
-    if (name === lastActiveSpeakerName) return;
-
-    try {
-      await chrome.runtime.sendMessage({
-        type: "ACTIVE_SPEAKER_CHANGED",
-        name,
-      });
-      lastActiveSpeakerName = name;
-    } catch {
-      // Service worker idle
-    }
-  }
+  let speakerObserver: MutationObserver | null = null;
+  let speakerCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastSpeaker: string | null = null;
 
   function detectActiveSpeaker() {
     const candidates = new Set<HTMLElement>();
-
     SELECTORS.activeSpeakerIndicators.forEach((selector) => {
       document.querySelectorAll(selector).forEach((node) => {
         const tile = closestParticipantTile(node);
         if (tile) candidates.add(tile);
       });
     });
-
     document.querySelectorAll(SELECTORS.participantTile.join(",")).forEach((node) => {
-      const element = node as HTMLElement;
-      if (hasActiveSpeakerCue(element)) {
-        candidates.add(element);
-      }
+      if (hasActiveSpeakerCue(node)) candidates.add(node as HTMLElement);
     });
-
     for (const tile of candidates) {
       const name = participantNameFromTile(tile);
-      if (name) {
-        void publishActiveSpeaker(name);
+      if (name && name !== lastSpeaker) {
+        lastSpeaker = name;
+        chrome.runtime.sendMessage({ type: "ACTIVE_SPEAKER_CHANGED", name }).catch(() => {
+          lastSpeaker = null;
+        });
         return;
       }
+      if (name) return;
     }
   }
 
-  function startActiveSpeakerDetection() {
-    if (activeSpeakerObserver) return;
-
-    function isSpeakerRelatedNode(node: Node): boolean {
-      if (!(node instanceof Element)) return false;
-      return (
-        Boolean(closestParticipantTile(node)) ||
-        node.matches(SELECTORS.activeSpeakerIndicators.join(",")) ||
-        Boolean(node.querySelector(SELECTORS.activeSpeakerIndicators.join(",")))
-      );
-    }
-
-    activeSpeakerObserver = new MutationObserver((mutations) => {
-      const sawSpeakerRelatedChange = mutations.some((mutation) => {
-        if (mutation.type === "childList") {
-          return (
-            isSpeakerRelatedNode(mutation.target) ||
-            Array.from(mutation.addedNodes).some(isSpeakerRelatedNode) ||
-            Array.from(mutation.removedNodes).some(isSpeakerRelatedNode)
-          );
-        }
-        if (mutation.type !== "attributes") return false;
-
-        const name = mutation.attributeName || "";
-        return (
-          name === "class" || name === "style" || name === "aria-label" || name.startsWith("data-")
-        );
-      });
-
-      if (sawSpeakerRelatedChange) scheduleActiveSpeakerCheck();
+  function startSpeakerDetection() {
+    if (speakerObserver) return;
+    speakerObserver = new MutationObserver(() => {
+      if (speakerCheckTimer) return;
+      speakerCheckTimer = setTimeout(() => {
+        speakerCheckTimer = null;
+        detectActiveSpeaker();
+      }, 300);
     });
-
-    activeSpeakerObserver.observe(document.body, {
+    speakerObserver.observe(document.body, {
       attributes: true,
       attributeFilter: [
         "class",
-        "style",
         "aria-label",
         "data-is-speaking",
         "data-speaking",
@@ -556,195 +333,244 @@ void initTheme().catch((err) => console.error(err));
       childList: true,
       subtree: true,
     });
-
     detectActiveSpeaker();
   }
 
-  function stopActiveSpeakerDetection() {
-    if (activeSpeakerObserver) {
-      activeSpeakerObserver.disconnect();
-      activeSpeakerObserver = null;
-    }
-    if (activeSpeakerCheckTimer) {
-      clearTimeout(activeSpeakerCheckTimer);
-      activeSpeakerCheckTimer = null;
-    }
-    lastActiveSpeakerName = null;
+  function stopSpeakerDetection() {
+    speakerObserver?.disconnect();
+    speakerObserver = null;
+    if (speakerCheckTimer) clearTimeout(speakerCheckTimer);
+    speakerCheckTimer = null;
+    lastSpeaker = null;
   }
 
-  function injectFloatingButton() {
-    const existing = document.getElementById("mc-float-btn");
-    if (existing) return;
+  // ——— Leave-call detection ———
 
-    const btn = document.createElement("button");
-    btn.id = "mc-float-btn";
-    btn.type = "button";
-    btn.setAttribute("aria-label", "Start Late Meet Copilot");
-    btn.setAttribute("tabindex", "0");
+  let leaveTimer: ReturnType<typeof setInterval> | null = null;
+  let leaveReported = false;
 
-    const inner = document.createElement("div");
-    inner.className = "mc-float-btn-inner";
+  function postCallScreenVisible(): boolean {
+    const buttons = document.querySelectorAll<HTMLElement>('button, [role="button"]');
+    for (const button of buttons) {
+      const label = (button.getAttribute("aria-label") || button.textContent || "").trim();
+      if (label && label.length < 40 && POST_CALL_LABELS.test(label)) return true;
+    }
+    const headings = document.querySelectorAll<HTMLElement>('h1, h2, [role="heading"]');
+    for (const heading of headings) {
+      if (POST_CALL_TEXTS.test(heading.textContent || "")) return true;
+    }
+    return false;
+  }
 
-    const pulse = document.createElement("div");
-    pulse.className = "mc-float-pulse";
+  function startLeaveDetection() {
+    if (leaveTimer) return;
+    leaveReported = false;
+    leaveTimer = setInterval(() => {
+      if (leaveReported || !postCallScreenVisible()) return;
+      leaveReported = true;
+      chrome.runtime.sendMessage({ type: "MEETING_ENDED" }).catch(() => {
+        leaveReported = false;
+      });
+    }, 1500);
+  }
 
-    const icon = document.createElement("span");
-    icon.className = "mc-float-icon";
-    icon.textContent = "🎙️";
+  function stopLeaveDetection() {
+    if (leaveTimer) clearInterval(leaveTimer);
+    leaveTimer = null;
+  }
 
-    inner.append(pulse, icon);
+  // ——— Status pill ———
 
-    const label = document.createElement("span");
-    label.className = "mc-float-label";
-    label.textContent = "Start Copilot";
+  interface ContentState {
+    isActive?: boolean;
+    audioActive?: boolean;
+    finalizing?: boolean;
+    startTime?: number | null;
+    isTargetTab?: boolean;
+  }
 
-    btn.append(inner, label);
+  let pillState: "hidden" | "hint" | "recording" | "saving" | "done" = "hidden";
+  let pillTimer: ReturnType<typeof setInterval> | null = null;
+  let doneTimer: ReturnType<typeof setTimeout> | null = null;
+  let hintDismissed = false;
+  let recordingStart = 0;
+  // Filled from GET_STATE with the binding Chrome really assigned ("" = none).
+  let recordShortcut = "";
 
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      label.textContent = "Opening Copilot...";
+  function shortcutMarkup(shortcut: string): string {
+    return shortcut
+      .split("+")
+      .map((key) => {
+        const kbd = document.createElement("span");
+        kbd.className = "vbm-kbd";
+        kbd.textContent = key.trim();
+        return kbd.outerHTML;
+      })
+      .join("+");
+  }
 
-      try {
-        // Open the side panel (dashboard) where tabCapture can be properly initiated
-        // with user gesture context. Content scripts cannot use chrome.tabCapture.
-        await chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
-        btn.remove();
-      } catch (err) {
-        console.error(`${COPILOT_PREFIX} Error opening side panel:`, err);
-        btn.disabled = false;
-        label.textContent = "Start Copilot";
-      }
+  function pill(): HTMLElement {
+    let el = document.getElementById("vbm-pill");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "vbm-pill";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      document.body.appendChild(el);
+      requestAnimationFrame(() => el?.classList.add("vbm-visible"));
+    }
+    return el;
+  }
+
+  function removePill() {
+    document.getElementById("vbm-pill")?.remove();
+    if (pillTimer) clearInterval(pillTimer);
+    pillTimer = null;
+  }
+
+  function formatClock(ms: number): string {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  }
+
+  function renderPill(next: typeof pillState) {
+    if (next === pillState && next !== "recording") return;
+    pillState = next;
+    if (pillTimer) clearInterval(pillTimer);
+    pillTimer = null;
+
+    if (next === "hidden") {
+      removePill();
+      return;
+    }
+    const el = pill();
+    if (next === "hint") {
+      const how = recordShortcut
+        ? `${shortcutMarkup(recordShortcut)} <span class="vbm-muted">ou o ícone da extensão</span>`
+        : `<span class="vbm-muted">clique no ícone do ValorBrain Meet</span>`;
+      el.innerHTML = `${SYMBOL_SVG}<span class="vbm-text">Gravar esta reunião: ${how}</span><button type="button" class="vbm-icon" data-act="dismiss" aria-label="Ocultar">${CLOSE_SVG}</button>`;
+    } else if (next === "recording") {
+      el.innerHTML = `<span class="vbm-dot" aria-hidden="true"></span><span class="vbm-text"><span class="vbm-rec-label">Gravando</span> <span class="vbm-timer">${formatClock(Date.now() - recordingStart)}</span> <span class="vbm-muted">· ValorBrain Meet</span></span><button type="button" class="vbm-stop" data-act="stop">${STOP_SVG}Encerrar</button>`;
+      pillTimer = setInterval(() => {
+        const timer = document.querySelector("#vbm-pill .vbm-timer");
+        if (timer) timer.textContent = formatClock(Date.now() - recordingStart);
+      }, 1000);
+    } else if (next === "saving") {
+      el.innerHTML = `<span class="vbm-spinner" aria-hidden="true"></span><span class="vbm-text">Salvando a reunião no ValorBrain…</span>`;
+    } else if (next === "done") {
+      el.innerHTML = `${SYMBOL_SVG}<span class="vbm-text">Gravação encerrada. <span class="vbm-muted">Veja o resultado no ícone da extensão.</span></span>`;
+    }
+
+    el.querySelector<HTMLButtonElement>('[data-act="dismiss"]')?.addEventListener("click", () => {
+      hintDismissed = true;
+      renderPill("hidden");
     });
-
-    document.body.appendChild(btn);
-    requestAnimationFrame(() => btn.classList.add("mc-visible"));
+    el.querySelector<HTMLButtonElement>('[data-act="stop"]')?.addEventListener("click", (event) => {
+      const button = event.currentTarget as HTMLButtonElement;
+      button.disabled = true;
+      button.textContent = "Encerrando…";
+      chrome.runtime.sendMessage({ type: "MANUAL_STOP_AUDIO" }).catch(() => {
+        button.disabled = false;
+      });
+    });
   }
 
-  const observer = new MutationObserver(() => {
-    if (window.location.pathname.length > 5 && !window.location.pathname.includes("/_")) {
-      injectFloatingButton();
-      // Disconnect once the button is successfully injected. Re-injection after
-      // copilot stops is handled by the STATE_UPDATE message listener, so this
-      // observer is no longer needed.
-      if (document.getElementById("mc-float-btn")) {
-        observer.disconnect();
-      }
-    }
-  });
+  function applyState(state: ContentState) {
+    const recordingHere = Boolean(state.audioActive && state.isTargetTab);
+    const savingHere = Boolean(state.finalizing && state.isTargetTab);
 
-  function startFloatingButtonObserver() {
-    if (document.getElementById("mc-float-btn")) return;
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
+    if (state.isActive || recordingHere) startParticipantPolling();
+    else stopParticipantPolling();
 
-  startFloatingButtonObserver();
-
-  function cleanUp() {
-    console.log(`${COPILOT_PREFIX} Disconnecting observers and clearing active timers.`);
-
-    if (participantPollTimer) {
-      clearInterval(participantPollTimer);
-      participantPollTimer = null;
+    if (recordingHere) {
+      recordingStart = state.startTime || recordingStart || Date.now();
+      startSpeakerDetection();
+      startLeaveDetection();
+    } else {
+      stopSpeakerDetection();
+      stopLeaveDetection();
     }
 
-    if (activeSpeakerCheckTimer) {
-      clearTimeout(activeSpeakerCheckTimer);
-      activeSpeakerCheckTimer = null;
+    if (doneTimer && (recordingHere || savingHere)) {
+      clearTimeout(doneTimer);
+      doneTimer = null;
     }
 
-    if (activeSpeakerObserver) {
-      activeSpeakerObserver.disconnect();
-      activeSpeakerObserver = null;
-    }
-  }
-
-  function destroyAll() {
-    cleanUp();
-    if (observer) {
-      observer.disconnect();
+    if (savingHere) {
+      renderPill("saving");
+    } else if (recordingHere) {
+      renderPill("recording");
+    } else if (pillState === "saving" || pillState === "recording") {
+      renderPill("done");
+      doneTimer = setTimeout(() => {
+        doneTimer = null;
+        renderPill(isMeetingRoomPath() && !hintDismissed ? "hint" : "hidden");
+      }, 6000);
+    } else if (pillState !== "done") {
+      renderPill(
+        isMeetingRoomPath() && !hintDismissed && !postCallScreenVisible() ? "hint" : "hidden",
+      );
     }
   }
-
-  // Hook cleanup to page unload/navigation and visibility change.
-  // A single consolidated handler ensures SAVE_SESSION is dispatched *before*
-  // cleanUp() tears down observers and timers (fixes #555 — two separate
-  // listeners would always run cleanUp first due to registration order).
-  globalThis.addEventListener("beforeunload", () => {
-    // 1. Attempt auto-save first, while the runtime is still reachable.
-    try {
-      chrome.runtime.sendMessage({ type: "SAVE_SESSION" }).catch(() => {});
-    } catch {
-      // Ignore — page is already unloading
-    }
-    // 2. Tear down observers and timers after save is dispatched.
-    destroyAll();
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") {
-      // Clear timers and observers when page is backgrounded or inactive to conserve resources
-      cleanUp();
-    } else if (document.visibilityState === "visible") {
-      // Re-initialize observation when resuming visibility
-      startParticipantPolling();
-      startActiveSpeakerDetection();
-      if (globalThis.location.pathname.length > 5 && !globalThis.location.pathname.includes("/_")) {
-        injectFloatingButton();
-      } else {
-        startFloatingButtonObserver();
-      }
-    }
-  });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "SHOW_BRIEF") {
-      upsertBriefOverlay(message.briefContent, message.targetName);
+      showBrief(message.briefContent, message.targetName);
       sendResponse({ success: true });
       return false;
     }
-
     if (message?.type === "SEND_CHAT_MESSAGE") {
-      sendChatMessage(message.text).then((success) => sendResponse({ success }));
+      void sendChatMessage(message.text).then((success) => sendResponse({ success }));
       return true;
     }
-
     if (message?.type === "STATE_UPDATE") {
-      const btn = document.getElementById("mc-float-btn") as HTMLButtonElement | null;
-      const isActive = message.state?.isActive;
-      if (btn && isActive) {
-        btn.remove();
-      } else if (!btn && !isActive) {
-        injectFloatingButton();
-      } else if (btn && !isActive) {
-        btn.disabled = false;
-        const label = btn.querySelector(".mc-float-label");
-        if (label) label.textContent = "Start Copilot";
-      }
-
-      // Clean up polling and observers when the meeting session ends
-      if (!isActive) {
-        stopParticipantPolling();
-        stopActiveSpeakerDetection();
-      } else {
-        // Restart polling/detection if a new session begins
-        startParticipantPolling();
-        startActiveSpeakerDetection();
-      }
-
+      applyState((message.state ?? {}) as ContentState);
       sendResponse({ success: true });
       return false;
     }
-
-    // Don't handle unknown messages — let other listeners process them
     return false;
   });
 
-  // Note: SAVE_SESSION auto-save on tab close is handled by the consolidated
-  // beforeunload listener registered above (line 615). Do not add a second
-  // beforeunload listener here — see #555.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && participantTimer) lastParticipantsKey = "";
+  });
 
-  startParticipantPolling();
-  startActiveSpeakerDetection();
-  if (globalThis.location.pathname.length > 5 && !globalThis.location.pathname.includes("/_")) {
-    injectFloatingButton();
-  }
+  // Initial render: ask the service worker what is going on.
+  chrome.runtime
+    .sendMessage({ type: "GET_STATE" })
+    .then((state) => {
+      if (!state) return;
+      const shortcut = typeof state.recordShortcut === "string" ? state.recordShortcut : "";
+      if (shortcut !== recordShortcut) {
+        recordShortcut = shortcut;
+        // A STATE_UPDATE broadcast can draw the hint before this reply lands;
+        // redraw it so it shows the real binding instead of the fallback text.
+        if (pillState === "hint") {
+          pillState = "hidden";
+          renderPill("hint");
+        }
+      }
+      applyState({
+        isActive: state.isActive,
+        audioActive: state.audioActive,
+        finalizing: state.finalizing,
+        startTime: state.startTime,
+        isTargetTab: state.isTargetTab === true,
+      });
+    })
+    .catch(() => {
+      if (isMeetingRoomPath()) renderPill("hint");
+    });
+
+  // Meet renders the lobby first; show the hint once the room UI exists.
+  const bootTimer = setInterval(() => {
+    if (pillState === "hidden" && isMeetingRoomPath() && !hintDismissed && document.body) {
+      renderPill("hint");
+    }
+    if (pillState !== "hidden") clearInterval(bootTimer);
+  }, 2000);
 })();

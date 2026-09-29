@@ -1,48 +1,645 @@
-/* --- THEME TOKENS --- */
-:root,
-[data-theme="light"] {
-  --bg-app: #ffffff;
-  --bg-surface: #f5f5f5;
-  --bg-card: #ededed;
-  --bg-element: #e5e5e5;
+/* ValorBrain Meet — shared foundation.
+ *
+ * Tokens come from the canonical brand kit (V. 2.1, copied verbatim into
+ * ./brand/valorbrain-tokens.css — do not edit that file, re-copy it from
+ * valorbrain-platform/deliverables/brand-kit). Themes: Paper (default,
+ * data-theme="paper"), white (data-theme="light") and dark (data-theme="dark").
+ *
+ * Brand rules applied here:
+ * - the green brand dot never signals status; states use icon + text + semantic colour;
+ * - solid focus ring with offset;
+ * - small text never uses green-600 on Paper (links use --vb-text-link).
+ */
+@import "./brand/valorbrain-tokens.css";
 
-  --border-main: #e5e5e5;
-  --border-sub: #d4d4d4;
-  --border-element: #cacaca;
+:root {
+  color-scheme: light;
 
-  --text-main: #0a0a0a;
-  --text-sub: #525252;
-  --text-muted: #737373;
-  --text-invert: #ffffff;
+  /* Composed status surfaces that work on both themes. */
+  --app-success-surface: color-mix(in srgb, var(--vb-semantic-success) 10%, var(--vb-surface-card));
+  --app-warning-surface: color-mix(in srgb, var(--vb-semantic-warning) 12%, var(--vb-surface-card));
+  --app-error-surface: color-mix(in srgb, var(--vb-semantic-error) 10%, var(--vb-surface-card));
+  --app-info-surface: color-mix(in srgb, var(--vb-semantic-info) 10%, var(--vb-surface-card));
+  --app-success-border: color-mix(in srgb, var(--vb-semantic-success) 40%, transparent);
+  --app-warning-border: color-mix(in srgb, var(--vb-semantic-warning) 45%, transparent);
+  --app-error-border: color-mix(in srgb, var(--vb-semantic-error) 40%, transparent);
+  --app-info-border: color-mix(in srgb, var(--vb-semantic-info) 40%, transparent);
+  --app-recording: var(--vb-semantic-error);
+  --app-overlay: rgba(17, 19, 23, 0.45);
 
-  --text-success: #16a34a;
-  --text-danger: #dc2626;
-
-  --shadow-main: rgba(0, 0, 0, 0.1);
-  --accent-color: 161, 84%, 25%; /* Verde Valor #047857 — accent padrão ValorBrain */
-  --vb-brand: #047857;
-  --vb-brand-hover: #036c4e;
-  --vb-brand-tint: rgba(4, 120, 87, 0.08);
-  --vb-brand-border: rgba(4, 120, 87, 0.25);
+  /* Legacy aliases kept so any older selector still lands on-brand. */
+  --bg-app: var(--vb-surface-canvas);
+  --bg-surface: var(--vb-surface-card);
+  --bg-card: var(--vb-surface-card);
+  --bg-element: var(--vb-surface-muted);
+  --border-main: var(--vb-border-default);
+  --border-sub: var(--vb-border-default);
+  --border-element: var(--vb-border-control);
+  --text-main: var(--vb-text-primary);
+  --text-sub: var(--vb-text-secondary);
+  --text-muted: var(--vb-text-secondary);
+  --text-invert: var(--vb-action-fg);
+  --text-success: var(--vb-status-success-text);
+  --text-danger: var(--vb-status-error-text);
+  --shadow-main: rgba(17, 19, 23, 0.08);
+  --vb-brand: var(--vb-action-bg);
+  --vb-brand-hover: var(--vb-action-hover);
 }
 
+.dark,
 [data-theme="dark"] {
-  --bg-app: #000000;
-  --bg-surface: #0a0a0a;
-  --bg-card: #171717;
-  --bg-element: #262626;
+  color-scheme: dark;
+  --app-overlay: rgba(0, 0, 0, 0.6);
+  --shadow-main: rgba(0, 0, 0, 0.5);
+}
 
-  --border-main: #171717;
-  --border-sub: #262626;
-  --border-element: #404040;
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
-  --text-main: #fafafa;
-  --text-sub: #a3a3a3;
-  --text-muted: #525252;
-  --text-invert: #000000;
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
 
-  --text-success: #22c55e;
-  --text-danger: #ef4444;
+body {
+  background: var(--vb-surface-canvas);
+  color: var(--vb-text-primary);
+  font-family: var(--vb-font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
 
-  --shadow-main: rgba(0, 0, 0, 0.8);
+::selection {
+  background: var(--vb-selection-bg);
+  color: var(--vb-selection-fg);
+}
+
+:focus-visible {
+  outline: 3px solid var(--vb-focus);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--vb-text-link);
+  text-underline-offset: 3px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ——— Brand lockup ——— */
+.vb-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.vb-brand-symbol {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.vb-brand-name {
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.vb-brand-name span {
+  font-weight: 500;
+  color: var(--vb-text-secondary);
+}
+
+.vb-eyebrow {
+  font-family: var(--vb-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--vb-tracking-caps);
+  text-transform: uppercase;
+  color: var(--vb-text-link);
+}
+
+.vb-muted {
+  color: var(--vb-text-secondary);
+}
+
+.vb-mono {
+  font-family: var(--vb-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.vb-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* ——— Buttons ——— */
+.vb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: var(--vb-radius-md);
+  border: 1px solid var(--vb-border-control);
+  background: var(--vb-surface-card);
+  color: var(--vb-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background var(--vb-duration-fast) var(--vb-ease-default),
+    border-color var(--vb-duration-fast) var(--vb-ease-default),
+    color var(--vb-duration-fast) var(--vb-ease-default);
+}
+
+.vb-btn:hover:not(:disabled) {
+  background: var(--vb-surface-muted);
+}
+
+.vb-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vb-btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+.vb-btn--primary {
+  background: var(--vb-action-bg);
+  border-color: transparent;
+  color: var(--vb-action-fg);
+}
+
+.vb-btn--primary:hover:not(:disabled) {
+  background: var(--vb-action-hover);
+}
+
+.vb-btn--primary:active:not(:disabled) {
+  background: var(--vb-action-pressed);
+}
+
+.vb-btn--danger {
+  background: var(--vb-semantic-error);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.vb-btn--danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.vb-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--vb-text-secondary);
+}
+
+.vb-btn--ghost:hover:not(:disabled) {
+  background: var(--vb-surface-muted);
+  color: var(--vb-text-primary);
+}
+
+.vb-btn--danger-outline {
+  background: transparent;
+  border-color: var(--app-error-border);
+  color: var(--vb-status-error-text);
+}
+
+.vb-btn--danger-outline:hover:not(:disabled) {
+  background: var(--app-error-surface);
+}
+
+.vb-btn--lg {
+  min-height: 44px;
+  padding: 10px 18px;
+  font-size: 14px;
+}
+
+.vb-btn--block {
+  width: 100%;
+}
+
+.vb-btn--sm {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.vb-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--vb-radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--vb-text-secondary);
+  cursor: pointer;
+}
+
+.vb-icon-btn:hover {
+  background: var(--vb-surface-muted);
+  color: var(--vb-text-primary);
+}
+
+/* ——— Cards ——— */
+.vb-card {
+  background: var(--vb-surface-card);
+  border: 1px solid var(--vb-border-default);
+  border-radius: var(--vb-radius-lg);
+  padding: 16px;
+}
+
+.vb-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--vb-text-primary);
+}
+
+.vb-card-title .vb-icon {
+  color: var(--vb-text-secondary);
+}
+
+.vb-card-title .vb-card-aside {
+  margin-left: auto;
+  font-weight: 500;
+  color: var(--vb-text-secondary);
+}
+
+/* ——— Status chips (icon + text, semantic colour) ——— */
+.vb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--vb-radius-pill);
+  border: 1px solid currentColor;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.vb-chip .vb-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.vb-chip--success {
+  color: var(--vb-status-success-text);
+  background: var(--app-success-surface);
+  border-color: var(--app-success-border);
+}
+
+.vb-chip--warning {
+  color: var(--vb-status-warning-text);
+  background: var(--app-warning-surface);
+  border-color: var(--app-warning-border);
+}
+
+.vb-chip--error {
+  color: var(--vb-status-error-text);
+  background: var(--app-error-surface);
+  border-color: var(--app-error-border);
+}
+
+.vb-chip--info {
+  color: var(--vb-status-info-text);
+  background: var(--app-info-surface);
+  border-color: var(--app-info-border);
+}
+
+.vb-chip--neutral {
+  color: var(--vb-text-secondary);
+  background: var(--vb-surface-muted);
+  border-color: var(--vb-border-default);
+}
+
+.vb-rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--app-recording);
+  flex-shrink: 0;
+  animation: vb-rec-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes vb-rec-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--app-recording) 55%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+/* ——— Notices (banner) ——— */
+.vb-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--vb-radius-md);
+  border: 1px solid var(--vb-border-default);
+  background: var(--vb-surface-card);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.vb-notice .vb-icon {
+  margin-top: 1px;
+}
+
+.vb-notice-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.vb-notice-title {
+  font-weight: 700;
+}
+
+.vb-notice--error {
+  background: var(--app-error-surface);
+  border-color: var(--app-error-border);
+}
+
+.vb-notice--error > .vb-icon {
+  color: var(--vb-status-error-text);
+}
+
+.vb-notice--warning {
+  background: var(--app-warning-surface);
+  border-color: var(--app-warning-border);
+}
+
+.vb-notice--warning > .vb-icon {
+  color: var(--vb-status-warning-text);
+}
+
+.vb-notice--info {
+  background: var(--app-info-surface);
+  border-color: var(--app-info-border);
+}
+
+.vb-notice--info > .vb-icon {
+  color: var(--vb-status-info-text);
+}
+
+.vb-notice--success {
+  background: var(--app-success-surface);
+  border-color: var(--app-success-border);
+}
+
+.vb-notice--success > .vb-icon {
+  color: var(--vb-status-success-text);
+}
+
+.vb-notice-dismiss {
+  width: 24px;
+  height: 24px;
+  margin: -2px -4px 0 0;
+}
+
+/* ——— Form controls ——— */
+.vb-field {
+  display: grid;
+  gap: 6px;
+  /* Side-by-side fields share a row height; keep label and control packed at
+     the top instead of stretching the control to fill the taller neighbour. */
+  align-content: start;
+}
+
+.vb-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vb-hint {
+  font-size: 12px;
+  color: var(--vb-text-secondary);
+}
+
+.vb-input,
+.vb-select {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: var(--vb-radius-md);
+  border: 1px solid var(--vb-border-control);
+  background: var(--vb-surface-card);
+  color: var(--vb-text-primary);
+  font-size: 14px;
+}
+
+.vb-input::placeholder {
+  color: var(--vb-text-secondary);
+  opacity: 0.8;
+}
+
+.vb-input[aria-invalid="true"] {
+  border: 2px solid var(--vb-status-error-text);
+}
+
+.vb-input--mono {
+  font-family: var(--vb-font-mono);
+  font-size: 13px;
+}
+
+.vb-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.vb-input-row .vb-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Toggle switch: <label class="vb-switch"><input type="checkbox"><span></span></label> */
+.vb-switch {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 40px;
+  height: 22px;
+}
+
+.vb-switch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.vb-switch span {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--vb-border-control);
+  transition: background var(--vb-duration-fast) var(--vb-ease-default);
+  pointer-events: none;
+}
+
+.vb-switch span::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform var(--vb-duration-fast) var(--vb-ease-default);
+}
+
+.vb-switch input:checked + span {
+  background: var(--vb-action-bg);
+}
+
+.vb-switch input:checked + span::after {
+  transform: translateX(18px);
+}
+
+.vb-switch input:focus-visible + span {
+  outline: 3px solid var(--vb-focus);
+  outline-offset: 2px;
+}
+
+.vb-kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--vb-border-default);
+  background: var(--vb-surface-muted);
+  font-family: var(--vb-font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ——— Spinner ——— */
+.vb-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  animation: vb-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes vb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ——— Toast ——— */
+.vb-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  z-index: 200;
+  max-width: calc(100vw - 32px);
+  transform: translate(-50%, 12px);
+  padding: 10px 14px;
+  border-radius: var(--vb-radius-md);
+  background: var(--vb-obsidian);
+  color: var(--vb-neutral-50);
+  font-size: 13px;
+  box-shadow: var(--vb-shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--vb-duration-fast) var(--vb-ease-default),
+    transform var(--vb-duration-fast) var(--vb-ease-default);
+}
+
+[data-theme="dark"] .vb-toast {
+  background: var(--vb-neutral-50);
+  color: var(--vb-ink);
+}
+
+.vb-toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.vb-toast--error {
+  background: var(--vb-status-error-text);
+  color: #ffffff;
+}
+
+[data-theme="dark"] .vb-toast--error {
+  background: #7f1d1d;
+  color: #ffffff;
+}
+
+.vb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -5,3 +5,6 @@ package-lock.json
 .agents/
 .gsd/
 .gemini/
+
+# Verbatim copy of the ValorBrain brand kit tokens; keep byte-identical to the kit.
+src/brand/

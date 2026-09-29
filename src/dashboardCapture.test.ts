@@ -120,7 +120,7 @@ test("dashboard capture does not request microphone when tab capture is denied",
         return { success: true };
       },
     }),
-    /Capture permission denied/,
+    /não liberou a captura/,
   );
 
   assert.deepEqual(calls, []);

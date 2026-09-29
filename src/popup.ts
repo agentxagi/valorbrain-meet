@@ -1,771 +1,547 @@
-import { State } from "./types";
-import { initTheme } from "./theme.js";
+// Popup: the main control. Shows what the extension is doing right now
+// (ready / recording / saving / saved) and what is still missing in the setup.
+import type { MeetingNotice, State } from "./types";
+import { initTheme } from "./theme";
+import { hydrateIcons, icon, type IconName } from "./ui/icons";
+import { escapeHtml } from "./utils/domHelpers";
 import {
-  getApiCredentials,
-  saveApiCredentials,
-  unlockCredentials,
-  isUnlocked,
-} from "./utils/credentials";
-import { escapeHtml, formatDuration, sanitizeTopicStatus } from "./utils/domHelpers";
-import { validateProviderConnection } from "./utils/api.js";
-import {
-  getProviderConfig,
-  providerConfigFromProfile,
-  resolveProviderApiKey,
-  storageKeyFor,
-} from "./utils/providerSettings";
-import { resolveManualMeetTab } from "./meetingTabs";
-import { startPopupAudioCapture } from "./popupCapture";
+  formatClock,
+  formatDurationHuman,
+  formatRelative,
+  plural,
+  speakerLabel,
+} from "./ui/format";
+import { getMeetingIdFromUrl } from "./meetingTabs";
+import { getMicPermission, getSetupStatus, isSetupComplete, type SetupItem } from "./setupStatus";
 
-initTheme();
+void initTheme();
 
-const POPUP_ONBOARDING_TOUR_KEY = "popupOnboardingTourCompleted";
+const LAST_SESSION_KEY = "lastSessionResult";
+const DASHBOARD_TAB_KEY = "dashboardInitialTab";
+/** Last-session card stays visible for this long after the meeting. */
+const LAST_SESSION_VISIBLE_MS = 12 * 60 * 60 * 1000;
 
-document.addEventListener("DOMContentLoaded", async () => {
-  const setupView = document.getElementById("setup-view") as HTMLDivElement;
-  const mainView = document.getElementById("main-view") as HTMLDivElement;
-  const meetingSection = document.getElementById("meeting-section") as HTMLDivElement;
-  const noMeetingSection = document.getElementById("no-meeting-section") as HTMLDivElement;
-  const sessionModal = document.getElementById("session-modal") as HTMLDivElement;
-  const sessionModalError = document.getElementById(
-    "session-modal-error",
-  ) as HTMLParagraphElement | null;
+interface LastSessionResult {
+  sessionId: string | null;
+  savedAt: number;
+  title: string;
+  duration: number;
+  transcriptEntries: number;
+  empty: boolean;
+  vb?: {
+    status: "pending" | "sent" | "failed" | "skipped";
+    at: number;
+    docRef?: string | null;
+    error?: string;
+  };
+}
 
-  let lastState: State | null = null;
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-  // ——— Passphrase management ———
-  const passphraseInput = document.getElementById("passphrase-input") as HTMLInputElement | null;
-  const passphraseStatus = document.getElementById("passphrase-status");
-  let pendingUnlock: Promise<boolean> | null = null;
+let state: State | null = null;
+let activeTab: chrome.tabs.Tab | undefined;
+let lastSession: LastSessionResult | null = null;
+let setupItems: SetupItem[] = [];
+let timerHandle: ReturnType<typeof setInterval> | null = null;
+let toastHandle: ReturnType<typeof setTimeout> | null = null;
 
-  function updatePassphraseStatus() {
-    if (!passphraseStatus) return;
-    if (isUnlocked()) {
-      passphraseStatus.className = "status-text status-success";
-      passphraseStatus.textContent = "Desbloqueado — criptografia ativa";
-    } else {
-      passphraseStatus.className = "status-text status-danger";
-      passphraseStatus.textContent = "Bloqueado — digite a frase para desbloquear";
-    }
-  }
+function show(id: string, visible: boolean) {
+  $(id).hidden = !visible;
+}
 
-  async function handlePassphraseUnlock(): Promise<boolean> {
-    if (isUnlocked()) return true;
-    const passphrase = passphraseInput?.value ?? "";
-    if (!passphrase) {
-      if (passphraseStatus) passphraseStatus.textContent = "Digite a frase de criptografia";
-      return false;
-    }
-    const success = await unlockCredentials(passphrase);
-    if (success) {
-      updatePassphraseStatus();
-      const creds = await getApiCredentials();
-      if (creds.openai_api_key) {
-        setupView.style.display = "none";
-        mainView.style.display = "block";
-      }
-      return true;
-    }
-    if (passphraseStatus) {
-      passphraseStatus.className = "status-text status-danger";
-      passphraseStatus.textContent =
-        "Frase incorreta — não foi possível descriptografar as credenciais";
-    }
-    return false;
-  }
+function toast(message: string, kind: "info" | "error" = "info") {
+  const el = $("pp-toast");
+  el.textContent = message;
+  el.className = `vb-toast${kind === "error" ? " vb-toast--error" : ""} is-visible`;
+  if (toastHandle) clearTimeout(toastHandle);
+  toastHandle = setTimeout(() => el.classList.remove("is-visible"), 3200);
+}
 
-  passphraseInput?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") pendingUnlock = handlePassphraseUnlock();
+function openOptions(anchor = "") {
+  void chrome.tabs.create({
+    url: chrome.runtime.getURL(`src/options.html${anchor ? `#${anchor}` : ""}`),
   });
-  passphraseInput?.addEventListener("blur", () => {
-    pendingUnlock = handlePassphraseUnlock();
-  });
+  window.close();
+}
 
-  // ——— Check whether first-run setup is still needed ———
-  // Setup is done when the legacy OpenAI vault key exists OR any AI provider
-  // block was saved (transcription itself works keyless against a local
-  // Whisper server, so a key is never a hard requirement).
-  const config = await getApiCredentials();
-  const providerBlocks = await chrome.storage.local.get([
-    storageKeyFor("transcription"),
-    storageKeyFor("summary"),
-  ]);
-  const setupDone =
-    Boolean(config.openai_api_key) ||
-    Boolean(providerBlocks[storageKeyFor("transcription")]) ||
-    Boolean(providerBlocks[storageKeyFor("summary")]);
+/** Must run synchronously inside the click handler (user gesture). */
+function openSidePanel(initialTab?: "history" | "transcript") {
+  if (initialTab) void chrome.storage.local.set({ [DASHBOARD_TAB_KEY]: initialTab });
+  const target =
+    activeTab?.id !== undefined
+      ? { tabId: activeTab.id }
+      : { windowId: activeTab?.windowId ?? chrome.windows.WINDOW_ID_CURRENT };
+  chrome.sidePanel
+    .open(target as chrome.sidePanel.OpenOptions)
+    .then(() => window.close())
+    .catch((err) => toast(`Não consegui abrir o painel: ${err?.message || err}`, "error"));
+}
 
-  if (!setupDone) {
-    setupView.style.display = "block";
-    mainView.style.display = "none";
+function activeMeetingId(): string | null {
+  return getMeetingIdFromUrl(activeTab?.url);
+}
+
+// ——— Rendering ———
+
+function renderStatusLine() {
+  const el = $("pp-status");
+  el.className = "pp-status";
+  if (state?.finalizing) {
+    el.textContent = "Salvando a reunião…";
+  } else if (state?.audioActive) {
+    el.classList.add("pp-status--recording");
+    const elapsed = state.startTime ? (Date.now() - state.startTime) / 1000 : 0;
+    el.innerHTML = `<span class="vb-rec-dot"></span>Gravando · ${formatClock(elapsed)}`;
+  } else if (activeMeetingId()) {
+    el.textContent = "Pronto para gravar";
+  } else if (state?.isActive && getMeetingIdFromUrl(state.meetingUrl ?? undefined)) {
+    el.textContent = "Reunião aberta em outra aba";
+  } else if (setupItems.some((item) => item.state === "missing")) {
+    el.textContent = "Configuração pendente";
   } else {
-    setupView.style.display = "none";
-    mainView.style.display = "block";
+    el.textContent = "Nenhuma reunião aberta";
+  }
+}
+
+function renderNotice(notice: MeetingNotice | null | undefined) {
+  const host = $("pp-notice");
+  if (!notice) {
+    host.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+  const iconName: IconName =
+    notice.severity === "error"
+      ? "alertCircle"
+      : notice.severity === "warning"
+        ? "alertTriangle"
+        : "info";
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="vb-notice vb-notice--${notice.severity}" role="${notice.severity === "error" ? "alert" : "status"}">
+      ${icon(iconName)}
+      <div class="vb-notice-body">${escapeHtml(notice.message)}</div>
+      <button type="button" class="vb-icon-btn vb-notice-dismiss" aria-label="Dispensar aviso">${icon("x")}</button>
+    </div>`;
+  host.querySelector("button")?.addEventListener("click", () => {
+    host.hidden = true;
+    void chrome.runtime.sendMessage({ type: "DISMISS_NOTICE" }).catch(() => {});
+  });
+}
+
+function renderRecording() {
+  if (!state) return;
+  const elapsed = state.startTime ? (Date.now() - state.startTime) / 1000 : 0;
+  $("pp-rec-timer").textContent = formatClock(elapsed);
+  const meeting = state.meetingId && state.meetingId !== "unknown" ? state.meetingId : "";
+  const mic = state.micActive === false ? " · sem microfone" : "";
+  $("pp-rec-meeting").textContent = `${meeting ? `${meeting}` : "Aba do navegador"}${mic}`;
+
+  const transcriptCount = state.truncatedCounts?.transcript ?? state.transcript?.length ?? 0;
+  $("pp-count-lines").textContent = String(transcriptCount);
+  $("pp-count-decisions").textContent = String(
+    state.truncatedCounts?.decisions ?? state.decisions?.length ?? 0,
+  );
+  $("pp-count-actions").textContent = String(
+    state.truncatedCounts?.actionItems ?? state.actionItems?.length ?? 0,
+  );
+
+  const last = state.transcript?.at(-1);
+  const lastLine = $("pp-last-line");
+  if (last?.text) {
+    lastLine.classList.remove("vb-muted");
+    lastLine.innerHTML = `<strong>${escapeHtml(speakerLabel(last.speaker))}:</strong> ${escapeHtml(last.text)}`;
+  } else {
+    lastLine.classList.add("vb-muted");
+    lastLine.textContent = "Aguardando a primeira fala…";
   }
 
-  void maybeStartPopupTour();
+  const summary = state.summary?.trim();
+  show("pp-summary-block", Boolean(summary));
+  $("pp-summary").textContent = summary || "";
+}
 
-  updatePassphraseStatus();
-
-  // ——— Setup: Save Key ———
-  document.getElementById("save-keys")?.addEventListener("click", async () => {
-    const apiKeyInput = document.getElementById("api-key-input") as HTMLInputElement;
-    const apiKey = apiKeyInput.value.trim();
-    const saveBtn = document.getElementById("save-keys") as HTMLButtonElement;
-
-    if (!isUnlocked()) {
-      if (pendingUnlock) await pendingUnlock;
-      if (!isUnlocked()) {
-        const unlocked = await handlePassphraseUnlock();
-        if (!unlocked) return;
-      }
-    }
-
-    if (!apiKey) {
-      shakeElement(apiKeyInput);
-      return;
-    }
-    //Validation.
-    const originalText = "Save Key";
-    saveBtn.disabled = true;
-    saveBtn.textContent = "Validating...";
-
-    const isValid = await validateProviderConnection(providerConfigFromProfile("openai", apiKey));
-    if (!isValid) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = originalText;
-      shakeElement(apiKeyInput);
-      //Helpful error message.
-      let errorEl = document.getElementById("api-key-error");
-      if (!errorEl) {
-        errorEl = document.createElement("div");
-        errorEl.id = "api-key-error";
-        errorEl.className = "status-text status-danger";
-        errorEl.style.fontSize = "11px";
-        errorEl.style.marginTop = "6px";
-        errorEl.style.textAlign = "left";
-        apiKeyInput.parentNode?.appendChild(errorEl);
-      }
-      errorEl.textContent = "Chave inválida. Verifique e tente novamente.";
-      return;
-    }
-    //Cleaning up.
-    const errorEl = document.getElementById("api-key-error");
-    if (errorEl) {
-      errorEl.remove();
-    }
-
-    // Since the popup only has one input currently, we'll save it as the
-    // encrypted vault OpenAI key. Other providers are configured in the
-    // options page under "AI Providers".
-
-    await saveApiCredentials({ openai_api_key: apiKey });
-    setupView.style.display = "none";
-    mainView.style.display = "block";
-    void maybeStartPopupTour();
-  });
-
-  // ——— Toggle API Key Visibility ———
-  document.getElementById("toggle-key")?.addEventListener("click", () => {
-    const input = document.getElementById("api-key-input") as HTMLInputElement;
-    input.type = input.type === "password" ? "text" : "password";
-  });
-
-  // ——— Settings ———
-  document.getElementById("settings-btn")?.addEventListener("click", () => {
-    chrome.runtime.openOptionsPage();
-  });
-
-  // ——— AI Providers setup shortcut (setup view) ———
-  document.getElementById("open-providers")?.addEventListener("click", () => {
-    chrome.runtime.openOptionsPage();
-  });
-
-  // ——— Open Dashboard ———
-  document.getElementById("open-dashboard")?.addEventListener("click", () => {
-    chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT });
-  });
-
-  // ——— Start Copilot (Audio Capture with User Gesture) ———
-  const copilotBtn = document.getElementById("start-copilot-btn") as HTMLButtonElement | null;
-
-  async function maybeStartPopupTour() {
-    const stored = await chrome.storage.local.get(POPUP_ONBOARDING_TOUR_KEY);
-    if (stored[POPUP_ONBOARDING_TOUR_KEY] || mainView.style.display === "none") return;
-    globalThis.setTimeout(() => showPopupTourStep(0), 150);
+function renderLastSession() {
+  const card = $("pp-last");
+  const recent = lastSession && Date.now() - lastSession.savedAt < LAST_SESSION_VISIBLE_MS;
+  if (!lastSession || !recent || state?.audioActive || state?.finalizing) {
+    card.hidden = true;
+    return;
   }
+  const s = lastSession;
+  const meta = s.empty
+    ? formatRelative(s.savedAt)
+    : `${formatDurationHuman(s.duration)} · ${plural(s.transcriptEntries, "fala", "falas")} · ${formatRelative(s.savedAt)}`;
 
-  async function completePopupTour() {
-    clearPopupTour();
-    await chrome.storage.local.set({ [POPUP_ONBOARDING_TOUR_KEY]: true });
-  }
+  let statusClass = "pending";
+  let statusIcon: IconName | "spinner" = "cloudUpload";
+  let statusText = "Salva neste navegador.";
+  const actions: string[] = [];
 
-  function clearPopupTour() {
-    document.querySelector(".tour-highlight")?.classList.remove("tour-highlight");
-    document.getElementById("popup-tour-card")?.remove();
-  }
-
-  function showPopupTourStep(stepIndex: number) {
-    const steps = [
-      {
-        selector: "#settings-btn",
-        title: "Configure API keys",
-        body: "Open Settings to add or update API keys before your first meeting.",
-        placement: "top",
-      },
-      {
-        selector: "#start-copilot-btn",
-        title: "Iniciar Copilot",
-        body: "Entre em um Google Meet e use Iniciar Copilot para começar a captura de áudio e os resumos ao vivo.",
-        placement: "bottom",
-      },
-    ];
-    const step = steps[stepIndex];
-    if (!step) {
-      void completePopupTour();
-      return;
-    }
-
-    clearPopupTour();
-    const target = document.querySelector(step.selector) as HTMLElement | null;
-    if (target?.offsetParent == null) {
-      showPopupTourStep(stepIndex + 1);
-      return;
-    }
-
-    target.classList.add("tour-highlight");
-    const card = document.createElement("div");
-    card.id = "popup-tour-card";
-    card.className = `popup-tour-card popup-tour-card--${step.placement}`;
-    card.innerHTML = `
-      <div class="popup-tour-kicker">Quick guide ${stepIndex + 1}/${steps.length}</div>
-      <h3>${escapeHtml(step.title)}</h3>
-      <p>${escapeHtml(step.body)}</p>
-      <div class="popup-tour-actions">
-        <button type="button" class="popup-tour-skip">Skip</button>
-        <button type="button" class="popup-tour-next">${stepIndex === steps.length - 1 ? "Done" : "Next"}</button>
-      </div>
-    `;
-    document.body.appendChild(card);
-
-    const targetRect = target.getBoundingClientRect();
-    const cardRect = card.getBoundingClientRect();
-    const top =
-      step.placement === "top"
-        ? Math.max(12, targetRect.bottom + 10)
-        : Math.max(12, targetRect.top - cardRect.height - 10);
-    const left = Math.min(
-      Math.max(12, targetRect.left + targetRect.width / 2 - cardRect.width / 2),
-      globalThis.innerWidth - cardRect.width - 12,
+  if (s.empty) {
+    statusClass = "warning";
+    statusIcon = "alertTriangle";
+    statusText =
+      "Nada foi transcrito nesta gravação. Confira o microfone e o servidor de transcrição.";
+    actions.push(
+      `<button class="vb-btn vb-btn--sm" data-act="settings" type="button">Abrir configurações</button>`,
     );
-    card.style.top = `${top}px`;
-    card.style.left = `${left}px`;
-
-    card
-      .querySelector(".popup-tour-skip")
-      ?.addEventListener("click", () => void completePopupTour());
-    card
-      .querySelector(".popup-tour-next")
-      ?.addEventListener("click", () => showPopupTourStep(stepIndex + 1));
+  } else if (s.vb?.status === "pending") {
+    statusIcon = "spinner";
+    statusText = "Enviando ao ValorBrain…";
+  } else if (s.vb?.status === "sent") {
+    statusClass = "success";
+    statusIcon = "checkCircle";
+    statusText = "Salva na memória do ValorBrain.";
+  } else if (s.vb?.status === "failed") {
+    statusClass = "error";
+    statusIcon = "alertCircle";
+    statusText = `Salva neste navegador, mas o envio ao ValorBrain falhou: ${s.vb.error || "erro desconhecido"}`;
+    actions.push(
+      `<button class="vb-btn vb-btn--primary vb-btn--sm" data-act="retry" type="button">${icon("refresh")}Tentar de novo</button>`,
+    );
+  } else if (s.vb?.status === "skipped") {
+    const notConnected = /não conectado/i.test(s.vb.error || "");
+    statusClass = "warning";
+    statusIcon = "alertTriangle";
+    statusText = notConnected
+      ? "Salva só neste navegador. Conecte o ValorBrain para levar as reuniões à memória da empresa."
+      : "Salva neste navegador. O envio automático está desligado.";
+    actions.push(
+      notConnected
+        ? `<button class="vb-btn vb-btn--primary vb-btn--sm" data-act="connect" type="button">Conectar o ValorBrain</button>`
+        : `<button class="vb-btn vb-btn--primary vb-btn--sm" data-act="retry" type="button">${icon("cloudUpload")}Enviar ao ValorBrain</button>`,
+    );
+  }
+  if (!s.empty && s.sessionId) {
+    actions.push(
+      `<button class="vb-btn vb-btn--sm" data-act="open" type="button">${icon("history")}Ver no histórico</button>`,
+    );
   }
 
-  function getPopupMediaStreamId(tabId: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message || "Unknown tab capture error"));
-          return;
+  const statusIconHtml =
+    statusIcon === "spinner"
+      ? '<span class="vb-spinner" aria-hidden="true"></span>'
+      : icon(statusIcon);
+
+  card.hidden = false;
+  card.innerHTML = `
+    <div class="pp-last-head">
+      <span class="vb-eyebrow">Última reunião</span>
+      <button class="vb-icon-btn" data-act="dismiss" type="button" aria-label="Dispensar">${icon("x")}</button>
+    </div>
+    <div class="pp-last-title">${escapeHtml(s.title || "Reunião")}</div>
+    <div class="pp-last-meta">${escapeHtml(meta)}</div>
+    <div class="pp-last-status pp-last-status--${statusClass}">${statusIconHtml}<span>${escapeHtml(statusText)}</span></div>
+    ${actions.length ? `<div class="pp-last-actions">${actions.join("")}</div>` : ""}`;
+
+  card.querySelectorAll<HTMLButtonElement>("[data-act]").forEach((btn) => {
+    btn.addEventListener("click", () => void handleLastSessionAction(btn));
+  });
+}
+
+async function handleLastSessionAction(btn: HTMLButtonElement) {
+  const action = btn.dataset.act;
+  if (action === "dismiss") {
+    lastSession = null;
+    renderLastSession();
+    await chrome.runtime.sendMessage({ type: "CLEAR_LAST_SESSION" }).catch(() => {});
+  } else if (action === "settings") {
+    openOptions();
+  } else if (action === "connect") {
+    openOptions("valorbrain");
+  } else if (action === "open") {
+    openSidePanel("history");
+  } else if (action === "retry" && lastSession?.sessionId) {
+    btn.disabled = true;
+    btn.setAttribute("aria-busy", "true");
+    btn.textContent = "Enviando…";
+    const result = await chrome.runtime
+      .sendMessage({ type: "VB_SEND_SESSION", sessionId: lastSession.sessionId })
+      .catch((err) => ({ ok: false, error: String(err?.message || err) }));
+    if (result?.ok) toast("Reunião enviada ao ValorBrain.");
+    else toast(`O envio falhou: ${result?.error || "erro desconhecido"}`, "error");
+    await loadLastSession();
+    renderLastSession();
+  }
+}
+
+function setupIcon(item: SetupItem): IconName {
+  if (item.state === "ok") return "checkCircle";
+  if (item.state === "warning") return "alertTriangle";
+  return "alertCircle";
+}
+
+function renderSetup() {
+  const section = $("pp-setup");
+  if (
+    setupItems.length === 0 ||
+    isSetupComplete(setupItems) ||
+    state?.audioActive ||
+    state?.finalizing
+  ) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  $("pp-setup-list").innerHTML = setupItems
+    .map(
+      (item) => `
+      <li class="pp-setup-item pp-setup-item--${item.state}">
+        ${icon(setupIcon(item))}
+        <div class="pp-setup-body">
+          <div class="pp-setup-title">${escapeHtml(item.title)}</div>
+          <div class="pp-setup-detail">${escapeHtml(item.detail)}</div>
+        </div>
+        ${
+          item.state === "ok"
+            ? ""
+            : `<button class="vb-btn vb-btn--sm pp-setup-fix" type="button" data-anchor="${escapeHtml(item.anchor)}">${
+                item.id === "microphone"
+                  ? "Liberar"
+                  : item.id === "valorbrain"
+                    ? "Conectar"
+                    : "Configurar"
+              }</button>`
         }
+      </li>`,
+    )
+    .join("");
+  section.querySelectorAll<HTMLButtonElement>("[data-anchor]").forEach((btn) => {
+    btn.addEventListener("click", () => openOptions(btn.dataset.anchor || ""));
+  });
+}
 
-        resolve(streamId || "");
-      });
-    });
+async function renderReadyMicWarning() {
+  const permission = await getMicPermission();
+  show("pp-mic-warning", permission === "prompt" || permission === "denied");
+}
+
+function render() {
+  renderStatusLine();
+  renderNotice(state?.notice);
+
+  const finalizing = state?.finalizing === true;
+  const recording = !finalizing && state?.audioActive === true;
+  const meetingHere = !finalizing && !recording && Boolean(activeMeetingId());
+  const elsewhere =
+    !finalizing &&
+    !recording &&
+    !meetingHere &&
+    Boolean(state?.isActive && getMeetingIdFromUrl(state?.meetingUrl ?? undefined)) &&
+    state?.targetTabId !== activeTab?.id;
+
+  show("pp-finalizing", finalizing);
+  show("pp-recording", recording);
+  show("pp-ready", meetingHere);
+  show("pp-elsewhere", elsewhere);
+  show("pp-idle", !finalizing && !recording && !meetingHere && !elsewhere);
+
+  if (recording) renderRecording();
+  if (meetingHere) {
+    $("pp-ready-meeting").textContent = activeMeetingId() || "";
+    void renderReadyMicWarning();
   }
+  if (elsewhere) $("pp-elsewhere-meeting").textContent = state?.meetingId || "";
 
-  async function requestPopupMicrophonePermission(): Promise<boolean> {
-    try {
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      micStream.getTracks().forEach((track) => track.stop());
-      return true;
-    } catch {
-      console.warn("[LateMeet] Microphone permission not granted — recording tab audio only");
-      return false;
-    }
+  renderLastSession();
+  renderSetup();
+
+  if (recording && !timerHandle) {
+    timerHandle = setInterval(() => {
+      renderStatusLine();
+      if (state?.audioActive && state.startTime) {
+        $("pp-rec-timer").textContent = formatClock((Date.now() - state.startTime) / 1000);
+      }
+    }, 1000);
+  } else if (!recording && timerHandle) {
+    clearInterval(timerHandle);
+    timerHandle = null;
   }
+}
 
-  async function handleStopAudio(btn?: HTMLButtonElement | null) {
-    if (!lastState?.audioActive) return;
+// ——— Actions ———
 
-    try {
-      if (btn) btn.disabled = true;
-      await chrome.runtime.sendMessage({ type: "MANUAL_STOP_AUDIO" });
-    } catch (err) {
-      console.error("[LateMeet] Failed to stop audio:", err);
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  }
-
-  async function handleStartAudio(btn: HTMLButtonElement) {
-    const textEl = btn.querySelector(".copilot-btn-text");
-    const originalText = textEl?.textContent || "Start";
-
-    if (lastState?.audioActive) {
-      console.log("[LateMeet] Audio already active, skipping capture request.");
-      return;
-    }
-
-    // Soft pre-flight: transcription works without any key (e.g. a local
-    // Whisper server), but summaries need the summary provider's API key.
-    // Warn without blocking the zero-cost local flow.
-    const summaryProvider = await getProviderConfig("summary");
-    if (!(await resolveProviderApiKey(summaryProvider))) {
-      if (textEl) {
-        textEl.textContent = "⚠️ Sem chave de resumo — só transcrição";
-        setTimeout(() => {
-          if (textEl) textEl.textContent = originalText;
-        }, 2000);
-      }
-    }
-
-    try {
-      // Show loading state
-      btn.disabled = true;
-      if (textEl) textEl.textContent = "Starting...";
-      btn.classList.add("loading");
-
-      const { meetingId, microphoneEnabled } = await startPopupAudioCapture({
-        resolveMeetTab: resolveManualMeetTab,
-        getMediaStreamId: getPopupMediaStreamId,
-        requestMicrophonePermission: requestPopupMicrophonePermission,
-        startAudioCapture: (payload) =>
-          chrome.runtime.sendMessage({
-            type: "MANUAL_START_AUDIO",
-            ...payload,
-          }),
-      });
-
-      if (!microphoneEnabled) {
-        console.warn("[LateMeet] Started without microphone input — tab audio only");
-      }
-
-      // Clear loading state before setting active state
-      btn.disabled = false;
-      btn.classList.remove("loading");
-      setCopilotActive(true);
-      // Immediately show meeting section and start timer
-      if (meetingSection) meetingSection.style.display = "block";
-      if (noMeetingSection) noMeetingSection.style.display = "none";
-      if (meetingId) {
-        const meetingIdEl = document.getElementById("meeting-id");
-        if (meetingIdEl) meetingIdEl.textContent = meetingId;
-      }
-      const badge = document.getElementById("status-badge");
-      if (badge) {
-        badge.className = "status-badge active";
-        const statusText = badge.querySelector(".status-text");
-        if (statusText) statusText.textContent = "Gravando...";
-      }
-      startDurationTimer(Date.now());
-    } catch (err: any) {
-      if ((err.message || "").includes("active stream")) {
-        setCopilotActive(true);
+function getStreamId(tabId: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }, (streamId) => {
+      if (chrome.runtime.lastError || !streamId) {
+        reject(
+          new Error(
+            "O Chrome não liberou a captura desta aba. Clique de novo no ícone do ValorBrain Meet com a aba da reunião aberta.",
+          ),
+        );
         return;
       }
-
-      handleStartAudioError(err);
-    }
-
-    function handleStartAudioError(err: any) {
-      console.error("Failed to start audio capture:", err);
-      btn.disabled = false;
-      btn.classList.remove("loading");
-      if (textEl) {
-        textEl.textContent =
-          err.message?.length > 40 ? "Erro — veja o console" : err.message || "Erro desconhecido";
-        setTimeout(() => {
-          if (textEl) textEl.textContent = originalText;
-        }, 3000);
-      }
-    }
-  }
-
-  copilotBtn?.addEventListener("click", () => handleStartAudio(copilotBtn));
-  document.getElementById("meeting-start-audio-btn")?.addEventListener("click", (e) => {
-    const btn = e.currentTarget as HTMLButtonElement | null;
-    if (!btn) return;
-    if (lastState?.audioActive) {
-      handleStopAudio(btn);
-      return;
-    }
-    handleStartAudio(btn);
-  });
-
-  function setCopilotActive(active: boolean) {
-    if (!copilotBtn) return;
-    const miniBtn = document.getElementById("meeting-start-audio-btn");
-    const iconEl = copilotBtn.querySelector(".copilot-btn-icon");
-    const textEl = copilotBtn.querySelector(".copilot-btn-text");
-
-    const getMiniBtnLabelNode = () => {
-      if (!miniBtn) return null;
-      return (
-        Array.from(miniBtn.childNodes)
-          .reverse()
-          .find((n) => n.nodeType === Node.TEXT_NODE && String(n.textContent || "").trim()) || null
-      );
-    };
-
-    if (active) {
-      copilotBtn.classList.remove("loading");
-      copilotBtn.classList.add("active");
-      if (textEl) textEl.textContent = "Gravando...";
-      if (iconEl)
-        iconEl.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
-      copilotBtn.disabled = true;
-      if (miniBtn) {
-        miniBtn.style.display = "flex";
-        miniBtn.classList.add("active");
-        miniBtn.title = "Stop audio capture";
-        const labelNode = getMiniBtnLabelNode();
-        if (labelNode) labelNode.textContent = " Stop Audio";
-      }
-    } else {
-      copilotBtn.classList.remove("active");
-      if (textEl) textEl.textContent = "Iniciar Copilot";
-      if (iconEl)
-        iconEl.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>';
-      copilotBtn.disabled = false;
-      if (miniBtn) {
-        miniBtn.style.display = "flex";
-        miniBtn.classList.remove("active");
-        miniBtn.title = "Start audio capture";
-        const labelNode = getMiniBtnLabelNode();
-        if (labelNode) labelNode.textContent = " Start Audio";
-      }
-    }
-  }
-
-  // ——— Session Save/Discard Modal ———
-  let previouslyFocusedElement: HTMLElement | null = null;
-
-  function trapFocus(e: KeyboardEvent) {
-    if (e.key !== "Tab") return;
-    const focusableEls = sessionModal.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    );
-    if (focusableEls.length === 0) return;
-    const firstEl = focusableEls[0];
-    const lastEl = focusableEls[focusableEls.length - 1];
-    if (e.shiftKey) {
-      if (document.activeElement === firstEl) {
-        e.preventDefault();
-        lastEl.focus();
-      }
-    } else {
-      if (document.activeElement === lastEl) {
-        e.preventDefault();
-        firstEl.focus();
-      }
-    }
-  }
-
-  function handleModalKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      hideSessionModal();
-    }
-    trapFocus(e);
-  }
-
-  function showSessionModal() {
-    const saveBtn = document.getElementById("save-session-btn") as HTMLButtonElement | null;
-    const discardBtn = document.getElementById("discard-session-btn") as HTMLButtonElement | null;
-    if (sessionModalError) {
-      sessionModalError.hidden = true;
-      sessionModalError.textContent = "";
-    }
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = "Save Session";
-      saveBtn.classList.remove("loading");
-    }
-    if (discardBtn) {
-      discardBtn.disabled = false;
-      discardBtn.textContent = "Discard";
-      discardBtn.classList.remove("loading");
-    }
-    previouslyFocusedElement = document.activeElement as HTMLElement | null;
-    sessionModal.style.display = "flex";
-    requestAnimationFrame(() => {
-      sessionModal.classList.add("visible");
-      // Move focus into the modal
-      (saveBtn || discardBtn)?.focus();
+      resolve(streamId);
     });
-    sessionModal.addEventListener("keydown", handleModalKeydown);
-  }
-
-  function hideSessionModal() {
-    sessionModal.classList.remove("visible");
-    sessionModal.removeEventListener("keydown", handleModalKeydown);
-    setTimeout(() => {
-      sessionModal.style.display = "none";
-      // Return focus to the previously focused element
-      previouslyFocusedElement?.focus();
-      previouslyFocusedElement = null;
-    }, 300);
-  }
-
-  // Backdrop click to dismiss
-  sessionModal.querySelector(".session-modal-backdrop")?.addEventListener("click", () => {
-    hideSessionModal();
   });
+}
 
-  document.getElementById("save-session-btn")?.addEventListener("click", async (e) => {
-    const btn = e.currentTarget as HTMLButtonElement;
-    const discardBtn = document.getElementById("discard-session-btn") as HTMLButtonElement | null;
-    const originalText = btn.textContent || "Save Session";
+async function startRecording(button: HTMLButtonElement, errorId: string) {
+  const tab = activeTab;
+  const errorEl = $(errorId);
+  errorEl.hidden = true;
+  if (!tab?.id) return;
 
-    btn.disabled = true;
-    btn.textContent = "Saving...";
-    btn.classList.add("loading");
-    if (sessionModalError) {
-      sessionModalError.hidden = true;
-      sessionModalError.textContent = "";
-    }
-    if (discardBtn) {
-      discardBtn.disabled = true;
-    }
+  const label = button.querySelector(".pp-start-label") ?? button;
+  const original = label.textContent;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  label.textContent = "Iniciando…";
 
-    try {
-      const response = await chrome.runtime.sendMessage({ type: "SAVE_SESSION" });
-      if (!response?.success) {
-        throw new Error(response?.error || "Failed to save session");
-      }
-      hideSessionModal();
-    } catch (err) {
-      console.error("[LateMeet] Failed to save session:", err);
-      if (sessionModalError) {
-        sessionModalError.hidden = false;
-        sessionModalError.textContent =
-          err instanceof Error
-            ? err.message
-            : "Unable to save this session. Export it from the dashboard before closing Chrome.";
-      }
-      // Restore states on error
-      btn.disabled = false;
-      btn.textContent = originalText;
-      btn.classList.remove("loading");
-      if (discardBtn) {
-        discardBtn.disabled = false;
-      }
-    }
-  });
-
-  document.getElementById("discard-session-btn")?.addEventListener("click", async (e) => {
-    if (
-      !confirm(
-        "Are you sure you want to discard this session? All meeting intelligence will be permanently lost.",
-      )
-    ) {
-      return;
-    }
-    const btn = e.currentTarget as HTMLButtonElement;
-    const saveBtn = document.getElementById("save-session-btn") as HTMLButtonElement | null;
-    const originalText = btn.textContent || "Discard";
-
-    btn.disabled = true;
-    btn.textContent = "Discarding...";
-    btn.classList.add("loading");
-    if (saveBtn) {
-      saveBtn.disabled = true;
-    }
-
-    try {
-      const response = await chrome.runtime.sendMessage({ type: "DISCARD_SESSION" });
-      if (!response?.success) {
-        throw new Error(response?.error || "Failed to discard session");
-      }
-      hideSessionModal();
-    } catch (err) {
-      console.error("[LateMeet] Failed to discard session:", err);
-      // Restore states on error
-      btn.disabled = false;
-      btn.textContent = originalText;
-      btn.classList.remove("loading");
-      if (saveBtn) {
-        saveBtn.disabled = false;
-      }
-    }
-  });
-
-  // ——— Check for pending session on load ———
-  const { pendingSession } = (await chrome.storage.local.get("pendingSession")) as {
-    pendingSession?: State;
-  };
-  if (pendingSession && !pendingSession.isActive) {
-    showSessionModal();
-  }
-
-  // ——— Get Initial state load ———
   try {
-    lastState = await chrome.runtime.sendMessage({ type: "GET_STATE" });
-    if (lastState) updateUI(lastState);
+    const streamId = await getStreamId(tab.id);
+    const permission = await getMicPermission();
+    const meetingId =
+      getMeetingIdFromUrl(tab.url) || (tab.title || "Aba do navegador").slice(0, 80);
+    const response = await chrome.runtime.sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: tab.id,
+      meetingId,
+      meetingUrl: tab.url || null,
+      streamId,
+      includeMicrophone: permission === "granted" || permission === "unknown",
+    });
+    if (!response?.success)
+      throw new Error(response?.error || "Não foi possível iniciar a gravação.");
+    state = (await chrome.runtime.sendMessage({ type: "GET_STATE" }).catch(() => state)) ?? state;
+    render();
+  } catch (err) {
+    errorEl.textContent = (err as Error)?.message || String(err);
+    errorEl.hidden = false;
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    label.textContent = original;
+  }
+}
+
+async function stopRecording(button: HTMLButtonElement) {
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = "Encerrando…";
+  await chrome.runtime.sendMessage({ type: "MANUAL_STOP_AUDIO" }).catch(() => {});
+  // The service worker broadcasts `finalizing` right away; render it even if
+  // the broadcast raced the response.
+  if (state) state = { ...state, finalizing: true };
+  render();
+}
+
+// ——— Data ———
+
+async function loadLastSession() {
+  const stored = await chrome.storage.local.get(LAST_SESSION_KEY);
+  lastSession = (stored[LAST_SESSION_KEY] as LastSessionResult | undefined) ?? null;
+}
+
+async function loadSetup() {
+  setupItems = await getSetupStatus({ probe: true }).catch(() => []);
+  renderSetup();
+  renderStatusLine();
+}
+
+/**
+ * Footer hint with the shortcut Chrome really bound to "toggle-recording".
+ * Chrome skips a suggested key that collides with its own accelerators and the
+ * user may rebind it, so the binding is read at runtime, never hardcoded.
+ */
+async function renderShortcut() {
+  const host = $("pp-shortcut");
+  const commands = await chrome.commands.getAll().catch(() => []);
+  const shortcut = commands.find((command) => command.name === "toggle-recording")?.shortcut ?? "";
+  host.replaceChildren();
+  if (shortcut) {
+    shortcut.split("+").forEach((key, index) => {
+      if (index > 0) host.append(" + ");
+      const kbd = document.createElement("span");
+      kbd.className = "vb-kbd";
+      kbd.textContent = key.trim();
+      host.append(kbd);
+    });
+    host.append(" inicia ou encerra");
+    return;
+  }
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "pp-link";
+  link.textContent = "Definir atalho de gravação";
+  link.addEventListener("click", () => {
+    void chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+    window.close();
+  });
+  host.append(link);
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  hydrateIcons();
+  void renderShortcut();
+
+  $("pp-open-settings").addEventListener("click", () => openOptions());
+  $("pp-setup-open").addEventListener("click", () => openOptions());
+  $("pp-open-panel").addEventListener("click", () => openSidePanel());
+  $("pp-panel-secondary").addEventListener("click", () => openSidePanel("transcript"));
+  $("pp-history").addEventListener("click", () => openSidePanel("history"));
+  $("pp-grant-mic").addEventListener("click", () => openOptions("microfone"));
+  $("pp-open-meet").addEventListener("click", () => {
+    void chrome.tabs.create({ url: "https://meet.google.com/" });
+    window.close();
+  });
+  $("pp-go-meeting").addEventListener("click", async () => {
+    if (typeof state?.targetTabId === "number") {
+      const tab = await chrome.tabs.update(state.targetTabId, { active: true }).catch(() => null);
+      if (tab?.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
+      window.close();
+    }
+  });
+  $<HTMLButtonElement>("pp-start").addEventListener(
+    "click",
+    (e) => void startRecording(e.currentTarget as HTMLButtonElement, "pp-start-error"),
+  );
+  $<HTMLButtonElement>("pp-record-tab").addEventListener(
+    "click",
+    (e) => void startRecording(e.currentTarget as HTMLButtonElement, "pp-idle-error"),
+  );
+  $<HTMLButtonElement>("pp-stop").addEventListener(
+    "click",
+    (e) => void stopRecording(e.currentTarget as HTMLButtonElement),
+  );
+
+  [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const internalPage =
+    !activeTab?.url || /^(chrome|edge|about|chrome-extension):/.test(activeTab.url);
+  $("pp-record-tab").hidden = internalPage;
+
+  await loadLastSession();
+  try {
+    state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
   } catch {
-    /* background script might be idle */
+    state = null;
   }
+  render();
+  void loadSetup();
 
-  // ——— Listen for State Updates ———
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === "STATE_UPDATE") {
-      lastState = message.state;
-      updateUI(message.state);
-    }
-    if (message.type === "SESSION_ENDED") {
-      showSessionModal();
-    }
-  });
-
-  // ——— Duration Timer ———
-  let durationInterval: number | NodeJS.Timeout | null = null;
-
-  function startDurationTimer(startTime: number) {
-    if (durationInterval) return;
-
-    durationInterval = setInterval(() => {
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      const timerEl = document.getElementById("meeting-duration");
-      if (timerEl) timerEl.textContent = formatDuration(elapsed);
-    }, 1000);
-  }
-
-  // ——— Update UI ———
-  function updateUI(state: State) {
-    if (state.isActive) {
-      if (meetingSection) meetingSection.style.display = "block";
-      if (noMeetingSection) noMeetingSection.style.display = "none";
-
-      const badge = document.getElementById("status-badge");
-      if (badge) {
-        badge.className = "status-badge active";
-        const statusText = badge.querySelector(".status-text");
-        if (statusText)
-          statusText.textContent = state.audioActive ? "Gravando..." : "Reunião ativa";
-      }
-
-      const meetingIdEl = document.getElementById("meeting-id");
-      if (meetingIdEl) meetingIdEl.textContent = state.meetingId || "—";
-
-      if (state.startTime) startDurationTimer(state.startTime);
-
-      const summaryEl = document.getElementById("summary-text");
-      if (summaryEl) summaryEl.textContent = state.summary || "Aguardando a conversa...";
-
-      const topicEl = document.getElementById("current-topic");
-      if (topicEl) topicEl.textContent = state.currentTopic || "Detecting...";
-
-      const participantsCountEl = document.getElementById("participant-count");
-      if (participantsCountEl)
-        participantsCountEl.textContent = String(state.participants?.length || 0);
-
-      const decisionCountEl = document.getElementById("decision-count");
-      if (decisionCountEl) decisionCountEl.textContent = String(state.decisions?.length || 0);
-
-      const actionCountEl = document.getElementById("action-count");
-      if (actionCountEl) actionCountEl.textContent = String(state.actionItems?.length || 0);
-
-      const sentimentEl = document.getElementById("sentiment-icon");
-      if (sentimentEl) sentimentEl.textContent = getSentimentEmoji(state.sentiment);
-
-      setCopilotActive(state.audioActive || false);
-
-      const topicsList = document.getElementById("topics-list");
-      if (topicsList) {
-        if (state.topics && state.topics.length > 0) {
-          topicsList.innerHTML =
-            `<ul class="topics-items-list">` +
-            state.topics
-              .map(
-                (t) => `
-            <li class="topic-item">
-              <div class="topic-dot ${sanitizeTopicStatus(t.status)}"></div>
-              <span class="topic-name">${escapeHtml(t.name || "")}</span>
-              <span class="topic-status ${sanitizeTopicStatus(t.status)}">${escapeHtml(t.status || "active")}</span>
-            </li>
-          `,
-              )
-              .join("") +
-            `</ul>`;
-        } else {
-          topicsList.innerHTML = '<div class="empty-state">No topics detected yet</div>';
-        }
-      }
-
-      const lateSection = document.getElementById("late-joiners-section");
-      const lateList = document.getElementById("late-joiners-list");
-      if (lateSection && lateList) {
-        if (state.lateJoiners && state.lateJoiners.length > 0) {
-          lateSection.style.display = "block";
-          lateList.innerHTML = state.lateJoiners
-            .map(
-              (name) => `
-            <div class="late-joiner-item">
-              <span class="joiner-icon">🚪</span>
-              <span class="joiner-name">${escapeHtml(name || "")}</span>
-              <span class="late-joiner-briefed-badge">briefed ✓</span>
-            </div>
-          `,
-            )
-            .join("");
-        } else {
-          lateSection.style.display = "none";
-          lateList.innerHTML = "";
-        }
-      }
-    } else {
-      if (meetingSection) meetingSection.style.display = "none";
-      if (noMeetingSection) noMeetingSection.style.display = "block";
-
-      const badge = document.getElementById("status-badge");
-      if (badge) {
-        badge.className = "status-badge inactive";
-        const statusText = badge.querySelector(".status-text");
-        if (statusText) statusText.textContent = "No active meeting";
-      }
-
-      if (durationInterval) {
-        clearInterval(durationInterval as any);
-        durationInterval = null;
-      }
-    }
-  }
-
-  // ——— Helpers ———
-  function getSentimentEmoji(sentiment: string) {
-    const map: Record<string, string> = {
-      positive: "😊",
-      negative: "😟",
-      neutral: "😐",
-      mixed: "🤔",
-    };
-    return map[sentiment] || "—";
-  }
-
-  function shakeElement(el: HTMLElement | null) {
-    if (!el) return;
-    el.classList.add("shake", "border-danger");
-    setTimeout(() => {
-      el.classList.remove("shake", "border-danger");
-    }, 400);
-  }
-
-  // ——— Cleanup on popup close ———
-  globalThis.addEventListener("unload", () => {
-    if (durationInterval) {
-      clearInterval(durationInterval as number);
-      durationInterval = null;
+    if (message?.type === "STATE_UPDATE" && message.state) {
+      state = message.state;
+      render();
+    } else if (message?.type === "SESSION_ENDED") {
+      void loadLastSession().then(render);
     }
   });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local") return;
+    if (changes[LAST_SESSION_KEY]) {
+      lastSession = (changes[LAST_SESSION_KEY].newValue as LastSessionResult | undefined) ?? null;
+      renderLastSession();
+    }
+    if (changes.settings || changes["provider.summary"] || changes["provider.transcription"]) {
+      void loadSetup();
+    }
+  });
+});
+
+globalThis.addEventListener("unload", () => {
+  if (timerHandle) clearInterval(timerHandle);
 });

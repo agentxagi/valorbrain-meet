@@ -6,214 +6,141 @@ import {
   deleteAllSavedMeetingSessions,
 } from "./utils/storageUtils";
 import { StorageStats } from "./types";
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+import { escapeHtml } from "./utils/domHelpers";
 
 export async function renderStorageDashboard(container: HTMLElement): Promise<void> {
-  container.innerHTML = '<p class="storage-loading">Loading storage data…</p>';
-
+  container.innerHTML = '<p class="sd-loading">Carregando o uso do armazenamento…</p>';
   try {
     const stats = await getStorageStats();
     container.innerHTML = buildDashboardHTML(stats);
     applyStorageStyles(container, stats);
     attachEventListeners(container);
   } catch (err) {
-    console.error("[LateMeet] Failed to load storage dashboard:", err);
-    container.innerHTML = '<p class="storage-error">Failed to load storage data.</p>';
+    console.error("[ValorBrainMeet] Failed to load storage dashboard:", err);
+    container.innerHTML = '<p class="sd-error">Não foi possível ler o armazenamento local.</p>';
   }
 }
 
-/** CSP-safe: estilos dinâmicos da barra e dos dots via style API pós-insert. */
+/** CSP-safe: dynamic widths/colours are applied through the style API. */
 function applyStorageStyles(container: HTMLElement, stats: StorageStats): void {
-  const bar = container.querySelector<HTMLElement>(".storage-progress-bar");
+  const bar = container.querySelector<HTMLElement>(".sd-bar-fill");
   if (bar) {
-    bar.style.width = `${stats.unlimited ? 100 : stats.percentUsed}%`;
-    bar.style.background =
-      !stats.unlimited && stats.percentUsed >= stats.warningThreshold
-        ? "var(--color-text-danger)"
-        : "var(--color-text-success)";
+    bar.style.width = `${Math.min(100, Math.max(0, stats.percentUsed))}%`;
   }
-  container.querySelectorAll<HTMLElement>(".breakdown-color-dot").forEach((dot) => {
-    const color = dot.dataset.color;
-    if (color) dot.style.background = color;
+  container.querySelectorAll<HTMLElement>(".sd-dot").forEach((dot) => {
+    if (dot.dataset.color) dot.style.background = dot.dataset.color;
   });
 }
 
 function buildDashboardHTML(stats: StorageStats): string {
   const isWarning = !stats.unlimited && stats.percentUsed >= stats.warningThreshold;
-  const usageValue = stats.unlimited
-    ? `${formatBytes(stats.totalBytes)} <span class="storage-unlimited">• ilimitado</span>`
-    : `${formatBytes(stats.totalBytes)} / ${formatBytes(stats.quotaBytes)}`;
+  const usage = stats.unlimited
+    ? `${formatBytes(stats.totalBytes)} usados · sem limite`
+    : `${formatBytes(stats.totalBytes)} de ${formatBytes(stats.quotaBytes)} (${stats.percentUsed}%)`;
 
   return `
-    <div class="storage-dashboard">
-
-      ${
-        isWarning
-          ? `
-        <div class="storage-warning">
-          <span>⚠ Storage usage is above ${stats.warningThreshold}%. Consider removing old meetings.</span>
+    <div class="sd">
+      ${isWarning ? `<p class="sd-warning">O armazenamento passou de ${stats.warningThreshold}%. Exclua reuniões antigas.</p>` : ""}
+      <div class="sd-summary">
+        <div class="sd-summary-row">
+          <span class="vb-label">${stats.meetingCount} ${stats.meetingCount === 1 ? "reunião salva" : "reuniões salvas"}</span>
+          <span class="vb-muted">${usage}</span>
         </div>
-      `
-          : ""
-      }
-
-      <div class="storage-card">
-        <div class="storage-card-header">
-          <span class="storage-label">Total storage used</span>
-          <span class="storage-value">${usageValue}</span>
-        </div>
-        <div class="storage-progress-track">
-          <div class="storage-progress-bar"></div>
-        </div>
-        <div class="storage-percent">${
-          stats.unlimited
-            ? "ilimitado (unlimitedStorage) • " + stats.meetingCount + " reuniões armazenadas"
-            : stats.percentUsed + "% used • " + stats.meetingCount + " meetings stored"
-        }</div>
+        ${stats.unlimited ? "" : '<div class="sd-bar"><div class="sd-bar-fill"></div></div>'}
       </div>
-
-      <div class="storage-breakdown">
-        ${buildBreakdownCard("Transcripts", stats.transcriptBytes, stats.totalBytes, "#534AB7")}
-        ${buildBreakdownCard("Summaries", stats.summaryBytes, stats.totalBytes, "#0F6E56")}
-        ${buildBreakdownCard("Action Items", stats.actionItemBytes, stats.totalBytes, "#185FA5")}
-        ${buildBreakdownCard("Settings", stats.settingsBytes, stats.totalBytes, "#5F5E5A")}
+      <div class="sd-breakdown">
+        ${breakdown("Transcrições", stats.transcriptBytes, stats.totalBytes, "var(--vb-chart-3)")}
+        ${breakdown("Resumos", stats.summaryBytes, stats.totalBytes, "var(--vb-green)")}
+        ${breakdown("Próximos passos", stats.actionItemBytes, stats.totalBytes, "var(--vb-chart-1)")}
+        ${breakdown("Configurações", stats.settingsBytes, stats.totalBytes, "var(--vb-slate)")}
       </div>
-
       ${
         stats.largestMeetings.length > 0
-          ? `
-        <div class="storage-card">
-          <div class="storage-card-header storage-card-controls">
-            <span class="storage-label">Largest meetings</span>
-            <div class="storage-actions">
-              <button id="storage-delete-selected" class="btn btn-danger" aria-label="Delete selected sessions" disabled>Delete Selected</button>
-              <button id="storage-clear-all" class="btn btn-warning" aria-label="Clear all saved sessions">Clear All</button>
-              <button id="storage-select-all" class="btn" aria-pressed="false" aria-label="Select all sessions">Select All</button>
+          ? `<div class="sd-list-head">
+              <span class="vb-label">Maiores reuniões</span>
+              <div class="sd-actions">
+                <button id="storage-select-all" class="vb-btn vb-btn--sm" type="button" aria-pressed="false">Selecionar todas</button>
+                <button id="storage-delete-selected" class="vb-btn vb-btn--sm vb-btn--danger-outline" type="button" disabled>Excluir selecionadas</button>
+                <button id="storage-clear-all" class="vb-btn vb-btn--sm vb-btn--danger-outline" type="button">Excluir todas</button>
+              </div>
             </div>
-          </div>
-          <ul class="storage-meeting-list" id="storage-meeting-list">
-            ${stats.largestMeetings
-              .map(
-                (m) => `
-              <li class="storage-meeting-item">
-                <label class="storage-meeting-select">
-                  <input type="checkbox" class="storage-meeting-checkbox" data-id="${escapeHtml(m.id)}" aria-label="Select ${escapeHtml(m.title)}" />
-                  <span class="visually-hidden">Select ${escapeHtml(m.title)}</span>
-                </label>
-                <div class="storage-meeting-info">
-                  <span class="storage-meeting-title">${escapeHtml(m.title)}</span>
-                  <span class="storage-meeting-size">${formatBytes(m.totalBytes)}</span>
-                </div>
-                <button class="storage-delete-btn" data-id="${escapeHtml(m.id)}" aria-label="Delete ${escapeHtml(m.title)}">Delete</button>
-              </li>
-            `,
-              )
-              .join("")}
-          </ul>
-        </div>
-      `
-          : ""
+            <ul class="sd-list">
+              ${stats.largestMeetings
+                .map(
+                  (m) => `<li class="sd-item">
+                    <input type="checkbox" class="sd-check" data-id="${escapeHtml(m.id)}" aria-label="Selecionar ${escapeHtml(m.title)}" />
+                    <div class="sd-item-body">
+                      <span class="sd-item-title">${escapeHtml(m.title)}</span>
+                      <span class="vb-hint">${escapeHtml(m.date)} · ${formatBytes(m.totalBytes)}</span>
+                    </div>
+                    <button class="vb-btn vb-btn--sm vb-btn--ghost sd-delete" type="button" data-id="${escapeHtml(m.id)}" aria-label="Excluir ${escapeHtml(m.title)}">Excluir</button>
+                  </li>`,
+                )
+                .join("")}
+            </ul>`
+          : `<p class="vb-hint">Nenhuma reunião salva ainda.</p>`
       }
-
-      <button class="storage-refresh-btn" id="storage-refresh">Refresh</button>
-    </div>
-  `;
+      <button id="storage-refresh" class="vb-btn vb-btn--sm" type="button">Atualizar</button>
+    </div>`;
 }
 
-function buildBreakdownCard(label: string, bytes: number, total: number, color: string): string {
+function breakdown(label: string, bytes: number, total: number, color: string): string {
   const pct = total > 0 ? Math.round((bytes / total) * 100) : 0;
-  return `
-    <div class="storage-breakdown-card">
-      <div class="breakdown-color-dot" data-color="${color}"></div>
-      <div class="breakdown-info">
-        <span class="breakdown-label">${label}</span>
-        <span class="breakdown-bytes">${formatBytes(bytes)}</span>
-      </div>
-      <span class="breakdown-pct">${pct}%</span>
-    </div>
-  `;
+  return `<div class="sd-part">
+      <span class="sd-dot" data-color="${color}"></span>
+      <span class="sd-part-label">${label}</span>
+      <span class="vb-hint">${formatBytes(bytes)} · ${pct}%</span>
+    </div>`;
 }
 
 function attachEventListeners(container: HTMLElement): void {
-  container.querySelectorAll(".storage-delete-btn").forEach((btn) => {
-    btn.addEventListener("click", async (e) => {
-      const id = (e.target as HTMLElement).dataset.id!;
-      const title =
-        (e.target as HTMLElement)
-          .closest(".storage-meeting-item")
-          ?.querySelector(".storage-meeting-title")?.textContent || id;
-
-      if (confirm(`Delete stored data for "${title}"? This cannot be undone.`)) {
-        try {
-          await deleteSavedMeetingSession(chrome.storage.local, id);
-          await renderStorageDashboard(container);
-        } catch (err) {
-          console.error("[LateMeet] Failed to delete session:", err);
-          alert("Failed to delete session. See console for details.");
-        }
-      }
+  container.querySelectorAll<HTMLButtonElement>(".sd-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id!;
+      const title = btn.closest(".sd-item")?.querySelector(".sd-item-title")?.textContent || id;
+      if (
+        !confirm(`Excluir “${title}” deste navegador? O que já está no ValorBrain não é afetado.`)
+      )
+        return;
+      await deleteSavedMeetingSession(chrome.storage.local, id);
+      await renderStorageDashboard(container);
     });
   });
 
-  const meetingList = container.querySelectorAll<HTMLInputElement>(".storage-meeting-checkbox");
-  const deleteSelectedBtn = container.querySelector<HTMLButtonElement>("#storage-delete-selected");
-  const clearAllBtn = container.querySelector<HTMLButtonElement>("#storage-clear-all");
-  const selectAllBtn = container.querySelector<HTMLButtonElement>("#storage-select-all");
+  const boxes = container.querySelectorAll<HTMLInputElement>(".sd-check");
+  const deleteSelected = container.querySelector<HTMLButtonElement>("#storage-delete-selected");
+  const selectAll = container.querySelector<HTMLButtonElement>("#storage-select-all");
+  const selected = () =>
+    Array.from(boxes)
+      .filter((b) => b.checked)
+      .map((b) => b.dataset.id!);
+  const sync = () => {
+    if (deleteSelected) deleteSelected.disabled = selected().length === 0;
+  };
+  boxes.forEach((box) => box.addEventListener("change", sync));
 
-  function updateSelectionState() {
-    const checked = Array.from(meetingList)
-      .filter((c) => c.checked)
-      .map((c) => c.dataset.id!);
-    if (deleteSelectedBtn) deleteSelectedBtn.disabled = checked.length === 0;
-    return checked;
-  }
-
-  meetingList.forEach((cb) => {
-    cb.addEventListener("change", () => updateSelectionState());
+  deleteSelected?.addEventListener("click", async () => {
+    const ids = selected();
+    if (!ids.length || !confirm(`Excluir ${ids.length} reunião(ões) deste navegador?`)) return;
+    await deleteMultipleSavedMeetingSessions(chrome.storage.local, ids);
+    await renderStorageDashboard(container);
   });
 
-  // Delete selected
-  deleteSelectedBtn?.addEventListener("click", async () => {
-    const selected = updateSelectionState();
-    if (selected.length === 0) return;
-    if (!confirm(`Delete ${selected.length} selected session(s)? This cannot be undone.`)) return;
-    try {
-      await deleteMultipleSavedMeetingSessions(chrome.storage.local, selected);
-      await renderStorageDashboard(container);
-    } catch (err) {
-      console.error("[LateMeet] Failed to delete selected sessions:", err);
-      alert("Failed to delete selected sessions. See console for details.");
-    }
+  container.querySelector("#storage-clear-all")?.addEventListener("click", async () => {
+    if (!confirm("Excluir todas as reuniões salvas neste navegador?")) return;
+    await deleteAllSavedMeetingSessions(chrome.storage.local);
+    await renderStorageDashboard(container);
   });
 
-  // Clear all sessions
-  clearAllBtn?.addEventListener("click", async () => {
-    if (!confirm("Delete ALL saved sessions and clear storage? This cannot be undone.")) return;
-    try {
-      await deleteAllSavedMeetingSessions(chrome.storage.local);
-      await renderStorageDashboard(container);
-    } catch (err) {
-      console.error("[LateMeet] Failed to clear sessions:", err);
-      alert("Failed to clear sessions. See console for details.");
-    }
+  selectAll?.addEventListener("click", () => {
+    const all = Array.from(boxes).every((b) => b.checked);
+    boxes.forEach((b) => (b.checked = !all));
+    selectAll.setAttribute("aria-pressed", String(!all));
+    selectAll.textContent = all ? "Selecionar todas" : "Limpar seleção";
+    sync();
   });
 
-  // Select all toggle
-  selectAllBtn?.addEventListener("click", () => {
-    const allChecked = Array.from(meetingList).every((c) => c.checked);
-    meetingList.forEach((c) => (c.checked = !allChecked));
-    if (selectAllBtn) selectAllBtn.setAttribute("aria-pressed", String(!allChecked));
-    updateSelectionState();
+  container.querySelector("#storage-refresh")?.addEventListener("click", () => {
+    void renderStorageDashboard(container);
   });
-
-  const refreshBtn = container.querySelector("#storage-refresh");
-  refreshBtn?.addEventListener("click", () => renderStorageDashboard(container));
 }

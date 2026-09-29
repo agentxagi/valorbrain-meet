@@ -133,14 +133,19 @@ export async function getStorageStats(): Promise<StorageStats> {
 
     const savedAt = session.savedAt ? new Date(session.savedAt) : null;
     const dateStr = savedAt
-      ? savedAt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-      : "Unknown date";
+      ? savedAt.toLocaleDateString("pt-BR", { month: "short", day: "numeric", year: "numeric" })
+      : "Data desconhecida";
+    const topic = (session.topics as Array<{ name?: string }> | undefined)?.find(
+      (t) => t?.name,
+    )?.name;
 
     return {
       id: session.id,
-      title: session.meetingId
-        ? `Meeting — ${session.meetingId}`
-        : `Session ${session.id.slice(0, 8)}`,
+      title: topic
+        ? topic
+        : session.meetingId && session.meetingId !== "unknown"
+          ? `Reunião ${session.meetingId}`
+          : `Reunião ${session.id.slice(0, 8)}`,
       date: dateStr,
       totalBytes: total,
       transcriptBytes: tBytes,

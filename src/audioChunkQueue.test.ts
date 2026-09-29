@@ -172,3 +172,25 @@ test("audio chunk queue handles large backlog without rejection when capacity al
 
   assert.equal(processed.length, 1000);
 });
+
+test("whenIdle resolves only after every queued chunk was processed", async () => {
+  const processed: number[] = [];
+  const queue = new AudioChunkQueue<number>({
+    maxPending: 5,
+    process: async ({ item }) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      processed.push(item);
+    },
+  });
+
+  await queue.whenIdle(); // idle right away when nothing is queued
+
+  queue.enqueue(1);
+  queue.enqueue(2);
+  queue.enqueue(3);
+  await queue.whenIdle();
+
+  assert.deepEqual(processed, [1, 2, 3]);
+  assert.equal(queue.pending, 0);
+  assert.equal(queue.isProcessing, false);
+});

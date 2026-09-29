@@ -35,14 +35,14 @@ export async function startPopupAudioCapture({
   const { tab: meetTab, meetingId, meetingUrl } = await resolveMeetTab();
 
   if (meetTab.id === undefined) {
-    throw new Error("Target Meet tab is missing an id");
+    throw new Error("A aba da reunião não tem identificador. Recarregue a página do Meet.");
   }
 
   const streamId = await getMediaStreamId(meetTab.id);
 
   if (!streamId) {
     throw new Error(
-      "Capture permission denied. Try clicking the extension icon again on the Meet tab.",
+      "O Chrome não liberou a captura desta aba. Na aba da reunião, clique de novo no ícone do ValorBrain Meet.",
     );
   }
 
@@ -62,7 +62,7 @@ export async function startPopupAudioCapture({
   });
 
   if (!response?.success) {
-    throw new Error(response?.error || "Failed to start audio capture");
+    throw new Error(response?.error || "Não foi possível iniciar a gravação.");
   }
 
   return { meetingId, microphoneEnabled, response };

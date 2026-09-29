@@ -1,702 +1,698 @@
-import {
-  getApiCredentials,
-  saveApiCredentials,
-  unlockCredentials,
-  isUnlocked,
-  isVaultInitialized,
-} from "./utils/credentials";
-import { validateProviderConnection } from "./utils/api.js";
+// Options page: providers, ValorBrain connection, microphone, features, data.
+// Every write merges into the freshly read `settings` object, so actions that
+// save immediately (connect/disconnect) never clobber other fields.
+import { applyTheme, initTheme } from "./theme";
+import { hydrateIcons, icon, type IconName } from "./ui/icons";
+import { escapeHtml } from "./utils/domHelpers";
+import { hostOf, maskSecret } from "./ui/format";
+import { getSettings } from "./settings";
 import {
   getProviderConfig,
   getProviderProfile,
-  migrateProviderSettings,
   normalizeProviderConfig,
-  providerConfigFromProfile,
+  profileModel,
+  profilesForRole,
+  requiresApiKey,
   saveProviderConfig,
   type ProviderConfig,
   type ProviderRole,
 } from "./utils/providerSettings";
 import { validateApiUrl } from "./utils/urlValidator";
+import { probeChat, probeTranscription } from "./providerClient";
+import { describeProviderError } from "./providerErrors";
+import { getMicPermission, getSetupStatus, isSetupComplete, type SetupItem } from "./setupStatus";
+import { isVbConfigured, normalizeVbSettings, testValorBrainConnection } from "./vbClient";
+import { connectValorBrain, VB_API_BASE_URL } from "./vbConnect";
 import { renderStorageDashboard } from "./storageDashboard";
 import { renderApiUsageDashboard } from "./apiUsageDashboard";
-import { MIN_PASSPHRASE_LENGTH, evaluatePassphraseStrength } from "./passphraseStrength";
-import { getSettings } from "./settings";
-import { normalizeVbSettings, resolveAutoSend } from "./vbClient";
-import { connectValorBrain, VB_API_BASE_URL } from "./vbConnect";
+import { isVaultInitialized, unlockCredentials } from "./utils/credentials";
 
-/**
- * Strongly-typed map of all recognized extension settings keys and their
- * expected value types. Used to provide type safety alongside the open-ended
- * `Settings` type that allows arbitrary extra keys.
- */
-interface KnownSettings {
-  summarizationInterval?: number;
-  vadThreshold?: number;
-  lateJoinerBriefing?: boolean;
-  publicLateJoinerChat?: boolean;
-  topicDetection?: boolean;
-  decisionDetection?: boolean;
-  actionExtraction?: boolean;
-  sentimentAnalysis?: boolean;
-  transcriptRefinement?: boolean;
-  theme?: "system" | "light" | "dark";
-  accent?: string;
-  // ValorBrain ingest (vbClient.ts owns these keys)
-  "vb.baseUrl"?: string;
-  "vb.apiToken"?: string;
-  "vb.tenantId"?: string;
-  "vb.autoSend"?: boolean;
+void initTheme();
+
+type Settings = Record<string, unknown>;
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const input = (id: string) => $<HTMLInputElement>(id);
+
+/** Hosts already granted by the manifest (no runtime permission prompt needed). */
+const MANIFEST_HOSTS = [
+  /^https:\/\/api\.openai\.com$/,
+  /^https:\/\/api\.z\.ai$/,
+  /^https:\/\/([a-z0-9-]+\.)*valor\.digital$/,
+  /^http:\/\/localhost(:\d+)?$/,
+  /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+];
+
+const TOGGLES: Array<{ id: string; key: string; defaultOn: boolean }> = [
+  { id: "topic-toggle", key: "topicDetection", defaultOn: true },
+  { id: "decision-toggle", key: "decisionDetection", defaultOn: true },
+  { id: "action-toggle", key: "actionExtraction", defaultOn: true },
+  { id: "sentiment-toggle", key: "sentimentAnalysis", defaultOn: true },
+  { id: "refinement-toggle", key: "transcriptRefinement", defaultOn: false },
+  { id: "late-joiner-toggle", key: "lateJoinerBriefing", defaultOn: true },
+  { id: "public-late-joiner-chat-toggle", key: "publicLateJoinerChat", defaultOn: false },
+];
+
+let dirty = false;
+let toastHandle: ReturnType<typeof setTimeout> | null = null;
+const profileOf: Record<ProviderRole, string> = { transcription: "", summary: "" };
+
+function toast(message: string, kind: "info" | "error" = "info") {
+  const el = $("op-toast");
+  el.textContent = message;
+  el.className = `vb-toast${kind === "error" ? " vb-toast--error" : ""} is-visible`;
+  if (toastHandle) clearTimeout(toastHandle);
+  toastHandle = setTimeout(() => el.classList.remove("is-visible"), 3600);
 }
 
-/**
- * The full settings object stored in chrome.storage.local. Combines all known
- * typed settings with an open index signature that preserves any unrecognized
- * keys written by older or future extension versions.
- */
-type Settings = KnownSettings & Record<string, unknown>;
-
-/**
- * A union of all `KnownSettings` keys whose value type is `boolean | undefined`.
- * Used to constrain the feature-toggle mapping so only boolean settings can be
- * bound to checkbox inputs.
- */
-type BooleanSettingKey = {
-  [Key in keyof KnownSettings]-?: KnownSettings[Key] extends boolean | undefined ? Key : never;
-}[keyof KnownSettings];
-
-/**
- * Applies theme and accent-color CSS variables to the document root immediately,
- * giving users instant visual feedback as they interact with the theme controls.
- * When `theme` is `"system"`, the active theme is resolved from the OS preference.
- * @param theme - The desired theme: `"system"`, `"light"`, or `"dark"`.
- * @param accent - A CSS HSL string (e.g. `"161, 84%, 25%"`) for the accent color.
- */
-function applyThemePreview(theme: "system" | "light" | "dark", accent: string) {
-  const root = document.documentElement;
-
-  let activeTheme = theme;
-  if (theme === "system") {
-    activeTheme = globalThis.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+function setStatus(
+  id: string,
+  kind: "success" | "error" | "warning" | "pending" | "",
+  message: string,
+) {
+  const el = $(id);
+  const iconName: Record<string, IconName> = {
+    success: "checkCircle",
+    error: "alertCircle",
+    warning: "alertTriangle",
+  };
+  el.className = `op-test-status${kind ? ` is-${kind}` : ""}`;
+  if (!message) {
+    el.innerHTML = "";
+    return;
   }
-
-  root.setAttribute("data-theme", activeTheme);
-  root.style.setProperty("--accent-color", accent);
+  const lead =
+    kind === "pending"
+      ? '<span class="vb-spinner" aria-hidden="true"></span>'
+      : kind && iconName[kind]
+        ? icon(iconName[kind])
+        : "";
+  el.innerHTML = `${lead}<span>${escapeHtml(message)}</span>`;
 }
 
-// ——— AI Providers section helpers ———
-// DOM ids follow `${role}-${field}` and must stay in sync with options.html.
+function markDirty(value = true) {
+  dirty = value;
+  $("op-savebar").hidden = !value;
+}
 
-type ProviderField = "profile" | "base-url" | "api-key" | "model" | "test" | "test-status";
+async function readSettings(): Promise<Settings> {
+  return (await getSettings()) as Settings;
+}
 
-function providerInputId(role: ProviderRole, field: ProviderField): string {
+async function patchSettings(patch: Settings, removeKeys: string[] = []) {
+  const stored = (await chrome.storage.local.get("settings")).settings as Settings | undefined;
+  const next: Settings = { ...(stored ?? {}), ...patch };
+  for (const key of removeKeys) delete next[key];
+  await chrome.storage.local.set({ settings: next });
+}
+
+// ——— Providers ———
+
+function fieldId(role: ProviderRole, field: string) {
   return `${role}-${field}`;
 }
 
-function providerRoleLabel(role: ProviderRole): string {
-  return role === "transcription" ? "Transcription" : "Summary";
+function populateProfileSelect(role: ProviderRole) {
+  const select = $<HTMLSelectElement>(fieldId(role, "profile"));
+  select.innerHTML = [
+    ...profilesForRole(role).map(
+      (profile) => `<option value="${profile.id}">${escapeHtml(profile.label)}</option>`,
+    ),
+    `<option value="custom">Personalizado (compatível com OpenAI)</option>`,
+  ].join("");
 }
 
-function inputValue(id: string): string {
-  return ((document.getElementById(id) as HTMLInputElement | null)?.value ?? "").trim();
-}
+function describeProfile(role: ProviderRole, profileId: string) {
+  const profile = getProviderProfile(profileId);
+  $(fieldId(role, "profile-hint")).textContent = profile
+    ? profile.description
+    : "Qualquer endpoint no formato da API da OpenAI. Informe o endereço, a chave (se houver) e o modelo.";
 
-function setInputValue(id: string, value: string): void {
-  const el = document.getElementById(id) as HTMLInputElement | null;
-  if (el) el.value = value;
+  const keyHint = $(fieldId(role, "key-hint"));
+  if (profileId === "zai-coding")
+    keyHint.textContent = "Obrigatória. Use a chave do GLM Coding Plan (z.ai → API Keys).";
+  else if (profileId === "zai")
+    keyHint.textContent = "Obrigatória. Chave com saldo na API padrão da Z.ai.";
+  else if (profileId === "whisper-valor")
+    keyHint.textContent = "Obrigatória. É a chave Bearer configurada no servidor Whisper.";
+  else if (profile?.requiresKey) keyHint.textContent = "Obrigatória para este provedor.";
+  else keyHint.textContent = "Opcional. Deixe vazio para servidores sem autenticação.";
 }
 
 function readProviderFields(role: ProviderRole): ProviderConfig {
-  const select = document.getElementById(
-    providerInputId(role, "profile"),
-  ) as HTMLSelectElement | null;
   return normalizeProviderConfig(role, {
-    profile: select?.value,
-    baseUrl: inputValue(providerInputId(role, "base-url")),
-    apiKey: inputValue(providerInputId(role, "api-key")),
-    model: inputValue(providerInputId(role, "model")),
+    profile: $<HTMLSelectElement>(fieldId(role, "profile")).value,
+    baseUrl: input(fieldId(role, "base-url")).value,
+    apiKey: input(fieldId(role, "api-key")).value,
+    model: input(fieldId(role, "model")).value,
   });
 }
 
-function writeProviderFields(role: ProviderRole, config: ProviderConfig): void {
-  const select = document.getElementById(
-    providerInputId(role, "profile"),
-  ) as HTMLSelectElement | null;
-  if (select) select.value = config.profile;
-  setInputValue(providerInputId(role, "base-url"), config.baseUrl);
-  setInputValue(providerInputId(role, "api-key"), config.apiKey);
-  setInputValue(providerInputId(role, "model"), config.model);
+function writeProviderFields(role: ProviderRole, config: ProviderConfig) {
+  $<HTMLSelectElement>(fieldId(role, "profile")).value = config.profile;
+  input(fieldId(role, "base-url")).value = config.baseUrl;
+  input(fieldId(role, "api-key")).value = config.apiKey;
+  input(fieldId(role, "model")).value = config.model;
+  profileOf[role] = config.profile;
+  describeProfile(role, config.profile);
 }
 
-function applyProviderProfilePreset(role: ProviderRole, profileId: string): void {
-  const preset = getProviderProfile(profileId);
-  if (!preset) return; // "custom" keeps the current fields untouched
-  setInputValue(providerInputId(role, "base-url"), preset.baseUrl);
-  setInputValue(providerInputId(role, "model"), preset.model);
+function onProfileChange(role: ProviderRole) {
+  const select = $<HTMLSelectElement>(fieldId(role, "profile"));
+  const next = getProviderProfile(select.value);
+  const previous = getProviderProfile(profileOf[role]);
+  if (next) {
+    input(fieldId(role, "base-url")).value = next.baseUrl;
+    input(fieldId(role, "model")).value = profileModel(next, role);
+    // A key for another host would only produce 401s: clear it.
+    const sameVendor =
+      previous &&
+      hostOf(previous.baseUrl).split(".").slice(-2).join(".") ===
+        hostOf(next.baseUrl).split(".").slice(-2).join(".");
+    if (!sameVendor) input(fieldId(role, "api-key")).value = "";
+  }
+  profileOf[role] = select.value;
+  describeProfile(role, select.value);
+  setStatus(fieldId(role, "test-status"), "", "");
 }
 
-async function testProviderConnection(role: ProviderRole): Promise<void> {
-  const statusEl = document.getElementById(providerInputId(role, "test-status"));
-  if (statusEl) {
-    statusEl.className = "passphrase-status";
-    statusEl.textContent = "Testing connection…";
-  }
-
-  const ok = await validateProviderConnection(readProviderFields(role));
-  if (statusEl) {
-    statusEl.className = `passphrase-status status-${ok ? "success" : "danger"}`;
-    statusEl.textContent = ok
-      ? `${providerRoleLabel(role)} provider reachable — connection OK.`
-      : `${providerRoleLabel(role)} provider unreachable. Check the base URL and API key.`;
-  }
-}
-
-document.addEventListener("DOMContentLoaded", async () => {
-  // ——— Load saved settings ———
-  // Uses the shared getSettings() helper instead of re-fetching/parsing the
-  // config object inline (#666).
-  const [credentials, loadedSettings] = await Promise.all([getApiCredentials(), getSettings()]);
-
-  const settings: Settings = loadedSettings;
-
-  // ——— Populate Existing UI Elements ———
-  const versionDisplay = document.getElementById("version-display");
-  if (versionDisplay) {
-    versionDisplay.textContent = chrome.runtime.getManifest().version;
-  }
-
-  // VAD threshold slider
-  const vadSlider = document.getElementById("vad-threshold") as HTMLInputElement | null;
-  const vadValue = document.getElementById("vad-value");
-  if (vadSlider && vadValue) {
-    vadSlider.value = String(settings.vadThreshold || 0.012);
-    vadValue.textContent = vadSlider.value;
-    vadSlider.addEventListener("input", () => {
-      vadValue.textContent = vadSlider.value;
-    });
-  }
-
-  const openaiKeyInput = document.getElementById("openai-key") as HTMLInputElement | null;
-  if (openaiKeyInput && credentials.openai_api_key) {
-    openaiKeyInput.value = credentials.openai_api_key;
-  }
-
-  // ——— AI Providers ———
-  // Runs the one-time legacy migration before reading, so a pre-existing
-  // OpenAI credential shows up as the OpenAI profile instead of the defaults.
-  await migrateProviderSettings().catch((err) =>
-    console.warn("[LateMeet] Provider settings migration failed:", err),
-  );
-
-  for (const role of ["transcription", "summary"] as const) {
-    const config = await getProviderConfig(role);
-    writeProviderFields(role, config);
-
-    const select = document.getElementById(
-      providerInputId(role, "profile"),
-    ) as HTMLSelectElement | null;
-    select?.addEventListener("change", () => applyProviderProfilePreset(role, select.value));
-
-    document
-      .getElementById(providerInputId(role, "test"))
-      ?.addEventListener("click", () => void testProviderConnection(role));
-  }
-
-  // ——— ValorBrain settings ———
-  const vbBaseUrlInput = document.getElementById("vb-base-url") as HTMLInputElement | null;
-  const vbApiTokenInput = document.getElementById("vb-api-token") as HTMLInputElement | null;
-  const vbTenantIdInput = document.getElementById("vb-tenant-id") as HTMLInputElement | null;
-  const vbAutoSendInput = document.getElementById("vb-auto-send") as HTMLInputElement | null;
-  if (vbBaseUrlInput && settings["vb.baseUrl"]) vbBaseUrlInput.value = settings["vb.baseUrl"];
-  if (vbApiTokenInput && settings["vb.apiToken"]) vbApiTokenInput.value = settings["vb.apiToken"];
-  if (vbTenantIdInput && settings["vb.tenantId"]) vbTenantIdInput.value = settings["vb.tenantId"];
-  if (vbAutoSendInput) vbAutoSendInput.checked = resolveAutoSend(normalizeVbSettings(settings));
-
-  // ——— Conectar com ValorBrain (OAuth authorization-code + PKCE) ———
-  const vbConnectBtn = document.getElementById("vb-connect") as HTMLButtonElement | null;
-  const vbConnectStatus = document.getElementById("vb-connect-status");
-  vbConnectBtn?.addEventListener("click", async () => {
-    if (vbConnectStatus) {
-      vbConnectStatus.className = "passphrase-status";
-      vbConnectStatus.textContent = "Abrindo a autorização no navegador…";
-    }
-    vbConnectBtn.disabled = true;
-    try {
-      const base = vbBaseUrlInput?.value.trim() || VB_API_BASE_URL;
-      const { accessToken } = await connectValorBrain(base);
-      settings["vb.baseUrl"] = base;
-      settings["vb.apiToken"] = accessToken;
-      await chrome.storage.local.set({ settings });
-      if (vbBaseUrlInput) vbBaseUrlInput.value = base;
-      if (vbApiTokenInput) vbApiTokenInput.value = accessToken;
-      if (vbAutoSendInput) vbAutoSendInput.checked = resolveAutoSend(normalizeVbSettings(settings));
-      if (vbConnectStatus) {
-        vbConnectStatus.className = "passphrase-status status-success";
-        vbConnectStatus.textContent = "Conectado — token salvo. Auto-send ativo.";
-      }
-    } catch (err) {
-      if (vbConnectStatus) {
-        vbConnectStatus.className = "passphrase-status status-danger";
-        vbConnectStatus.textContent = err instanceof Error ? err.message : "Falha na conexão.";
-      }
-    } finally {
-      vbConnectBtn.disabled = false;
-    }
-  });
-
-  function readVbFields(): Pick<
-    KnownSettings,
-    "vb.baseUrl" | "vb.apiToken" | "vb.tenantId" | "vb.autoSend"
-  > {
-    return {
-      "vb.baseUrl": vbBaseUrlInput?.value.trim() ?? "",
-      "vb.apiToken": vbApiTokenInput?.value.trim() ?? "",
-      "vb.tenantId": vbTenantIdInput?.value.trim() ?? "",
-      "vb.autoSend": vbAutoSendInput?.checked === true,
-    };
-  }
-
-  // Interval slider
-  const intervalSlider = document.getElementById("summary-interval") as HTMLInputElement | null;
-  const intervalValue = document.getElementById("interval-value");
-  if (intervalSlider && intervalValue) {
-    intervalSlider.value = String(settings.summarizationInterval || 300);
-    intervalValue.textContent = `${Number(intervalSlider.value) / 60} min`;
-
-    intervalSlider.addEventListener("input", () => {
-      intervalValue.textContent = `${Number(intervalSlider.value) / 60} min`;
-    });
-  }
-
-  // Onboarding support: render if requested via query or via button
-  const onboardingRoot = document.getElementById("onboarding-root") as HTMLDivElement | null;
-  const viewOnboardingBtn = document.getElementById("view-onboarding") as HTMLButtonElement | null;
-
-  if (globalThis.location.search.includes("onboarding=1") && onboardingRoot) {
-    const setupView = document.getElementById("setup-view") as HTMLDivElement | null;
-    const mainView = document.getElementById("main-view") as HTMLDivElement | null;
-    if (setupView) setupView.style.display = "none";
-    if (mainView) mainView.style.display = "none";
-    const mod = await import("./onboarding");
-    await mod.renderOnboarding(onboardingRoot);
+async function runProviderTest(role: ProviderRole) {
+  const statusId = fieldId(role, "test-status");
+  const config = readProviderFields(role);
+  const check = validateApiUrl(config.baseUrl);
+  if (!check.valid) {
+    setStatus(
+      statusId,
+      "error",
+      "Endereço inválido. Use https:// (http:// só para localhost ou rede local).",
+    );
     return;
   }
-
-  viewOnboardingBtn?.addEventListener("click", async () => {
-    if (!onboardingRoot) return;
-    const setupView = document.getElementById("setup-view") as HTMLDivElement | null;
-    const mainView = document.getElementById("main-view") as HTMLDivElement | null;
-    if (setupView) setupView.style.display = "none";
-    if (mainView) mainView.style.display = "none";
-    const mod = await import("./onboarding");
-    await mod.renderOnboarding(onboardingRoot);
-  });
-
-  // ——— Clear Data ———
-  document.getElementById("clear-data-btn")?.addEventListener("click", async () => {
-    if (confirm("Apagar todos os dados? Esta ação não pode ser desfeita.")) {
-      await chrome.storage.local.clear();
-      if (typeof chrome !== "undefined" && chrome.storage?.session) {
-        await chrome.storage.session.clear();
+  const key = config.apiKey || null;
+  if (requiresApiKey(config) && !key) {
+    setStatus(statusId, "error", "Informe a chave de API antes de testar.");
+    return;
+  }
+  const button = $<HTMLButtonElement>(fieldId(role, "test"));
+  button.disabled = true;
+  setStatus(
+    statusId,
+    "pending",
+    role === "transcription"
+      ? "Enviando um segundo de áudio de teste…"
+      : "Pedindo uma resposta curta ao modelo…",
+  );
+  const started = performance.now();
+  try {
+    if (role === "transcription") {
+      try {
+        await probeTranscription(config, key);
+      } catch (err) {
+        // A socket-activated local server may refuse the very first connection.
+        if (!(err instanceof TypeError)) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await probeTranscription(config, key);
       }
-      alert("Dados apagados. A página vai recarregar.");
-      globalThis.location.reload();
-    }
-  });
-
-  // AI model selection moved to the AI Providers section (per-provider model).
-
-  // Feature toggles
-  const toggles: Array<{ id: string; key: BooleanSettingKey }> = [
-    { id: "late-joiner-toggle", key: "lateJoinerBriefing" },
-    { id: "public-late-joiner-chat-toggle", key: "publicLateJoinerChat" },
-    { id: "topic-toggle", key: "topicDetection" },
-    { id: "decision-toggle", key: "decisionDetection" },
-    { id: "action-toggle", key: "actionExtraction" },
-    { id: "sentiment-toggle", key: "sentimentAnalysis" },
-    { id: "refinement-toggle", key: "transcriptRefinement" },
-  ];
-
-  // Keys that default to off (opt-in features)
-  const defaultOffKeys = new Set(["publicLateJoinerChat", "transcriptRefinement"]);
-
-  toggles.forEach((t) => {
-    const el = document.getElementById(t.id) as HTMLInputElement | null;
-    if (el) {
-      el.checked = defaultOffKeys.has(t.key) ? settings[t.key] === true : settings[t.key] !== false;
-    }
-  });
-
-  let selectedAccentColor = settings.accent || "161, 84%, 25%";
-
-  // ——— NEW: Theme & Color Initializations ———
-  const themeSelect = document.getElementById("theme-select") as HTMLSelectElement | null;
-  const currentTheme = settings.theme || "system";
-  const currentAccent = selectedAccentColor;
-
-  if (themeSelect) {
-    themeSelect.value = currentTheme;
-  }
-
-  // Run initial theme application right away so options page isn't broken
-  applyThemePreview(currentTheme, currentAccent);
-
-  // Enable transitions after initial application completes to prevent page-load transitions
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      document.body.classList.remove("no-transitions");
-    });
-  });
-
-  // Set the active styling on the matching color dot button
-  document.querySelectorAll(".color-dot").forEach((dot) => {
-    const dotColor = dot.getAttribute("data-color");
-    const isActive = dotColor === currentAccent;
-    if (isActive) {
-      dot.classList.add("active");
-    }
-    dot.setAttribute("aria-pressed", String(isActive));
-
-    // Listen for color grid selections to give instant feedback
-    dot.addEventListener("click", () => {
-      document.querySelectorAll(".color-dot").forEach((d) => {
-        d.classList.remove("active");
-        d.setAttribute("aria-pressed", "false");
-      });
-      dot.classList.add("active");
-      dot.setAttribute("aria-pressed", "true");
-
-      const selectedTheme = (themeSelect?.value as Settings["theme"]) || "system";
-      selectedAccentColor = dot.getAttribute("data-color") || "210, 100%, 50%";
-      applyThemePreview(selectedTheme, selectedAccentColor);
-    });
-  });
-
-  // Listen for dropdown theme changes to give instant feedback
-  themeSelect?.addEventListener("change", () => {
-    let selectedTheme = themeSelect.value as Settings["theme"];
-    if (!selectedTheme) {
-      selectedTheme = "system";
-    }
-    applyThemePreview(selectedTheme, selectedAccentColor);
-  });
-
-  // ——— Toggle password visibility ———
-  document.querySelectorAll<HTMLElement>(".toggle-vis").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const targetId = btn.dataset.target;
-      if (targetId) {
-        const target = document.getElementById(targetId) as HTMLInputElement | null;
-        if (target) {
-          target.type = target.type === "password" ? "text" : "password";
-        }
-      }
-    });
-  });
-
-  // ——— Passphrase management ———
-  const passphraseInput = document.getElementById("passphrase-input") as HTMLInputElement | null;
-  const passphraseStatus = document.getElementById("passphrase-status");
-  const strengthEl = document.getElementById("vault-strength");
-  let pendingUnlock: Promise<void> | null = null;
-  // Strength rules apply only when first setting up a vault; unlocking an
-  // existing vault must never be blocked, even if its passphrase is weak (#655).
-  let vaultInitialized = await isVaultInitialized();
-
-  // Centralizes status writes through a non-secret-named target so the static
-  // analyzer doesn't misread them as hard-coded credentials.
-  function setStatusMessage(el: HTMLElement | null, kind: "danger" | "success", text: string) {
-    if (!el) return;
-    el.className = `passphrase-status status-${kind}`;
-    el.textContent = text;
-  }
-
-  function updateStrengthIndicator() {
-    if (!strengthEl) return;
-    const typed = passphraseInput?.value ?? "";
-
-    // Only show strength feedback during first-time setup of the vault.
-    if (vaultInitialized || isUnlocked() || typed.length === 0) {
-      strengthEl.textContent = "";
-      strengthEl.className = "vault-strength";
-      return;
-    }
-
-    const { score, label, meetsMinimum, suggestions } = evaluatePassphraseStrength(typed);
-    const detail = meetsMinimum && suggestions.length ? ` — ${suggestions.join(", ")}` : "";
-    strengthEl.textContent = `Strength: ${label}${detail}`;
-    strengthEl.className = `vault-strength strength-${score}`;
-  }
-
-  function updatePassphraseUI() {
-    if (passphraseInput) passphraseInput.disabled = isUnlocked();
-    if (isUnlocked()) {
-      setStatusMessage(
-        passphraseStatus,
-        "success",
-        "Desbloqueado — chave de criptografia ativa na memória",
-      );
     } else {
-      setStatusMessage(
-        passphraseStatus,
-        "danger",
-        "Bloqueado — digite a frase para desbloquear a criptografia",
-      );
+      await probeChat(config, key);
     }
+    const seconds = ((performance.now() - started) / 1000).toFixed(1).replace(".", ",");
+    setStatus(
+      statusId,
+      "success",
+      `Funcionando: ${role === "transcription" ? "o servidor" : config.model} respondeu em ${seconds} s.${dirty ? " Salve para usar." : ""}`,
+    );
+  } catch (err) {
+    setStatus(statusId, "error", describeProviderError(role, err, config.baseUrl).message);
+  } finally {
+    button.disabled = false;
   }
+}
 
-  async function applyUnlockedCredentials() {
-    const creds = await getApiCredentials();
-    if (openaiKeyInput && creds.openai_api_key) {
-      openaiKeyInput.value = creds.openai_api_key;
-    }
+// ——— ValorBrain ———
+
+async function renderVbStatus() {
+  const settings = normalizeVbSettings(await readSettings());
+  const chip = $("vb-status-chip");
+  const detail = $("vb-status-detail");
+  const connectLabel = $("vb-connect").querySelector(".vb-connect-label");
+  const connected = isVbConfigured(settings);
+  chip.className = `vb-chip ${connected ? "vb-chip--success" : "vb-chip--neutral"}`;
+  chip.innerHTML = connected ? `${icon("checkCircle")}Conectado` : "Não conectado";
+  detail.textContent = connected
+    ? `API ${hostOf(settings.baseUrl)} · credencial ${maskSecret(settings.apiToken)}${settings.tenantId ? ` · tenant ${settings.tenantId}` : ""}`
+    : "";
+  if (connectLabel) connectLabel.textContent = connected ? "Reconectar" : "Conectar com ValorBrain";
+  $("vb-disconnect").hidden = !connected;
+  $("vb-test").hidden = !connected;
+}
+
+function readVbFields() {
+  return {
+    "vb.baseUrl": input("vb-base-url").value.trim().replace(/\/+$/, ""),
+    "vb.apiToken": input("vb-api-token").value.trim(),
+    "vb.tenantId": input("vb-tenant-id").value.trim(),
+    "vb.autoSend": input("vb-auto-send").checked,
+  };
+}
+
+async function connectVb() {
+  const button = $<HTMLButtonElement>("vb-connect");
+  const base = input("vb-base-url").value.trim().replace(/\/+$/, "") || VB_API_BASE_URL;
+  button.disabled = true;
+  setStatus("vb-action-status", "pending", "Abrindo a autorização do ValorBrain…");
+  try {
+    const { accessToken } = await connectValorBrain(base);
+    await patchSettings({ "vb.baseUrl": base, "vb.apiToken": accessToken });
+    input("vb-base-url").value = base;
+    input("vb-api-token").value = accessToken;
+    await renderVbStatus();
+    const test = await testValorBrainConnection(normalizeVbSettings(await readSettings()));
+    setStatus(
+      "vb-action-status",
+      test.ok ? "success" : "warning",
+      test.ok
+        ? "Conectado. As próximas reuniões vão para a memória da sua empresa."
+        : `Conectado, mas o teste falhou: ${test.message}`,
+    );
+    void refreshChecklist();
+  } catch (err) {
+    const message = (err as Error)?.message || String(err);
+    setStatus(
+      "vb-action-status",
+      "error",
+      /cancel|closed|did not approve|user/i.test(message)
+        ? "A autorização foi fechada antes de concluir. Tente de novo."
+        : `Não foi possível conectar: ${message}`,
+    );
+  } finally {
+    button.disabled = false;
   }
+}
 
-  async function handleUnlock() {
-    if (isUnlocked()) return;
-    const typed = passphraseInput?.value ?? "";
-    if (!typed) {
-      setStatusMessage(passphraseStatus, "danger", "Digite a frase de criptografia");
-      return;
-    }
-
-    // First-time setup: enforce minimum strength before creating the vault.
-    if (!vaultInitialized && !evaluatePassphraseStrength(typed).meetsMinimum) {
-      setStatusMessage(
-        passphraseStatus,
-        "danger",
-        `Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters`,
-      );
-      return;
-    }
-
-    if (!(await unlockCredentials(typed))) {
-      setStatusMessage(
-        passphraseStatus,
-        "danger",
-        "Frase incorreta — não foi possível descriptografar as credenciais",
-      );
-      return;
-    }
-
-    vaultInitialized = true;
-    updateStrengthIndicator();
-    updatePassphraseUI();
-    await applyUnlockedCredentials();
-  }
-
-  passphraseInput?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      pendingUnlock = handleUnlock();
-    }
-  });
-  passphraseInput?.addEventListener("blur", () => {
-    pendingUnlock = handleUnlock();
-  });
-  passphraseInput?.addEventListener("input", updateStrengthIndicator);
-
-  updatePassphraseUI();
-  updateStrengthIndicator();
-
-  // ——— Save ———
-  document.getElementById("save-btn")?.addEventListener("click", async () => {
-    const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
-    const status = document.getElementById("save-status");
-
-    const openaiKey =
-      (document.getElementById("openai-key") as HTMLInputElement | null)?.value.trim() ?? "";
-
-    const originalText = saveBtn.textContent?.trim() || "Save Settings";
-    saveBtn.disabled = true;
-    try {
-      // ——— AI Providers blocks ———
-      for (const role of ["transcription", "summary"] as const) {
-        const config = readProviderFields(role);
-        const urlCheck = validateApiUrl(config.baseUrl);
-        if (!urlCheck.valid) {
-          if (status) {
-            status.style.color = "red";
-            status.textContent = `${providerRoleLabel(role)} base URL: ${urlCheck.error}`;
-            status.classList.add("visible");
-            setTimeout(() => status.classList.remove("visible"), 4000);
-          }
-          saveBtn.disabled = false;
-          saveBtn.textContent = originalText;
-          return;
-        }
-        await saveProviderConfig(role, config);
-      }
-
-      const parsedInterval = intervalSlider ? parseInt(intervalSlider.value, 10) : 300;
-      let validatedInterval =
-        Number.isNaN(parsedInterval) || !Number.isFinite(parsedInterval) ? 300 : parsedInterval;
-      if (validatedInterval < 300) validatedInterval = 300;
-      if (validatedInterval > 900) validatedInterval = 900;
-
-      const parsedVadThreshold = vadSlider ? parseFloat(vadSlider.value) : 0.012;
-      let validatedVadThreshold =
-        Number.isNaN(parsedVadThreshold) || !Number.isFinite(parsedVadThreshold)
-          ? 0.012
-          : parsedVadThreshold;
-      if (validatedVadThreshold < 0.001) validatedVadThreshold = 0.001;
-      if (validatedVadThreshold > 1.0) validatedVadThreshold = 1.0;
-
-      const newSettings: Settings = {
-        ...settings, // Retain existing unmapped fields
-        summarizationInterval: validatedInterval,
-        vadThreshold: validatedVadThreshold,
-        lateJoinerBriefing: (document.getElementById("late-joiner-toggle") as HTMLInputElement)
-          ?.checked,
-        publicLateJoinerChat: (
-          document.getElementById("public-late-joiner-chat-toggle") as HTMLInputElement
-        )?.checked,
-        topicDetection: (document.getElementById("topic-toggle") as HTMLInputElement)?.checked,
-        decisionDetection: (document.getElementById("decision-toggle") as HTMLInputElement)
-          ?.checked,
-        actionExtraction: (document.getElementById("action-toggle") as HTMLInputElement)?.checked,
-        sentimentAnalysis: (document.getElementById("sentiment-toggle") as HTMLInputElement)
-          ?.checked,
-        transcriptRefinement: (document.getElementById("refinement-toggle") as HTMLInputElement)
-          ?.checked,
-
-        // ValorBrain ingest settings (vb.* keys)
-        ...readVbFields(),
-
-        // Save theme selections into the global config tree bundle block
-        theme: (themeSelect?.value as Settings["theme"]) || "system",
-        accent: selectedAccentColor,
-      };
-
-      const vbBase = newSettings["vb.baseUrl"] as string | undefined;
-      if (vbBase) {
-        const vbCheck = validateApiUrl(vbBase);
-        if (!vbCheck.valid) {
-          if (status) {
-            status.style.color = "red";
-            status.textContent = `Base URL do ValorBrain: ${vbCheck.error}`;
-            status.classList.add("visible");
-            setTimeout(() => status.classList.remove("visible"), 5000);
-          }
-          saveBtn.disabled = false;
-          saveBtn.textContent = originalText;
-          return;
-        }
-      }
-
-      await chrome.storage.local.set({ settings: newSettings });
-
-      let credentialsSaved = false;
-      if (pendingUnlock) await pendingUnlock;
-      if (isUnlocked()) {
-        saveBtn.textContent = "Validating Keys...";
-        const isOpenAIValid = openaiKey
-          ? await validateProviderConnection(providerConfigFromProfile("openai", openaiKey))
-          : true;
-
-        if (!isOpenAIValid) {
-          if (status) {
-            status.style.color = "red";
-            status.textContent = "Chave da OpenAI inválida. Verifique e tente novamente.";
-            status.classList.add("visible");
-            setTimeout(() => status.classList.remove("visible"), 4000);
-          }
-          saveBtn.disabled = false;
-          saveBtn.textContent = originalText;
-          return;
-        }
-
-        const credentialsToSave: { openai_api_key?: string } = {};
-        if (openaiKey) credentialsToSave.openai_api_key = openaiKey;
-        if (Object.keys(credentialsToSave).length > 0) {
-          await saveApiCredentials(credentialsToSave);
-        }
-        credentialsSaved = true;
-      }
-
-      // Show success
-      if (status) {
-        status.style.color = credentialsSaved ? "" : "var(--accent-color, #22C55E)";
-        status.textContent = credentialsSaved
-          ? "Configurações salvas com sucesso!"
-          : "Configurações salvas. Desbloqueie a criptografia para atualizar as chaves.";
-        status.classList.add("visible");
-
-        setTimeout(() => {
-          status.classList.remove("visible");
-        }, 3000);
-      }
-    } catch (error) {
-      console.error("Error saving settings:", error);
-      if (status) {
-        status.style.color = "red";
-        status.textContent = "Erro ao salvar. Tente novamente.";
-        status.classList.add("visible");
-        setTimeout(() => status.classList.remove("visible"), 4000);
-      }
-    } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = originalText;
-    }
-  });
-  // ——— ValorBrain: Test connection ———
-  // Goes through the service worker so extension-page CSP/connect-src never
-  // limits which ValorBrain hosts a tenant can configure.
-  document.getElementById("vb-test-connection-btn")?.addEventListener("click", async () => {
-    const testBtn = document.getElementById("vb-test-connection-btn") as HTMLButtonElement | null;
-    const testStatus = document.getElementById("vb-test-status");
+async function testVb() {
+  const button = $<HTMLButtonElement>("vb-test");
+  button.disabled = true;
+  setStatus("vb-action-status", "pending", "Testando a conexão…");
+  try {
     const fields = readVbFields();
+    const result = await testValorBrainConnection(normalizeVbSettings(fields));
+    setStatus("vb-action-status", result.ok ? "success" : "error", result.message);
+  } finally {
+    button.disabled = false;
+  }
+}
 
-    if (!fields["vb.baseUrl"] || !fields["vb.apiToken"]) {
-      if (testStatus) {
-        testStatus.textContent =
-          "Preencha Base URL e token antes de testar (Tenant ID é opcional).";
-      }
+async function disconnectVb() {
+  await patchSettings({}, ["vb.apiToken", "vb.tenantId"]);
+  input("vb-api-token").value = "";
+  input("vb-tenant-id").value = "";
+  await renderVbStatus();
+  setStatus(
+    "vb-action-status",
+    "success",
+    "Desconectado. As reuniões continuam salvas neste navegador.",
+  );
+  void refreshChecklist();
+}
+
+// ——— Microphone ———
+
+async function renderMic() {
+  const permission = await getMicPermission();
+  const chip = $("mic-status-chip");
+  const button = $<HTMLButtonElement>("mic-grant");
+  const map = {
+    granted: ["vb-chip--success", "Liberado", "checkCircle"],
+    prompt: ["vb-chip--warning", "Não liberado", "alertTriangle"],
+    denied: ["vb-chip--error", "Bloqueado", "alertCircle"],
+    unknown: ["vb-chip--neutral", "Desconhecido", "helpCircle"],
+  } as const;
+  const [cls, label, iconName] = map[permission];
+  chip.className = `vb-chip ${cls}`;
+  chip.innerHTML = `${icon(iconName)}${label}`;
+  button.hidden = permission === "granted";
+  if (permission === "granted") {
+    setStatus("mic-help", "success", "Sua voz entra na gravação junto com o áudio da reunião.");
+  } else if (permission === "denied") {
+    setStatus(
+      "mic-help",
+      "error",
+      "O Chrome bloqueou o microfone para o ValorBrain Meet. Clique no ícone à esquerda do endereço desta página, permita o microfone e recarregue.",
+    );
+  } else {
+    setStatus("mic-help", "", "");
+  }
+}
+
+async function grantMic() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    stream.getTracks().forEach((track) => track.stop());
+    toast("Microfone liberado.");
+  } catch (err) {
+    const name = (err as DOMException)?.name;
+    if (name === "NotFoundError") {
+      setStatus("mic-help", "error", "Nenhum microfone encontrado neste computador.");
       return;
     }
+  }
+  await renderMic();
+  void refreshChecklist();
+}
 
-    if (testBtn) testBtn.disabled = true;
-    if (testStatus) testStatus.textContent = "Testando conexão...";
+// ——— Checklist ———
+
+function checklistIcon(item: SetupItem): IconName {
+  return item.state === "ok"
+    ? "checkCircle"
+    : item.state === "warning"
+      ? "alertTriangle"
+      : "alertCircle";
+}
+
+async function refreshChecklist() {
+  const items = await getSetupStatus({ probe: true }).catch(() => [] as SetupItem[]);
+  $("op-setup-list").innerHTML = items
+    .map(
+      (item) => `<li class="op-check op-check--${item.state}">
+        ${icon(checklistIcon(item))}
+        <div class="op-check-body">
+          <div class="op-check-title">${escapeHtml(item.title)}</div>
+          <div class="op-check-detail">${escapeHtml(item.detail)}</div>
+        </div>
+        ${item.state === "ok" ? "" : `<a class="vb-btn vb-btn--sm" href="#${escapeHtml(item.anchor)}">Resolver</a>`}
+      </li>`,
+    )
+    .join("");
+  const summary = $("op-setup-summary");
+  const complete = isSetupComplete(items);
+  const pending = items.filter((item) => item.state !== "ok").length;
+  summary.className = `vb-chip ${complete ? "vb-chip--success" : "vb-chip--warning"}`;
+  summary.innerHTML = complete
+    ? `${icon("checkCircle")}Tudo pronto`
+    : `${icon("alertTriangle")}${pending} ${pending === 1 ? "item pendente" : "itens pendentes"}`;
+}
+
+// ——— Load / save ———
+
+async function loadForm() {
+  const settings = await readSettings();
+
+  for (const role of ["transcription", "summary"] as const) {
+    writeProviderFields(role, await getProviderConfig(role));
+    setStatus(fieldId(role, "test-status"), "", "");
+  }
+
+  const language =
+    typeof settings.transcriptionLanguage === "string" ? settings.transcriptionLanguage : "pt";
+  $<HTMLSelectElement>("transcription-language").value = language;
+  $<HTMLTextAreaElement>("transcription-vocabulary").value =
+    typeof settings.transcriptionVocabulary === "string"
+      ? settings.transcriptionVocabulary
+      : "ValorBrain";
+
+  const interval = Number(settings.summarizationInterval);
+  const intervalValue =
+    Number.isFinite(interval) && interval >= 120 ? Math.min(900, interval) : 180;
+  input("summary-interval").value = String(intervalValue);
+  renderIntervalLabel();
+
+  const vad = Number(settings.vadThreshold);
+  input("vad-threshold").value = String(Number.isFinite(vad) && vad > 0 ? vad : 0.012);
+  renderVadLabel();
+
+  for (const toggle of TOGGLES) {
+    const value = settings[toggle.key];
+    input(toggle.id).checked = toggle.defaultOn ? value !== false : value === true;
+  }
+
+  const theme = settings.theme === "light" || settings.theme === "dark" ? settings.theme : "system";
+  $<HTMLSelectElement>("theme-select").value = theme;
+
+  const vb = normalizeVbSettings(settings);
+  input("vb-base-url").value = vb.baseUrl;
+  input("vb-api-token").value = vb.apiToken;
+  input("vb-tenant-id").value = vb.tenantId;
+  input("vb-auto-send").checked = settings["vb.autoSend"] !== false;
+
+  markDirty(false);
+}
+
+function renderIntervalLabel() {
+  const seconds = Number(input("summary-interval").value) || 180;
+  $("summary-interval-value").textContent = `${Math.round(seconds / 60)} min`;
+}
+
+function renderVadLabel() {
+  $("vad-value").textContent = Number(input("vad-threshold").value).toFixed(3).replace(".", ",");
+}
+
+function originsNeedingPermission(urls: string[]): string[] {
+  const origins = new Set<string>();
+  for (const url of urls) {
     try {
-      const result = (await chrome.runtime.sendMessage({
-        type: "VB_TEST_CONNECTION",
-        settings: fields,
-      })) as { ok: boolean; message: string } | undefined;
-      if (testStatus) {
-        testStatus.textContent = result?.ok
-          ? `✓ ${result.message}`
-          : `✗ ${result?.message || "Falha na conexão"}`;
-      }
-    } catch (err) {
-      const e = err as Error;
-      if (testStatus) testStatus.textContent = `✗ ${e.message || "Falha na conexão"}`;
-    } finally {
-      if (testBtn) testBtn.disabled = false;
+      const origin = new URL(url).origin;
+      if (!MANIFEST_HOSTS.some((pattern) => pattern.test(origin))) origins.add(`${origin}/*`);
+    } catch {
+      /* invalid URLs are reported by validation */
     }
-  });
+  }
+  return [...origins];
+}
 
-  // ——— ValorBrain: Desconectar (limpa credenciais vb.*) ———
-  document.getElementById("vb-disconnect-btn")?.addEventListener("click", async () => {
-    delete settings["vb.baseUrl"];
-    delete settings["vb.apiToken"];
-    delete settings["vb.tenantId"];
-    await chrome.storage.local.set({ settings });
-    if (vbBaseUrlInput) vbBaseUrlInput.value = "";
-    if (vbApiTokenInput) vbApiTokenInput.value = "";
-    if (vbTenantIdInput) vbTenantIdInput.value = "";
-    if (vbAutoSendInput) vbAutoSendInput.checked = false;
-    const testStatus = document.getElementById("vb-test-status");
-    if (testStatus) testStatus.textContent = "Desconectado — credenciais removidas.";
-  });
+async function save() {
+  const saveButton = $<HTMLButtonElement>("op-save");
+  const transcription = readProviderFields("transcription");
+  const summary = readProviderFields("summary");
+  const vbFields = readVbFields();
 
-  // ——— Storage Dashboard ———
-  const storageContainer = document.getElementById("storage-dashboard-container");
-  if (storageContainer) {
-    await renderStorageDashboard(storageContainer);
+  for (const [label, url] of [
+    ["Transcrição", transcription.baseUrl],
+    ["Resumo", summary.baseUrl],
+    ...(vbFields["vb.baseUrl"] ? [["ValorBrain", vbFields["vb.baseUrl"]]] : []),
+  ] as Array<[string, string]>) {
+    if (!validateApiUrl(url).valid) {
+      toast(
+        `${label}: endereço inválido. Use https:// (http:// só para localhost ou rede local).`,
+        "error",
+      );
+      return;
+    }
   }
 
-  // ——— API Usage Dashboard ———
-  const usageContainer = document.getElementById("api-usage-dashboard-container");
-  if (usageContainer) {
-    await renderApiUsageDashboard(usageContainer);
+  // Must be requested synchronously inside the click (user gesture), before any await.
+  const origins = originsNeedingPermission([
+    transcription.baseUrl,
+    summary.baseUrl,
+    ...(vbFields["vb.baseUrl"] ? [vbFields["vb.baseUrl"]] : []),
+  ]);
+  const permissionRequest = origins.length
+    ? chrome.permissions.request({ origins }).catch(() => false)
+    : Promise.resolve(true);
+
+  saveButton.disabled = true;
+  saveButton.setAttribute("aria-busy", "true");
+  try {
+    const granted = await permissionRequest;
+    await saveProviderConfig("transcription", transcription);
+    await saveProviderConfig("summary", summary);
+
+    const patch: Settings = {
+      transcriptionLanguage: $<HTMLSelectElement>("transcription-language").value,
+      transcriptionVocabulary: $<HTMLTextAreaElement>("transcription-vocabulary")
+        .value.trim()
+        .slice(0, 600),
+      summarizationInterval: Number(input("summary-interval").value) || 180,
+      vadThreshold: Number(input("vad-threshold").value) || 0.012,
+      theme: $<HTMLSelectElement>("theme-select").value,
+      "vb.autoSend": vbFields["vb.autoSend"],
+      onboardingCompleted: true,
+    };
+    for (const toggle of TOGGLES) patch[toggle.key] = input(toggle.id).checked;
+    const removeKeys: string[] = [];
+    for (const key of ["vb.baseUrl", "vb.apiToken", "vb.tenantId"] as const) {
+      if (vbFields[key]) patch[key] = vbFields[key];
+      else removeKeys.push(key);
+    }
+    await patchSettings(patch, removeKeys);
+    await chrome.storage.local.set({ onboardingCompleted: true });
+
+    markDirty(false);
+    toast(
+      granted
+        ? "Configurações salvas."
+        : "Configurações salvas, mas o acesso a um dos endereços personalizados foi negado. Ele pode falhar.",
+      granted ? "info" : "error",
+    );
+    await renderVbStatus();
+    void refreshChecklist();
+  } catch (err) {
+    toast(`Não foi possível salvar: ${(err as Error)?.message || err}`, "error");
+  } finally {
+    saveButton.disabled = false;
+    saveButton.removeAttribute("aria-busy");
   }
+}
+
+// ——— Navigation ———
+
+function flashSection(id: string) {
+  const section = document.getElementById(id);
+  if (!section) return;
+  section.scrollIntoView({ behavior: "smooth", block: "start" });
+  section.classList.add("is-flash");
+  setTimeout(() => section.classList.remove("is-flash"), 1600);
+}
+
+function watchCurrentSection() {
+  const links = new Map<string, HTMLAnchorElement>();
+  document.querySelectorAll<HTMLAnchorElement>(".op-nav a").forEach((link) => {
+    links.set(link.getAttribute("href")!.slice(1), link);
+  });
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        links.forEach((link) => link.classList.remove("is-current"));
+        links.get(entry.target.id)?.classList.add("is-current");
+      }
+    },
+    { rootMargin: "-20% 0px -70% 0px" },
+  );
+  links.forEach((_link, id) => {
+    const section = document.getElementById(id);
+    if (section) observer.observe(section);
+  });
+}
+
+// ——— Legacy vault ———
+
+async function setupLegacyVault() {
+  const stored = await chrome.storage.local.get(["openai_api_key", "credential_encryption_salt"]);
+  const hasVault = Boolean(stored.openai_api_key) || (await isVaultInitialized());
+  $("op-legacy").hidden = !hasVault;
+  if (!hasVault) return;
+
+  $("legacy-unlock").addEventListener("click", async () => {
+    const pass = input("legacy-passphrase").value;
+    if (!pass) {
+      setStatus("legacy-status", "error", "Digite a frase secreta do cofre.");
+      return;
+    }
+    const ok = await unlockCredentials(pass);
+    setStatus(
+      "legacy-status",
+      ok ? "success" : "error",
+      ok
+        ? "Cofre desbloqueado nesta sessão do navegador."
+        : "Frase incorreta ou curta demais (mínimo de 8 caracteres).",
+    );
+  });
+  $("legacy-remove").addEventListener("click", async () => {
+    if (!confirm("Remover a chave antiga da OpenAI deste navegador?")) return;
+    await chrome.storage.local.remove(["openai_api_key", "credential_encryption_salt"]);
+    await chrome.storage.session.remove(["openai_api_key"]).catch(() => {});
+    $("op-legacy").hidden = true;
+    toast("Chave antiga removida.");
+  });
+}
+
+// ——— Boot ———
+
+document.addEventListener("DOMContentLoaded", async () => {
+  hydrateIcons();
+  $("op-version").textContent = chrome.runtime.getManifest().version;
+
+  populateProfileSelect("transcription");
+  populateProfileSelect("summary");
+  await loadForm();
+  await renderVbStatus();
+  void renderMic();
+  void refreshChecklist();
+  void setupLegacyVault();
+  watchCurrentSection();
+
+  // Dirty tracking for everything that goes through "Salvar alterações".
+  document.querySelectorAll<HTMLElement>("[data-dirty]").forEach((el) => {
+    el.addEventListener("input", () => markDirty(true));
+    el.addEventListener("change", () => markDirty(true));
+  });
+
+  for (const role of ["transcription", "summary"] as const) {
+    $(fieldId(role, "profile")).addEventListener("change", () => onProfileChange(role));
+    $(fieldId(role, "test")).addEventListener("click", () => void runProviderTest(role));
+  }
+  input("summary-interval").addEventListener("input", renderIntervalLabel);
+  input("vad-threshold").addEventListener("input", renderVadLabel);
+  $<HTMLSelectElement>("theme-select").addEventListener("change", (event) => {
+    applyTheme({ theme: (event.target as HTMLSelectElement).value as "system" | "light" | "dark" });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-reveal]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = input(button.dataset.reveal || "");
+      const reveal = target.type === "password";
+      target.type = reveal ? "text" : "password";
+      button.textContent = reveal ? "Ocultar" : "Mostrar";
+      button.setAttribute("aria-label", reveal ? "Ocultar" : "Mostrar");
+    });
+  });
+
+  $("vb-connect").addEventListener("click", () => void connectVb());
+  $("vb-test").addEventListener("click", () => void testVb());
+  $("vb-disconnect").addEventListener("click", () => void disconnectVb());
+  $("mic-grant").addEventListener("click", () => void grantMic());
+
+  $("op-save").addEventListener("click", () => void save());
+  $("op-discard").addEventListener("click", async () => {
+    await loadForm();
+    applyTheme((await readSettings()) as { theme: "system" | "light" | "dark" });
+    toast("Alterações descartadas.");
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (dirty) event.preventDefault();
+  });
+
+  $("clear-data-btn").addEventListener("click", async () => {
+    if (
+      !confirm(
+        "Apagar reuniões, chaves e configurações deste navegador? O que está no ValorBrain não é afetado.",
+      )
+    )
+      return;
+    await chrome.storage.local.clear();
+    await chrome.storage.session?.clear?.();
+    markDirty(false);
+    location.reload();
+  });
+
+  try {
+    const status = await navigator.permissions.query({ name: "microphone" as PermissionName });
+    status.onchange = () => {
+      void renderMic();
+      void refreshChecklist();
+    };
+  } catch {
+    /* permissions API unavailable */
+  }
+
+  const storageContainer = $("storage-dashboard-container");
+  if (storageContainer) void renderStorageDashboard(storageContainer);
+  const usageContainer = $("api-usage-dashboard-container");
+  if (usageContainer) void renderApiUsageDashboard(usageContainer);
+
+  // First run (opened by the installer) shows the welcome card.
+  const { onboardingCompleted } = await chrome.storage.local.get("onboardingCompleted");
+  if (location.search.includes("onboarding=1") && !onboardingCompleted) {
+    $("boas-vindas").hidden = false;
+  }
+  $("op-welcome-done").addEventListener("click", async () => {
+    $("boas-vindas").hidden = true;
+    await chrome.storage.local.set({ onboardingCompleted: true });
+    flashSection("primeiros-passos");
+  });
+
+  if (location.hash) flashSection(location.hash.slice(1));
+  window.addEventListener("hashchange", () => flashSection(location.hash.slice(1)));
 });

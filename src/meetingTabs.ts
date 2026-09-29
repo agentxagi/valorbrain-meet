@@ -48,14 +48,14 @@ export async function resolveManualMeetTab(): Promise<MeetTabSelection> {
     .filter((tab): tab is MeetTabSelection => Boolean(tab));
 
   if (meetTabs.length === 0) {
-    throw new Error("No Google Meet tab found. Join a meeting first.");
+    throw new Error("Nenhuma reunião do Google Meet aberta. Entre na reunião primeiro.");
   }
 
   if (meetTabs.length === 1) {
     return meetTabs[0];
   }
 
-  throw new Error("Multiple Meet tabs are open. Switch to the meeting tab and start again.");
+  throw new Error("Há mais de uma reunião aberta. Vá para a aba da reunião e tente de novo.");
 }
 
 export async function resolveDetectedMeetTab(): Promise<MeetTabSelection | null> {

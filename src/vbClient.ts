@@ -20,7 +20,7 @@ export const VB_AUTO_SEND_KEY = "vb.autoSend";
 export const VB_SYNC_STATUS_KEY = "vbLastSync";
 
 export interface VbSettings {
-  /** Base URL of the ValorBrain engine, e.g. https://memory.valor.digital. */
+  /** Base URL of the ValorBrain engine API, e.g. https://valorbrain-api.valor.digital. */
   baseUrl: string;
   /** Bearer token issued to the tenant. */
   apiToken: string;
@@ -117,25 +117,43 @@ export function formatElapsedSeconds(totalSeconds: number): string {
 }
 
 /**
- * Best-effort call title from the saved session. Sessions carry the Meet
- * identifier (or URL), not a human title — use whatever is most specific.
+ * Best-effort call title from the saved session: the first discussed topic
+ * when the summarizer found one, otherwise the Meet code (or URL).
  */
 export function resolveSessionTitle(session: State): string {
-  if (session.meetingId) return session.meetingId;
+  const topic = (session.topics ?? []).find((t) => t?.name?.trim())?.name?.trim();
+  if (topic) return topic.slice(0, 120);
+  if (session.meetingId && session.meetingId !== "unknown") return session.meetingId;
   if (session.meetingUrl) return session.meetingUrl;
   return "Google Meet";
 }
 
 /** Builds the `Reunião: <title> (YYYY-MM-DD HH:mm)` memory title. */
 export function buildValorBrainTitle(session: State): string {
-  const when = session.savedAt || session.startTime || Date.now();
+  const when = session.startTime || session.savedAt || Date.now();
   return `Reunião: ${resolveSessionTitle(session)} (${formatMeetingTimestamp(when)})`;
 }
 
+const TOPIC_STATUS_LABEL: Record<string, string> = {
+  active: "em discussão",
+  completed: "concluído",
+  unresolved: "sem conclusão",
+};
+
+function humanParticipants(session: State): string[] {
+  return Array.from(
+    new Set(
+      (session.participants ?? [])
+        .map((name) => String(name || "").trim())
+        .filter((name) => name && name !== "You"),
+    ),
+  );
+}
+
 /**
- * Builds the memory content: the existing summary (generated elsewhere —
- * this module only transports it) under `## Resumo`, followed by decisions,
- * action items, and the full transcript. PT-BR section labels per the PRD.
+ * Builds the memory content: summary, decisions, next steps, topics, open
+ * points, participants, meeting details and the full transcript, all under
+ * PT-BR headings.
  */
 export function buildValorBrainContent(session: State): string {
   const lines: string[] = [];
@@ -148,20 +166,22 @@ export function buildValorBrainContent(session: State): string {
   const decisions = (session.decisions ?? []).filter((d) => d?.text);
   if (decisions.length > 0) {
     for (const d of decisions) {
-      lines.push(`- ${d.text}${d.by ? ` — ${d.by}` : ""}`);
+      const tentative = d.classification === "tentative" ? " _(a confirmar)_" : "";
+      lines.push(`- ${d.text}${d.by ? ` — ${d.by}` : ""}${tentative}`);
     }
   } else {
     lines.push("_(nenhuma)_");
   }
   lines.push("");
 
-  lines.push("## Action Items");
+  lines.push("## Próximos passos");
   const actions = (session.actionItems ?? []).filter((a) => a?.task);
   if (actions.length > 0) {
     for (const a of actions) {
       let item = `- [ ] ${a.task}`;
       if (a.owner) item += ` — ${a.owner}`;
       if (a.deadline) item += ` (prazo: ${a.deadline})`;
+      if (a.isSpeculative) item += " _(ideia, não confirmada)_";
       lines.push(item);
     }
   } else {
@@ -169,13 +189,52 @@ export function buildValorBrainContent(session: State): string {
   }
   lines.push("");
 
-  lines.push("## Transcript");
+  const topics = (session.topics ?? []).filter((t) => t?.name);
+  if (topics.length > 0) {
+    lines.push("## Assuntos");
+    for (const t of topics) {
+      const status = TOPIC_STATUS_LABEL[t.status] ?? "";
+      lines.push(`- ${t.name}${status ? ` (${status})` : ""}`);
+    }
+    lines.push("");
+  }
+
+  const openPoints = [
+    ...(session.unresolvedDiscussions ?? []),
+    ...(session.questionsRaised ?? []),
+  ].filter((item) => typeof item === "string" && item.trim());
+  if (openPoints.length > 0) {
+    lines.push("## Pontos em aberto");
+    for (const point of openPoints) lines.push(`- ${point.trim()}`);
+    lines.push("");
+  }
+
+  const participants = humanParticipants(session);
+  if (participants.length > 0) {
+    lines.push("## Participantes");
+    lines.push(participants.join(", "));
+    lines.push("");
+  }
+
+  lines.push("## Detalhes");
+  const startedAt = session.startTime || session.savedAt;
+  if (startedAt) lines.push(`- Início: ${formatMeetingTimestamp(startedAt)}`);
+  if (typeof session.duration === "number" && session.duration > 0) {
+    lines.push(`- Duração: ${formatElapsedSeconds(session.duration)}`);
+  }
+  if (session.meetingUrl) lines.push(`- Reunião: ${session.meetingUrl}`);
+  else if (session.meetingId) lines.push(`- Reunião: ${session.meetingId}`);
+  lines.push("- Registrado pelo ValorBrain Meet (transcrição automática, pode conter erros)");
+  lines.push("");
+
+  lines.push("## Transcrição");
   const entries = session.transcript ?? [];
   if (entries.length > 0) {
     for (const entry of entries) {
       if (!entry?.text) continue;
       const label = entry.timestampLabel || formatElapsedSeconds(entry.timestamp || 0);
-      lines.push(`[${label}] ${entry.speaker}: ${entry.text}`);
+      const speaker = !entry.speaker || entry.speaker === "Audio" ? "Participante" : entry.speaker;
+      lines.push(`[${label}] ${speaker}: ${entry.text}`);
     }
   } else {
     lines.push("_(sem transcrição)_");
