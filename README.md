@@ -15,8 +15,9 @@ e guarda tudo na memória do ValorBrain. Sem bot na chamada.
 
 ## O que a extensão faz
 
-- **Grava sem bot**: capta o áudio da aba do Meet (as outras pessoas) e o seu microfone (a sua voz).
-- **Transcreve em português** com Whisper local, Whisper remoto ou OpenAI, e identifica quem falou pelo indicador de fala do Meet.
+- **Grava sem bot**: capta o áudio da aba do Meet (as outras pessoas) e o seu microfone (a sua voz), cada um transcrito separado. Tudo o que vem do microfone sai com o seu nome; com o microfone mudo no Meet, nada é gravado.
+- **Transcreve em português** com Whisper local, Whisper remoto ou OpenAI, cortando nas pausas da fala, e identifica quem falou na aba pelo indicador de fala do Meet (numa reunião a dois, a outra pessoa).
+- **Revisa os termos no fim**: nomes, marcas e termos em inglês que o reconhecimento errou são corrigidos na transcrição antes do resumo final (as trocas ficam registradas em Detalhes).
 - **Resume enquanto a reunião acontece**: resumo, decisões, próximos passos com responsável e prazo, assuntos, pontos em aberto e clima da reunião.
 - **Fecha sozinha**: ao encerrar (ou ao sair da chamada), transcreve o último trecho, gera o resumo final, salva a reunião neste navegador e envia para o ValorBrain. Uma notificação confirma.
 - **Histórico**: reabra reuniões salvas, reenvie ao ValorBrain e exporte em Markdown, texto ou JSON.
@@ -62,7 +63,7 @@ Use **Testar transcrição**, **Testar resumo** e **Testar conexão** para confi
 
 O **Whisper local** só funciona quando o servidor roda no mesmo computador que o Chrome. No Mac e no Windows, use o **Whisper remoto** (a chave Bearer é fornecida pela Valor) ou a OpenAI.
 
-O **Vocabulário da empresa** (nomes próprios, produtos, siglas) ajuda a transcrição e o resumo a escrever certo.
+O **Vocabulário da empresa** (nomes próprios, produtos, siglas, termos em inglês) ajuda a transcrição, a revisão final de termos e o resumo a escrever certo. ValorBrain e ValorBrain Meet entram sempre. Em **Configurações → Microfone**, preencha **Seu nome nas transcrições**.
 
 ## Usar numa reunião
 
@@ -99,15 +100,15 @@ Detalhes: [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 ## Problemas comuns
 
-| Sintoma                               | Causa provável e solução                                                                                                                                                                               |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| "Whisper local não respondeu"         | O servidor está desligado ou roda em outra máquina/no WSL. Use **Whisper remoto** ou outro provedor.                                                                                                   |
-| A sua voz não aparece na transcrição  | Microfone não liberado. **Configurações → Microfone → Permitir microfone**. Se o Chrome bloqueou, clique no ícone à esquerda do endereço da página de configurações, permita o microfone e recarregue. |
-| "O macOS está bloqueando o microfone" | O Chrome não tem acesso ao microfone no sistema. **Ajustes do Sistema → Privacidade e Segurança → Microfone** → ative o Google Chrome e reinicie a gravação.                                           |
-| A gravação não começa                 | Comece pelo ícone ou pelo atalho com a aba do Meet em primeiro plano.                                                                                                                                  |
-| Sem resumo                            | Falta a chave do provedor de resumo. No Z.ai, o erro 1113 significa "sem saldo": chaves do GLM Coding Plan usam o perfil **Z.ai GLM (GLM Coding Plan)**.                                               |
-| Envio ao ValorBrain falhou            | No **Histórico**, clique em **Enviar ao ValorBrain** na reunião. Confira em **Configurações → ValorBrain → Testar conexão**; 401/403 indicam token expirado: clique em **Reconectar**.                 |
-| Preciso ver os logs                   | `chrome://extensions` → ValorBrain Meet → **service worker** → aba Console.                                                                                                                            |
+| Sintoma                               | Causa provável e solução                                                                                                                                                                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Whisper local não respondeu"         | O servidor está desligado ou roda em outra máquina/no WSL. Use **Whisper remoto** ou outro provedor.                                                                                                                                            |
+| A sua voz não aparece na transcrição  | Microfone não liberado. **Configurações → Microfone → Permitir microfone**. Se o Chrome bloqueou, clique no ícone à esquerda do endereço da página de configurações, permita o microfone e recarregue.                                          |
+| "O macOS está bloqueando o microfone" | O Chrome não tem acesso ao microfone no sistema. **Ajustes do Sistema → Privacidade e Segurança → Microfone** → ative o Google Chrome e reinicie a gravação.                                                                                    |
+| A gravação não começa                 | Comece pelo ícone ou pelo atalho com a aba do Meet em primeiro plano.                                                                                                                                                                           |
+| Sem resumo                            | Falta a chave do provedor de resumo. No Z.ai, o erro 1113 significa "sem saldo": chaves do GLM Coding Plan usam o perfil **Z.ai GLM (GLM Coding Plan)**. O erro 1308 é a cota de 5 horas do Coding Plan esgotada: o aviso mostra quando renova. |
+| Envio ao ValorBrain falhou            | No **Histórico**, clique em **Enviar ao ValorBrain** na reunião. Confira em **Configurações → ValorBrain → Testar conexão**; 401/403 indicam token expirado: clique em **Reconectar**.                                                          |
+| Preciso ver os logs                   | `chrome://extensions` → ValorBrain Meet → **service worker** → aba Console.                                                                                                                                                                     |
 
 ## Desenvolvimento
 
