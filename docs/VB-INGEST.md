@@ -1,100 +1,138 @@
-# ValorBrain Ingest — integração vb-ingest
+# Envio ao ValorBrain
 
-Implements the `valorbrain-meet` PRD: each saved meeting session can be pushed
-into the tenant's ValorBrain memory over REST (never MCP). The extension is a
-distributed per-tenant client — **no URL, token, or tenant ID is hardcoded**;
-everything is configured in Settings under the `vb.*` keys.
+Cada reunião encerrada vira uma memória no tenant do ValorBrain, por REST (nunca MCP).
+A extensão é um cliente por tenant: nenhuma URL de tenant, token ou ID fica no código.
+Tudo vem de **Configurações → ValorBrain**.
 
-## What was added
+## Conexão
 
-| Area                                  | Change                                                                                                                                                                                                                                                                                                                                   |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/vbClient.ts` (new)               | `sendToValorBrain(session, settings)`, `buildValorBrainPayload`, `testValorBrainConnection`, `normalizeVbSettings` / `getVbSettings`, sync-status recording. Errors are explicit results: `config` / `auth` (401/403) / `rateLimit` (429, one retry with 2s backoff) / `network` / `timeout` (30s) / `server`.                           |
-| `src/vbClient.test.ts` (new)          | Payload assembly, headers, docRef extraction (`path` or `docid`), 401/429 handling, retry/timeout, connection test. Wired into `npm test`.                                                                                                                                                                                               |
-| `src/background.ts`                   | `VB_SEND_SESSION` and `VB_TEST_CONNECTION` message handlers (all ValorBrain fetches go through the service worker). Optional auto-send: when `vb.autoSend` is on, `persistSession()` fires a best-effort send after the session is saved — **a VB failure never blocks the local export** (the local transcript is the source of truth). |
-| `src/options.html` / `src/options.ts` | "ValorBrain" section: Base URL, API token (password), Tenant ID, Auto-send toggle (default OFF), and a "Test connection" button (`GET {baseUrl}/health` with the auth headers, showing OK/failure with reason).                                                                                                                          |
-| `src/dashboard.html` / `.ts` / `.css` | "Send to ValorBrain" button on each saved session (sending / Sent ✓ / error with Retry). Local last-sync badge in the panel (ok/fail + time, tooltip carries the doc ref or error).                                                                                                                                                      |
-| `src/manifest.json`                   | `host_permissions` += `https://*.valor.digital/*`; CSP `connect-src` += `https://*.valor.digital`.                                                                                                                                                                                                                                       |
-| `package.json`                        | `src/vbClient.test.ts` added to the `test` script.                                                                                                                                                                                                                                                                                       |
+**Conectar com ValorBrain** (recomendado) roda o fluxo OAuth 2.1 com PKCE (S256) contra o
+servidor de autorização do engine (`src/vbConnect.ts`):
 
-## Settings keys (`settings` object in `chrome.storage.local`)
+1. `POST {base}/oauth/register`: registro dinâmico do cliente desta instalação.
+2. `chrome.identity.launchWebAuthFlow` em `{base}/oauth/authorize`: a pessoa entra e aprova.
+3. `POST {base}/oauth/token`: devolve um token `vbm_…` ligado ao tenant que aprovou.
 
-- `vb.baseUrl` — string, default `""` (empty disables; no production default is committed)
-- `vb.apiToken` — string, default `""`
-- `vb.tenantId` — string, default `""` (UUID)
-- `vb.autoSend` — boolean, default `false`
+A base padrão é `https://valorbrain-api.valor.digital`. O token `vbm_` resolve o tenant no
+servidor, então o Tenant ID não é necessário.
 
-Summary generation is deliberately **not** touched here (`provider.*` belongs to
-the parallel `feat/provider-agnostic` PRD). `vbClient` only transports whatever
-summary exists under `## Resumo`; once the PT-BR prompt lands, its sections flow
-through unchanged.
+**Configuração manual** aceita Base URL, token de API e Tenant ID (opcional, enviado como
+`X-Tenant-ID` só quando preenchido).
 
-## ⚠️ Merge-conflict note for `feat/provider-agnostic`
+## Chaves de configuração (`settings` em `chrome.storage.local`)
 
-Both branches part from the same commit and both add the ValorBrain domain to
-`src/manifest.json` (`host_permissions` and CSP `connect-src`). **Keep only one
-copy** of each when resolving:
+| Chave         | Padrão | Uso                                                 |
+| ------------- | ------ | --------------------------------------------------- |
+| `vb.baseUrl`  | `""`   | Base da API do engine. Vazio = não conectado.       |
+| `vb.apiToken` | `""`   | Token Bearer (`vbm_…` do OAuth ou token do tenant). |
+| `vb.tenantId` | `""`   | Opcional.                                           |
+| `vb.autoSend` | ligado | Só um `false` explícito desliga o envio automático. |
 
-- `host_permissions`: `"https://*.valor.digital/*"`
-- CSP: `connect-src ... https://*.valor.digital ...`
+## Quando o envio acontece
 
-## Manual integration test (against a real VB)
+Ao encerrar a gravação (botão, atalho ou saída da chamada), o service worker:
 
-No real keys live in this repo. Run from a shell, substituting your own values:
+1. espera o último trecho ser transcrito;
+2. gera o resumo final da reunião inteira;
+3. salva a reunião em `chrome.storage.local` (a cópia local é a fonte da verdade);
+4. envia ao ValorBrain, se conectado e com envio automático ligado;
+5. mostra uma notificação com o resultado.
+
+Uma falha no envio nunca apaga nem bloqueia a cópia local. No **Histórico**, o botão
+**Enviar ao ValorBrain** (ou **Reenviar**, se já foi enviada) manda de novo
+(`VB_SEND_SESSION` com o `sessionId`).
+
+O resultado fica em `lastSessionResult.vb` (`pending`, `sent`, `failed` ou `skipped`, com
+`docRef` quando enviado) e em `vbLastSync`, que alimentam o ícone e o painel.
+
+## Requisição
+
+`POST {baseUrl}/api/v1/memory/store`
+
+```http
+Authorization: Bearer <token>
+Content-Type: application/json
+X-Tenant-ID: <tenant>        (só se configurado)
+```
+
+```json
+{
+  "type": "observation",
+  "title": "Reunião: Planejamento do lançamento da versão 2 (2026-09-29 09:23)",
+  "content": "## Resumo\n…\n\n## Decisões\n- …\n\n## Próximos passos\n- [ ] … — Responsável (prazo: …)\n\n## Assuntos\n…\n\n## Pontos em aberto\n…\n\n## Participantes\n…\n\n## Detalhes\n…\n\n## Transcrição\n[00:00] Nome: …",
+  "collection": "meetings",
+  "tags": ["reuniao", "meet", "valorbrain-meet"],
+  "confidence": 0.85
+}
+```
+
+O título usa o primeiro assunto identificado pelo resumo; sem assunto, o código da reunião.
+Seções sem conteúdo (Assuntos, Pontos em aberto, Participantes) são omitidas.
+
+A resposta deve trazer `path` ou `docid`; esse valor aparece como referência do documento.
+
+### Erros
+
+| Situação             | Tratamento                                              |
+| -------------------- | ------------------------------------------------------- |
+| 401 / 403            | `auth`: token inválido ou expirado. Reconecte.          |
+| 429                  | Uma nova tentativa após 2 s; se persistir, `rateLimit`. |
+| Sem resposta em 30 s | `timeout`                                               |
+| Falha de rede        | `network`                                               |
+| 5xx                  | `server`                                                |
+
+As mensagens aparecem em português na notificação, no histórico e no painel.
+
+### Testar conexão
+
+`GET {baseUrl}/api/v1/memory/working-context` com os mesmos cabeçalhos. A rota é autenticada:
+token inválido responde 401/403. O `/health` é público e respondia 200 até com token errado,
+por isso não serve como teste.
+
+## Permissões
+
+- `host_permissions` já cobre `https://*.valor.digital/*`.
+- Outro endereço (ValorBrain próprio, provedor de IA na rede local) é pedido ao salvar as
+  configurações, via `optional_host_permissions`.
+- A CSP das páginas da extensão permite `connect-src 'self' https: http:`; o que decide o
+  acesso é a permissão de host.
+
+## Teste manual contra um ValorBrain real
+
+Substitua pelos seus valores (nenhuma chave real fica neste repositório):
 
 ```bash
-BASE_URL="https://valorbrain-api.valor.digital"   # ValorBrain engine API (valor.digital deployment)
-TOKEN="<tenant api token>"
-TENANT="<tenant uuid>"
+BASE_URL="https://valorbrain-api.valor.digital"
+TOKEN="<token do tenant>"
 
-# 1. Health check (same request the options-page "Test connection" button makes)
-curl -sS -o /dev/null -w "health: %{http_code}\n" \
+# 1. Conexão (o mesmo pedido do botão "Testar conexão")
+curl -sS -o /dev/null -w "working-context: %{http_code}\n" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Tenant-ID: $TENANT" \
-  "$BASE_URL/health"
+  "$BASE_URL/api/v1/memory/working-context"
 
-# 2. Store a memory (exact payload shape the extension posts)
+# 2. Gravar uma memória no formato que a extensão envia
 curl -sS -w "\nstore: %{http_code}\n" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Tenant-ID: $TENANT" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "observation",
-    "title": "Reunião: smoke-test (2026-01-15 12:00)",
-    "content": "## Resumo\nTeste de integração do valorbrain-meet.\n\n## Decisões\n_(nenhuma)_\n\n## Action Items\n_(nenhum)_\n\n## Transcript\n[00:10] Tester: Olá.",
+    "title": "Reunião: teste de integração (2026-01-15 12:00)",
+    "content": "## Resumo\nTeste de integração do ValorBrain Meet.\n\n## Decisões\n_(nenhuma)_\n\n## Próximos passos\n_(nenhum)_\n\n## Transcrição\n[00:10] Pessoa: Olá.",
     "collection": "meetings",
     "tags": ["reuniao", "meet", "valorbrain-meet"],
     "confidence": 0.85
   }' \
   "$BASE_URL/api/v1/memory/store"
 
-# 3. Negative checks
-curl -sS -o /dev/null -w "bad token (expect 401/403): %{http_code}\n" \
-  -H "Authorization: Bearer wrong" -H "X-Tenant-ID: $TENANT" \
-  "$BASE_URL/api/v1/memory/store" -X POST -H "Content-Type: application/json" -d '{}'
+# 3. Token errado (espera 401/403)
+curl -sS -o /dev/null -w "token errado: %{http_code}\n" \
+  -H "Authorization: Bearer errado" \
+  "$BASE_URL/api/v1/memory/working-context"
 ```
 
-Expected: `health: 200`; `store: 200` (or `201`) with a JSON body containing
-`path` or `docid` — the extension surfaces that reference in the success toast;
-bad token returns `401`/`403`, which the extension maps to an explicit
-"check vb.apiToken and vb.tenantId" error.
+Esperado: `working-context: 200`, `store: 200` (ou `201`) com `path` ou `docid` no corpo, e
+`401`/`403` para o token errado.
 
-In-browser E2E: load the unpacked extension from `dist/`, fill the ValorBrain
-section in Settings, click "Test connection" (expect ✓), save a meeting
-session, then use "Send to ValorBrain" on it in the Sessions tab (expect toast
-with doc ref and the footer badge turning ✓).
-
-## Implementation notes
-
-- **Sync badge storage**: the PRD sketched a `localStorage` badge. The badge is
-  written by the service worker (so auto-send updates it too), which cannot
-  reach page `localStorage`; the status therefore lives in
-  `chrome.storage.local` under `vbLastSync` — same "local to this browser"
-  semantics, and the side panel listens via `chrome.storage.onChanged`.
-- **Auto-send hook point**: `persistSession()` (i.e. right after the end-of-
-  meeting "Save session" commit, when the final summary is already part of the
-  pending session). Fire-and-forget by design.
-- **Why sends go through the service worker**: extension-page CSP
-  (`connect-src`) would otherwise restrict which ValorBrain hosts tenants can
-  configure; the worker + `host_permissions` keep arbitrary self-hosted
-  `vb.baseUrl` values workable.
+No navegador: conecte em **Configurações → ValorBrain**, clique em **Testar conexão**, grave
+uma reunião curta e encerre. A notificação "Reunião salva no ValorBrain" confirma o envio, e o
+**Histórico** mostra o selo **No ValorBrain**.

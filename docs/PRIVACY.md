@@ -1,49 +1,57 @@
-# Privacy Model
+# Privacidade
 
-Late Meet is designed around a privacy-first browser extension workflow. It avoids meeting bots, avoids a project-managed database, and uses user-owned API keys.
+O ValorBrain Meet roda inteiro no seu Chrome. Não há bot na chamada, servidor próprio da
+extensão, telemetria nem analytics. Os dados só saem do navegador para os três destinos que
+você configurou.
 
-## Privacy Principles
+## Para onde vão os dados
 
-- No bot participant joins the meeting.
-- The extension runs inside the user's browser.
-- Users bring their own provider keys.
-- Meeting state is stored locally during the session.
-- Users decide what to save, export, or discard.
+| Dado                                                              | Destino                           | Quando                                                                                                                 |
+| ----------------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Áudio da reunião (aba + seu microfone)                            | Provedor de transcrição escolhido | Durante a gravação, em trechos. Trechos sem fala são descartados no próprio navegador.                                 |
+| Texto da transcrição e vocabulário da empresa                     | Provedor de resumo escolhido      | Durante a gravação (resumo parcial) e ao encerrar (resumo final)                                                       |
+| Reunião completa (resumo, decisões, próximos passos, transcrição) | Seu tenant do ValorBrain          | Ao encerrar, se conectado e com envio automático ligado, ou quando você clica em **Enviar ao ValorBrain** no Histórico |
 
-## Data Flow
+Com o **Whisper local**, o áudio não sai do computador. Com o **Whisper remoto** ou a
+**OpenAI**, o áudio vai para esse servidor. Leia a política do provedor que usar.
 
-1. Late Meet runs in Chrome as a Manifest V3 extension.
-2. Google Meet tab audio is captured through browser extension APIs.
-3. Audio chunks are processed by the extension workflow.
-4. Transcription is sent to the configured speech-to-text provider.
-5. Summaries and insights are generated through the configured LLM provider.
-6. Session state is stored locally through Chrome extension storage.
+A captura só começa depois de um clique no ícone ou do atalho de gravação: o Chrome não
+deixa uma extensão gravar uma aba por conta própria. Enquanto grava, o ícone mostra **REC**
+e a página do Meet mostra o aviso "Gravando" do ValorBrain Meet.
 
-## What May Leave the Browser
+## O que fica no navegador
 
-If the user enables transcription or summarization, meeting audio/text may be sent to the configured AI providers. Late Meet does not hide this behind a project-owned server; users control the provider keys and should review provider policies.
+Tudo fica em `chrome.storage.local` do perfil do Chrome, sem sincronizar entre computadores:
 
-## What Should Not Be Shared
+- reuniões salvas (transcrição, resumo, decisões, próximos passos);
+- configurações e chaves de API dos provedores e o token do ValorBrain.
 
-Do not share:
+As chaves ficam no armazenamento local do Chrome sem criptografia própria: quem tem acesso ao
+seu perfil do Chrome consegue lê-las. Use um perfil só seu.
 
-- API keys.
-- Meeting links.
-- Meeting codes.
-- Participant names without consent.
-- Screenshots containing private avatars, email addresses, or confidential meeting content.
+**Configurações → Dados e uso** mostra o espaço usado, apaga reuniões uma a uma e zera tudo.
+Apagar no navegador não apaga o que já foi para o ValorBrain.
 
-## Screenshot Privacy
+## Permissões do Chrome
 
-Before adding screenshots to documentation:
+| Permissão                                                                             | Para quê                                                         |
+| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `tabCapture`, `offscreen`                                                             | Capturar e processar o áudio da aba da reunião                   |
+| Microfone (pedido uma vez, na página de configurações)                                | Incluir a sua voz na gravação                                    |
+| `tabs`                                                                                | Encontrar a aba do Meet e perceber quando você sai da reunião    |
+| `storage`, `unlimitedStorage`                                                         | Guardar reuniões e configurações neste navegador                 |
+| `sidePanel`                                                                           | Painel da reunião                                                |
+| `notifications`                                                                       | Avisar quando a reunião foi salva, enviada ou deu erro           |
+| `contextMenus`                                                                        | "Gravar esta aba com o ValorBrain Meet" no menu do botão direito |
+| `identity`                                                                            | Login do "Conectar com ValorBrain" (OAuth)                       |
+| Hosts `meet.google.com`, `api.openai.com`, `api.z.ai`, `*.valor.digital`, `localhost` | Página do Meet e provedores padrão                               |
+| Outros hosts (opcional)                                                               | Pedidos ao salvar, só se você configurar outro endereço          |
 
-- Blur or crop meeting codes.
-- Redact account names and avatars.
-- Avoid private meeting titles.
-- Use test data wherever possible.
+## Consentimento
 
-See [Screenshot Guide](SCREENSHOT_GUIDE.md) for contribution standards.
+Avise os participantes de que a reunião está sendo gravada. O resumo para quem chega
+atrasado aparece só na sua tela; enviá-lo no chat do Meet é opcional e vem desligado.
 
-## Security Reports
+## Problemas de segurança
 
-If you discover a vulnerability, do not open a public issue. Follow the security reporting guidance in the root README.
+Não abra issue pública. Veja [`SECURITY.md`](../SECURITY.md).

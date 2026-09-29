@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-09-29
+
+### ⚠️ Mudanças que quebram compatibilidade
+
+- **Atalho de gravação agora é Alt+Shift+G.** O Chrome não reserva Alt+Shift+R (colide com um atalho do próprio navegador) e deixava o comando sem tecla. O popup e o aviso no Meet leem o atalho que o Chrome realmente atribuiu; sem atalho, o popup oferece **Definir atalho de gravação**
+- **A reunião é salva e enviada ao ValorBrain automaticamente ao encerrar.** O modal "Salvar sessão" saiu: a sessão se perdia quando o popup não estava aberto
+- **Resumo padrão: Z.ai GLM (GLM Coding Plan)**, em `https://api.z.ai/api/coding/paas/v4`. Chaves do Coding Plan recebiam erro 1113 (sem saldo) no endpoint pré-pago
+- O assistente de boas-vindas separado e o seletor de cor de destaque foram removidos. Os primeiros passos ficam nas Configurações, e as cores seguem a marca
+
+### 🚀 Features
+
+- **Encerramento completo**: pelo botão, pelo atalho ou ao sair da chamada. A extensão espera o último trecho ser transcrito, gera o resumo final da reunião inteira, salva, envia ao ValorBrain e confirma com uma notificação. Também encerra quando a aba sai da reunião
+- **Captura mais confiável**: segmentos sem lacuna entre si, trechos de silêncio descartados no navegador, fila com contenção quando a transcrição atrasa, e falhas da aba ou do microfone avisadas em português
+- **Transcrição e resumo**: filas separadas com novas tentativas, idioma fixo (português por padrão), temperatura 0, filtro das alucinações típicas do Whisper, vocabulário da empresa no prompt, prompts em PT-BR, leitura robusta do JSON e GLM com raciocínio desligado
+- **Perfis de provedor**: Whisper local, Whisper remoto (whisper.valor.digital), OpenAI (`whisper-1`, `gpt-4o-mini`), Z.ai Coding Plan, Z.ai pré-paga e personalizado, cada um com teste real de conexão
+- **Primeiros passos**: checklist no popup e nas Configurações (transcrição, resumo, microfone, ValorBrain). O ícone mostra REC durante a gravação
+- **Painel** com Resumo, Transcrição, Decisões, Pessoas e Histórico; reuniões salvas podem ser reabertas, reenviadas e exportadas em .md, .txt ou .json
+- **Conteúdo no ValorBrain em PT-BR**: Resumo, Decisões, Próximos passos (com responsável e prazo), Assuntos, Pontos em aberto, Participantes, Detalhes e Transcrição. O título usa o primeiro assunto da reunião
+- **Marca ValorBrain V. 2.1** em todas as telas: tokens oficiais, Hanken Grotesk e JetBrains Mono (SIL OFL), ícones 16/32/48/128 e temas claro e escuro
+- **Aviso no Meet** (dica para gravar, gravando com tempo, salvando, concluído), com estilos isolados da página do Meet
+- Endereços fora da lista padrão (ValorBrain próprio, provedor na rede local) pedem permissão de host ao salvar as configurações
+
+### 🐛 Bug Fixes
+
+- O buffer de análise da detecção de fala não era alocado
+- O último trecho da reunião se perdia ao encerrar
+- Marcadores de "em andamento" gravados no storage travavam as filas depois que o service worker reiniciava
+- O clique automático no painel de participantes fazia a interface do Meet piscar
+- Classes CSS duplicadas ou sem definição (modal, esqueleto de carregamento, busca, estados vazios)
+
+### 📚 Documentation
+
+- README, `docs/VB-INGEST.md` e `docs/PRIVACY.md` reescritos em PT-BR, com instalação, primeira configuração, uso e problemas comuns
+
 ## [1.9.0] - 2026-09-21
 
 ### 🚀 Features
