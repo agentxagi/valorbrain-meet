@@ -579,10 +579,7 @@ test("the microphone is the user, echoes are dropped and misheard terms are fixe
     "ValorBrain delivery",
   );
   const payload = JSON.parse(String(store.init.body));
-  assert.match(
-    payload.content,
-    /- Termos corrigidos na transcrição: D-Brain → gbrain, Rapplet → Replit/,
-  );
+  assert.match(payload.content, /- Grafia revisada na transcrição: gbrain \(2\), Replit\n/);
   assert.match(payload.content, /\] Gustavo: Olha, o gbrain/);
   correctionResponse = { correcoes: [] };
 });
