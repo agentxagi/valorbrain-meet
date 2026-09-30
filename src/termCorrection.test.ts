@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyKnownCorrections,
   applyTermCorrections,
   buildTermCorrectionMessages,
   chunkLines,
+  isSafeKnownCorrection,
+  learnableCorrections,
   mergeCorrections,
   parseTermCorrections,
   squashTerm,
@@ -128,4 +131,49 @@ test("corrections from several chunks are merged, first one wins", () => {
 test("a model answer without the expected key yields no corrections", () => {
   assert.deepEqual(parseTermCorrections({ summary: "x" }, TRANSCRIPT), []);
   assert.deepEqual(parseTermCorrections(null, TRANSCRIPT), []);
+});
+
+test("learned corrections apply ignoring case, whole words only, and are counted", () => {
+  const { text, counts } = applyKnownCorrections(
+    "O d-brain e o D-Brain resolvem; o G-Brain também. Não mexa em D-Brains nem em xD-Brain.",
+    [
+      { from: "D-Brain", to: "gbrain" },
+      { from: "G-Brain", to: "gbrain" },
+    ],
+  );
+  assert.equal(
+    text,
+    "O gbrain e o gbrain resolvem; o gbrain também. Não mexa em D-Brains nem em xD-Brain.",
+  );
+  assert.equal(counts.get("D-Brain"), 2);
+  assert.equal(counts.get("G-Brain"), 1);
+});
+
+test("a learned correction must look like a respelling and never touch a participant", () => {
+  assert.equal(isSafeKnownCorrection("D-Brain", "gbrain"), true);
+  assert.equal(isSafeKnownCorrection("G-Brain", "gbrain"), true, "same letters, other form");
+  assert.equal(isSafeKnownCorrection("LuSend", "Resend"), true);
+  assert.equal(isSafeKnownCorrection("gbrain", "GBrain"), false, "case only: a no-op");
+  assert.equal(isSafeKnownCorrection("banana", "Supabase"), false, "not a respelling");
+  assert.equal(isSafeKnownCorrection("Erick", "Erik", ["Erick Santos", "Erick"]), false);
+  assert.equal(isSafeKnownCorrection("x", "xy"), false);
+  assert.equal(isSafeKnownCorrection("a b c d e", "abcde"), false, "too many words");
+  assert.equal(isSafeKnownCorrection("<script>", "script"), false);
+});
+
+test("only this meeting's applied review fixes are taught back to the graph", () => {
+  assert.deepEqual(
+    learnableCorrections([
+      { from: "Rapplet", to: "Replit", count: 1 },
+      { from: "D-Brain", to: "gbrain", count: 2, source: "graph" },
+      { from: "Draga", to: "Braga", count: 0 },
+      { from: " rapplet ", to: "Replit", count: 1 },
+      { from: "Supa  Base", to: "Supabase" },
+      { from: "same", to: "SAME", count: 1 },
+    ]),
+    [
+      { from: "Rapplet", to: "Replit" },
+      { from: "Supa Base", to: "Supabase" },
+    ],
+  );
 });

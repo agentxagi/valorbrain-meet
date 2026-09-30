@@ -1,69 +1,34 @@
-// Content script for Google Meet: participant names, active speaker, the
-// in-page status pill, the private late-joiner brief and leave-call detection.
-// It never restyles Meet itself (all styles are scoped, see content.css).
+// Content script for the meeting page (Google Meet; Zoom and Microsoft Teams
+// web as best effort): participant names, active speaker, the in-page status
+// pill, the private late-joiner brief, chat messages and leave-call detection.
+// It never restyles the meeting app (all styles are scoped, see content.css).
 import {
   collectParticipantNames,
   participantNameFromCandidate,
   type ParticipantNameCandidate,
 } from "./participantDetection.ts";
+import { micMutedFromLabel, PLATFORM_DOM, splitDisplayName } from "./platformDom.ts";
+import { platformForHostname } from "./platforms.ts";
 import { shortcutKeys } from "./ui/shortcut.ts";
 
 (() => {
   const LOG = "[ValorBrainMeet]";
+  const PLATFORM = platformForHostname(location.hostname) ?? "meet";
+  const DOM = PLATFORM_DOM[PLATFORM];
 
+  // Selectors for this page's platform (see platformDom.ts).
   const SELECTORS = {
-    chatToggleButtons: [
-      'button[aria-label*="Chat"]',
-      'button[aria-label*="chat" i]',
-      'button[data-panel-id="chat-pane"]',
-    ],
-    chatInput: [
-      'textarea[aria-label="Chat text input"]',
-      'textarea[name="chatTextInput"]',
-      'textarea[aria-label*="mensagem" i]',
-      'div[contenteditable="true"][aria-label*="message" i]',
-      'div[contenteditable="true"][aria-label*="mensagem" i]',
-      'textarea[placeholder*="message" i]',
-    ],
-    sendButton: [
-      'button[aria-label="Send message"]',
-      'button[aria-label*="Enviar mensagem" i]',
-      'button[data-tooltip="Send message"]',
-      'button[jsname][aria-label*="Send"]',
-    ],
-    participantNodes: [
-      "[data-participant-id] [data-self-name]",
-      '[data-participant-id] [role="heading"]',
-      '[data-participant-id] span[class="notranslate"]',
-      '[data-participant-id][aria-label^="Participant:"]',
-      "[data-self-name]",
-      'div[jsname="NfX98"]',
-      '[aria-label^="Participant:"]',
-    ],
-    participantTile: [
-      "[data-participant-id]",
-      '[aria-label^="Participant:"]',
-      "[data-self-name]",
-      '[role="listitem"]',
-      '[role="gridcell"]',
-    ],
-    activeSpeakerIndicators: [
-      '[aria-label*="speaking" i]',
-      '[aria-label*="falando" i]',
-      '[aria-label*="hablando" i]',
-      '[data-tooltip*="speaking" i]',
-      '[data-tooltip*="falando" i]',
-      '[data-is-speaking="true"]',
-      '[data-speaking="true"]',
-      '[data-active-speaker="true"]',
-    ],
+    chatToggleButtons: DOM.chatToggleButtons,
+    chatInput: DOM.chatInput,
+    sendButton: DOM.sendButton,
+    participantNodes: DOM.participantNodes,
+    participantTile: DOM.participantTile,
+    activeSpeakerIndicators: DOM.activeSpeakerIndicators,
   };
 
-  /** Labels of the buttons Meet shows only after you leave or the call ends. */
-  const POST_CALL_LABELS =
-    /^(participar novamente|voltar à tela inicial|voltar para a tela inicial|rejoin|return to home screen|volver a unirse|volver a la pantalla principal)$/i;
-  const POST_CALL_TEXTS =
-    /(você saiu da reunião|você saiu da chamada|a reunião terminou|a chamada terminou|you left the meeting|you've left the meeting|the meeting has ended|you've been removed|você foi removido)/i;
+  /** Labels of the buttons shown only after you leave or the call ends. */
+  const POST_CALL_LABELS = DOM.postCallLabels;
+  const POST_CALL_TEXTS = DOM.postCallTexts;
 
   const SYMBOL_SVG =
     '<svg class="vbm-symbol" aria-hidden="true" viewBox="0 0 1000 1000" xmlns="http://www.w3.org/2000/svg"><rect width="1000" height="1000" rx="225" fill="#111317"/><path d="M448.85395478 750.0 245.0 250.00000145999996H397.129817L505.64908646000004 568.45841838L616.19675348 250.00000145999996H766.2981729200001L562.44421814 750.0Z" fill="#FFFFFF"/><circle cx="731" cy="676" r="74" fill="#3F9E5E"/></svg>';
@@ -93,8 +58,31 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  /**
+   * Whether this page is the call itself. Meet: the room URL. Zoom and Teams
+   * keep the call in a single-page app, so the call toolbar decides.
+   */
   function isMeetingRoomPath(): boolean {
-    return /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(location.pathname);
+    if (DOM.postCallPath?.test(location.pathname)) return false;
+    if (PLATFORM === "meet") return /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}/.test(location.pathname);
+    if (PLATFORM === "zoom" && !/^\/wc\//.test(location.pathname)) return false;
+    return DOM.inCallIndicators.some((selector) => Boolean(document.querySelector(selector)));
+  }
+
+  /** Hidden duplicates (another chat's compose box, a collapsed panel) never count. */
+  function isVisible(el: Element | null): el is HTMLElement {
+    if (!el) return false;
+    const rect = (el as HTMLElement).getBoundingClientRect?.();
+    return !rect || rect.width > 0 || rect.height > 0;
+  }
+
+  function queryFirstVisible(selectors: string[]): HTMLElement | null {
+    for (const selector of selectors) {
+      for (const el of document.querySelectorAll(selector)) {
+        if (isVisible(el)) return el as HTMLElement;
+      }
+    }
+    return null;
   }
 
   // ——— Chat (optional public late-joiner message) ———
@@ -113,12 +101,12 @@ import { shortcutKeys } from "./ui/shortcut.ts";
   }
 
   async function ensureChatPanelOpen(): Promise<HTMLElement | null> {
-    const existing = queryFirst(SELECTORS.chatInput);
+    const existing = queryFirstVisible(SELECTORS.chatInput);
     if (existing) return existing;
-    queryFirst(SELECTORS.chatToggleButtons)?.click();
+    queryFirstVisible(SELECTORS.chatToggleButtons)?.click();
     for (let i = 0; i < 10; i += 1) {
       await wait(300);
-      const input = queryFirst(SELECTORS.chatInput);
+      const input = queryFirstVisible(SELECTORS.chatInput);
       if (input) return input;
     }
     return null;
@@ -126,11 +114,14 @@ import { shortcutKeys } from "./ui/shortcut.ts";
 
   async function sendChatMessage(message: string): Promise<boolean> {
     try {
+      // Zoom and Teams pages also host things that are not the call (Teams
+      // chats): post only while the call UI is on screen.
+      if (PLATFORM !== "meet" && !isMeetingRoomPath()) return false;
       const chatInput = await ensureChatPanelOpen();
       if (!chatInput) return false;
       setInputValue(chatInput, message);
       await wait(150);
-      const sendButton = queryFirst(SELECTORS.sendButton) as HTMLButtonElement | null;
+      const sendButton = queryFirstVisible(SELECTORS.sendButton) as HTMLButtonElement | null;
       if (
         sendButton &&
         !sendButton.disabled &&
@@ -233,6 +224,12 @@ import { shortcutKeys } from "./ui/shortcut.ts";
   let accountName: string | null = null;
 
   function participantNameFromTile(tile: HTMLElement): string | null {
+    const name = meetParticipantNameFromTile(tile);
+    if (!name || PLATFORM === "meet") return name;
+    return splitDisplayName(name).name || null;
+  }
+
+  function meetParticipantNameFromTile(tile: HTMLElement): string | null {
     // Most reliable first: the tile's own menu ("Mais opções para Ana Souza"),
     // the self-name attribute, the name element; the tile text only last
     // (it also holds icon ligatures and button labels).
@@ -263,7 +260,28 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     });
   }
 
+  /** Zoom / Teams: the name elements, without "(Host, me)" / "(Convidado)" markers. */
+  function collectPlatformParticipants(): { participants: string[]; selfName: string | null } {
+    const names = new Set<string>();
+    let selfName: string | null = null;
+    for (const selector of SELECTORS.participantNodes) {
+      document.querySelectorAll<HTMLElement>(selector).forEach((node) => {
+        const raw =
+          getTextValue(node) ||
+          node.getAttribute("title") ||
+          (node.getAttribute("aria-label") || "").split(",")[0];
+        const { name, isSelf } = splitDisplayName(raw || "");
+        const clean = participantNameFromCandidate({ text: name });
+        if (!clean) return;
+        names.add(clean);
+        if (isSelf && !selfName) selfName = clean;
+      });
+    }
+    return { participants: names.size > 0 ? [...names] : ["You"], selfName };
+  }
+
   function collectParticipants(): { participants: string[]; selfName: string | null } {
+    if (PLATFORM !== "meet") return collectPlatformParticipants();
     const candidates: ParticipantNameCandidate[] = [];
     const elements = new Set<HTMLElement>();
     let selfName: string | null = null;
@@ -397,6 +415,7 @@ import { shortcutKeys } from "./ui/shortcut.ts";
   let leaveReported = false;
 
   function postCallScreenVisible(): boolean {
+    if (DOM.postCallPath?.test(location.pathname)) return true;
     const buttons = document.querySelectorAll<HTMLElement>('button, [role="button"]');
     for (const button of buttons) {
       const label = (button.getAttribute("aria-label") || button.textContent || "").trim();
@@ -436,6 +455,15 @@ import { shortcutKeys } from "./ui/shortcut.ts";
   let lastMicMuted: boolean | null = null;
 
   function meetMicMuted(): boolean | null {
+    if (PLATFORM !== "meet") {
+      // Zoom/Teams: the toggle's label says what a click would do ("Unmute").
+      for (const button of document.querySelectorAll<HTMLElement>(DOM.micButtons.join(","))) {
+        const label = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""}`;
+        const muted = micMutedFromLabel(label);
+        if (muted !== null) return muted;
+      }
+      return null;
+    }
     for (const button of document.querySelectorAll<HTMLElement>("[data-is-muted]")) {
       const label = `${button.getAttribute("aria-label") || ""} ${button.getAttribute("data-tooltip") || ""}`;
       if (MIC_LABEL.test(label)) return button.getAttribute("data-is-muted") === "true";

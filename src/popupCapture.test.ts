@@ -12,6 +12,7 @@ function meetSelection(): MeetTabSelection {
     } as chrome.tabs.Tab,
     meetingId: "abc-defg-hij",
     meetingUrl: "https://meet.google.com/abc-defg-hij",
+    platform: "meet",
   };
 }
 

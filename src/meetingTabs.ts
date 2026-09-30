@@ -1,40 +1,30 @@
+import { MEETING_TAB_URLS, meetingRefFromUrl, type MeetingPlatform } from "./platforms";
+
 export interface MeetTabSelection {
   tab: chrome.tabs.Tab;
   meetingId: string;
   meetingUrl: string;
+  platform: MeetingPlatform;
 }
 
-const MEET_TAB_URL = "https://meet.google.com/*";
-
-/** Validates the standard Google Meet room ID format: three letters, four letters, three letters separated by dashes. */
-const MEET_ID_REGEX = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
-
+/**
+ * The meeting id of a call tab: `abc-defg-hij` on Google Meet, `zoom-<number>`
+ * on the Zoom web client, `teams-<id>` on Microsoft Teams (see platforms.ts).
+ * Null for anything that is not a call.
+ */
 export function getMeetingIdFromUrl(url: string | undefined): string | null {
-  if (!url) return null;
-
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname !== "meet.google.com") return null;
-
-    const meetingId = parsed.pathname.split("/").filter(Boolean)[0];
-    if (!meetingId || meetingId === "new") return null;
-
-    if (!MEET_ID_REGEX.test(meetingId)) return null;
-
-    return meetingId;
-  } catch {
-    return null;
-  }
+  return meetingRefFromUrl(url)?.meetingId ?? null;
 }
 
 function toMeetTabSelection(tab: chrome.tabs.Tab | undefined): MeetTabSelection | null {
-  const meetingId = getMeetingIdFromUrl(tab?.url);
-  if (!tab || tab.id === undefined || !meetingId || !tab.url) return null;
+  const ref = meetingRefFromUrl(tab?.url);
+  if (!tab || tab.id === undefined || !ref || !tab.url) return null;
 
   return {
     tab,
-    meetingId,
+    meetingId: ref.meetingId,
     meetingUrl: tab.url,
+    platform: ref.platform,
   };
 }
 
@@ -43,12 +33,14 @@ export async function resolveManualMeetTab(): Promise<MeetTabSelection> {
   const activeMeetTab = toMeetTabSelection(activeTab);
   if (activeMeetTab) return activeMeetTab;
 
-  const meetTabs = (await chrome.tabs.query({ url: MEET_TAB_URL }))
+  const meetTabs = (await chrome.tabs.query({ url: MEETING_TAB_URLS }))
     .map(toMeetTabSelection)
     .filter((tab): tab is MeetTabSelection => Boolean(tab));
 
   if (meetTabs.length === 0) {
-    throw new Error("Nenhuma reunião do Google Meet aberta. Entre na reunião primeiro.");
+    throw new Error(
+      "Nenhuma reunião aberta (Google Meet, Zoom ou Teams). Entre na reunião primeiro.",
+    );
   }
 
   if (meetTabs.length === 1) {

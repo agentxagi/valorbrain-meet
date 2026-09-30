@@ -37,6 +37,24 @@ import {
   type SpeakerEvent,
 } from "./speakerAttribution";
 import { getMeetingIdFromUrl } from "./meetingTabs";
+import {
+  MEETING_TAB_URLS,
+  navigatedAwayFromCall,
+  platformForUrl,
+  platformLabelForUrl,
+} from "./platforms";
+import {
+  pruneRecordingNoticeLog,
+  recordingNoticeKey,
+  resolveRecordingNoticeText,
+  shouldPostRecordingNotice,
+} from "./recordingNotice";
+import {
+  fetchMeetVocabulary,
+  participantsKey,
+  recordMeetAliases,
+  type GraphVocabulary,
+} from "./vbVocabulary";
 import { isMessageFromActiveMeeting } from "./activeMeetingMessages";
 import { findParticipant, namesMatch, normalizeName } from "./utils/nameUtils";
 import { clearTabState, getTabState, initTabStateCleanup, setTabState } from "./tabStateManager";
@@ -95,11 +113,13 @@ import {
 } from "./meetingSummary";
 import { buildTranscriptionPrompt, mergeVocabulary } from "./transcriptionPrompt";
 import {
+  applyKnownCorrections,
   applyTermCorrections,
   buildTermCorrectionMessages,
   chunkLines,
   mergeCorrections,
   parseTermCorrections,
+  squashTerm,
   type TermCorrection,
 } from "./termCorrection";
 
@@ -122,6 +142,13 @@ const SPEAKER_EVENT_WINDOW_MS = 10 * 60_000;
 const ECHO_LOOKBACK_LINES = 12;
 /** Minimum spacing between two notifications of the same kind. */
 const NOTIFICATION_THROTTLE_MS = 5 * 60_000;
+/** Graph vocabulary: at most this many requests per recording, this far apart. */
+const VOCABULARY_MAX_FETCHES = 4;
+const VOCABULARY_REFRESH_MIN_MS = 30_000;
+/** Recording notice: tries while the chat is not there yet (lobby, panel loading). */
+const RECORDING_NOTICE_RETRY_MS = [4_000, 8_000, 15_000];
+/** chrome.storage.session key: when the notice was posted per meeting. */
+const RECORDING_NOTICE_LOG_KEY = "recordingNoticeLog";
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -248,6 +275,9 @@ let summaryInFlight: Promise<void> | null = null;
  * spelling request is sent to the same provider/key until it renews.
  */
 let summaryQuotaPause: { until: number; provider: string } | null = null;
+/** Graph vocabulary requests made for the current recording (reset by a new start time). */
+let vocabularyRequests = { startTime: 0, count: 0, lastAt: 0, inFlight: false };
+let vocabularyRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function providerKey(config: ProviderConfig, apiKey: string | null): string {
   return `${config.baseUrl}|${config.model}|${apiKey ?? ""}`;
@@ -385,6 +415,31 @@ async function hydrateState() {
           if (typeof stored.lastSummarizedIndex === "number")
             state.lastSummarizedIndex = stored.lastSummarizedIndex;
           if (typeof stored.micActive === "boolean") state.micActive = stored.micActive;
+          if (Array.isArray(stored.termCorrections)) {
+            state.termCorrections = sanitizeStoredArray<Record<string, unknown>>(
+              stored.termCorrections,
+            )
+              .filter((c) => typeof c.from === "string" && typeof c.to === "string")
+              .map((c) => ({
+                from: String(c.from),
+                to: String(c.to),
+                count: Number(c.count) || 0,
+                ...(c.source === "graph" ? { source: "graph" as const } : {}),
+              }));
+          }
+          const graph = stored.graphVocabulary as Partial<GraphVocabulary> | null | undefined;
+          if (graph && typeof graph === "object" && Array.isArray(graph.terms)) {
+            state.graphVocabulary = {
+              terms: graph.terms.filter((t): t is string => typeof t === "string").slice(0, 120),
+              corrections: sanitizeStoredArray<Record<string, unknown>>(graph.corrections)
+                .filter((c) => typeof c.from === "string" && typeof c.to === "string")
+                .map((c) => ({ from: String(c.from), to: String(c.to) }))
+                .slice(0, 200),
+              fetchedAt: Number(graph.fetchedAt) || 0,
+              participantsKey:
+                typeof graph.participantsKey === "string" ? graph.participantsKey : "",
+            };
+          }
           if (stored.stats && typeof stored.stats === "object") {
             const s = stored.stats as unknown as Record<string, unknown>;
             state.stats = {
@@ -508,6 +563,9 @@ function resetState() {
   state.finalizing = false;
   state.stats = emptyStats();
   state.termCorrections = [];
+  state.graphVocabulary = null;
+  if (vocabularyRetryTimer) clearTimeout(vocabularyRetryTimer);
+  vocabularyRetryTimer = null;
   pendingJoinersInFlight.clear();
   perTabParticipants.clear();
   audioChunkQueue.clear();
@@ -567,6 +625,7 @@ function snapshot(): State {
     ...(state.termCorrections && state.termCorrections.length > 0
       ? { termCorrections: state.termCorrections.map((c) => ({ ...c })) }
       : {}),
+    ...(state.graphVocabulary ? { graphVocabulary: state.graphVocabulary } : {}),
   };
 }
 
@@ -795,7 +854,7 @@ async function executeBroadcast() {
       startTime: fullSnapshot.startTime,
       targetTabId: fullSnapshot.targetTabId,
     };
-    const tabs = await chrome.tabs.query({ url: "https://meet.google.com/*" });
+    const tabs = await chrome.tabs.query({ url: MEETING_TAB_URLS });
     for (const tab of tabs) {
       if (tab.id !== undefined) {
         chrome.tabs
@@ -831,10 +890,28 @@ interface PipelineSettings {
   transcriptionVocabulary?: string;
   /** How the recording user is named on microphone lines ("Gustavo"). */
   selfName?: string;
+  /** Post a "this meeting is being recorded" message in the call chat (default off). */
+  recordingChatNotice?: boolean;
+  recordingChatNoticeText?: string;
+  /** Load the company vocabulary from the ValorBrain graph (default on when connected). */
+  graphVocabulary?: boolean;
+  /** Teach the graph the spelling fixes accepted in each meeting (default on). */
+  learnCorrections?: boolean;
 }
 
+/** Terms the ValorBrain graph suggested for this recording (empty until loaded). */
+function graphTerms(): string[] {
+  return state.graphVocabulary?.terms ?? [];
+}
+
+/** Whisper prompt glossary: built-ins, the settings list, then graph terms (budgeted). */
 function vocabularyFrom(settings: PipelineSettings): string[] {
-  return mergeVocabulary(settings.transcriptionVocabulary);
+  return mergeVocabulary(settings.transcriptionVocabulary, 300, graphTerms());
+}
+
+/** Glossary for the summary and the spelling review (a chat prompt: more room). */
+function reviewVocabularyFrom(settings: PipelineSettings): string[] {
+  return mergeVocabulary(settings.transcriptionVocabulary, 900, graphTerms());
 }
 
 /** Meet's placeholder labels for the local user, never a real name. */
@@ -899,7 +976,7 @@ async function ensureOffscreenDocument() {
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_DOCUMENT_PATH,
     reasons: ["USER_MEDIA" as chrome.offscreen.Reason],
-    justification: "Capturar o áudio da aba do Google Meet para transcrição",
+    justification: "Capturar o áudio da aba da reunião para transcrição",
   });
 
   // The document still needs a moment to register its message listener.
@@ -1074,9 +1151,10 @@ async function processQueuedAudioChunk({ id, item }: AudioChunkQueueItem<QueuedA
   }
 
   const settings = (await getSettings()) as PipelineSettings;
-  const text =
+  const refined =
     settings.transcriptRefinement === true ? await refineTranscription(result.text) : result.text;
   if (state.startTime !== startTimeAtCall) return;
+  const text = applyLearnedCorrections(refined, settings);
 
   // Timestamp = when the segment started (falls back to arrival minus duration).
   const segmentStartedAt =
@@ -1271,7 +1349,7 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     participants: [...selfNameCandidates(settings), ...state.participants],
     known: { decisions: state.decisions, actionItems: state.actionItems, topics: state.topics },
     isFinal,
-    vocabulary: vocabularyFrom(settings),
+    vocabulary: reviewVocabularyFrom(settings),
     selfName: selfNameCandidates(settings)[0],
   });
 
@@ -1366,7 +1444,7 @@ async function correctTranscriptTerms(): Promise<void> {
   if (summaryQuotaExhausted(config, apiKey)) return;
 
   const settings = (await getSettings()) as PipelineSettings;
-  const vocabulary = vocabularyFrom(settings);
+  const vocabulary = reviewVocabularyFrom(settings);
   const participants = [...selfNameCandidates(settings), ...state.participants];
   const lines = state.transcript.map(
     (entry) =>
@@ -1419,9 +1497,14 @@ async function correctTranscriptTerms(): Promise<void> {
   }
   applyCorrectionsToSummary(corrections);
 
-  state.termCorrections = corrections
-    .map((correction) => ({ ...correction, count: totals.get(correction.from) ?? 0 }))
-    .filter((correction) => correction.count > 0);
+  // Corrections learned from the graph were applied line by line already.
+  const learned = (state.termCorrections ?? []).filter((c) => c.source === "graph");
+  state.termCorrections = [
+    ...learned,
+    ...corrections
+      .map((correction) => ({ ...correction, count: totals.get(correction.from) ?? 0 }))
+      .filter((correction) => correction.count > 0),
+  ];
   if (state.termCorrections.length > 0) {
     addTimeline(
       `Termos corrigidos na transcrição: ${state.termCorrections
@@ -1429,6 +1512,124 @@ async function correctTranscriptTerms(): Promise<void> {
         .map((c) => `${c.from} → ${c.to}`)
         .join(", ")}`,
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ValorBrain graph: company vocabulary and learned corrections
+// ---------------------------------------------------------------------------
+
+/**
+ * Loads the tenant's vocabulary for this meeting from the ValorBrain graph:
+ * names, clients and products the company talks about (people in the call
+ * first) and the spelling fixes learned in earlier meetings. Called when the
+ * recording starts and again when new participants show up. Never blocks the
+ * recording; any failure just leaves the settings vocabulary alone.
+ */
+async function loadGraphVocabulary(): Promise<void> {
+  const startTime = state.startTime;
+  if (!state.audioActive || !startTime) return;
+  if (vocabularyRequests.startTime !== startTime) {
+    vocabularyRequests = { startTime, count: 0, lastAt: 0, inFlight: false };
+  }
+  const requests = vocabularyRequests;
+  if (requests.inFlight || requests.count >= VOCABULARY_MAX_FETCHES) return;
+
+  const settings = (await getSettings()) as PipelineSettings;
+  if (settings.graphVocabulary === false) return;
+  const vbSettings = normalizeVbSettings(settings);
+  if (!isVbConfigured(vbSettings)) return;
+
+  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const key = participantsKey(participants);
+  if (state.graphVocabulary && state.graphVocabulary.participantsKey === key) return;
+
+  const wait = requests.lastAt + VOCABULARY_REFRESH_MIN_MS - Date.now();
+  if (requests.count > 0 && wait > 0) {
+    if (!vocabularyRetryTimer) {
+      vocabularyRetryTimer = setTimeout(() => {
+        vocabularyRetryTimer = null;
+        void loadGraphVocabulary().catch(() => undefined);
+      }, wait);
+      // Node (tests) must not stay alive for it; browsers return a number.
+      (vocabularyRetryTimer as { unref?: () => void }).unref?.();
+    }
+    return;
+  }
+
+  requests.inFlight = true;
+  requests.count += 1;
+  requests.lastAt = Date.now();
+  try {
+    const result = await fetchMeetVocabulary(vbSettings, participants);
+    if (state.startTime !== startTime) return;
+    if (!result.ok) {
+      console.debug(`${LOG_PREFIX} graph vocabulary unavailable (${result.kind}): ${result.error}`);
+      return;
+    }
+    const first = !state.graphVocabulary;
+    state.graphVocabulary = result.vocabulary;
+    if (first) {
+      addTimeline(
+        `Vocabulário do ValorBrain: ${result.vocabulary.terms.length} termos e ${result.vocabulary.corrections.length} correções aprendidas`,
+      );
+    }
+    await broadcastStateUpdate();
+  } catch (err) {
+    console.debug(`${LOG_PREFIX} graph vocabulary request failed`, err);
+  } finally {
+    requests.inFlight = false;
+  }
+}
+
+/**
+ * Fixes misheard terms the company already corrected in earlier meetings
+ * (learned by the graph), as each line arrives. Never rewrites the name of
+ * someone in the call.
+ */
+function applyLearnedCorrections(text: string, settings: PipelineSettings): string {
+  const learned = state.graphVocabulary?.corrections ?? [];
+  if (!text || learned.length === 0) return text;
+  const names = new Set(
+    [...selfNameCandidates(settings), ...state.participants].map(squashTerm).filter(Boolean),
+  );
+  const usable = learned.filter((c) => !names.has(squashTerm(c.from)));
+  const { text: fixed, counts } = applyKnownCorrections(text, usable);
+  if (counts.size === 0) return text;
+  const records = state.termCorrections ?? (state.termCorrections = []);
+  for (const correction of usable) {
+    const count = counts.get(correction.from);
+    if (!count) continue;
+    const existing = records.find(
+      (r) => r.source === "graph" && r.from === correction.from && r.to === correction.to,
+    );
+    if (existing) existing.count += count;
+    else records.push({ ...correction, count, source: "graph" });
+  }
+  return fixed;
+}
+
+/**
+ * After a meeting reached ValorBrain: the fixes its final review accepted go
+ * back to the graph as aliases, so the next meeting is transcribed right.
+ * Only for meetings that were sent (the user's delivery choice decides).
+ */
+async function teachCorrectionsToValorBrain(session: StoredSession, vbSettings: VbSettings) {
+  try {
+    const settings = (await getSettings()) as PipelineSettings;
+    if (settings.learnCorrections === false) return;
+    const corrections = session.termCorrections ?? [];
+    if (!corrections.some((c) => c.source !== "graph" && c.count > 0)) return;
+    const result = await recordMeetAliases(vbSettings, corrections);
+    if (!result.ok) {
+      console.warn(`${LOG_PREFIX} could not teach corrections to ValorBrain: ${result.error}`);
+    } else if (DEBUG) {
+      console.log(
+        `${LOG_PREFIX} corrections taught to ValorBrain: ${result.recorded} recorded, ${result.skipped} skipped`,
+      );
+    }
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} teaching corrections failed`, err);
   }
 }
 
@@ -1546,6 +1747,55 @@ async function showPrivateBriefToTab(tabId: number, briefContent: string, target
   }
 }
 
+/**
+ * Optional "this meeting is being recorded" message in the call chat, once
+ * per meeting (settings → Recursos). Retries while the chat is not there yet;
+ * if it never is, the user is told to warn the participants themselves.
+ */
+async function postRecordingNotice(tabId: number, startTime: number): Promise<void> {
+  const settings = (await getSettings()) as PipelineSettings;
+  if (settings.recordingChatNotice !== true) return;
+  const platform = platformForUrl(state.meetingUrl);
+  if (!platform) return; // a generic tab (webinar, video): no call chat to post into
+
+  const area = chrome.storage.session ?? chrome.storage.local;
+  const key = recordingNoticeKey(platform, state.meetingId);
+  const now = Date.now();
+  const stored = (await area.get(RECORDING_NOTICE_LOG_KEY).catch(() => ({}))) as Record<
+    string,
+    unknown
+  >;
+  const log = pruneRecordingNoticeLog(stored[RECORDING_NOTICE_LOG_KEY], now);
+  if (!shouldPostRecordingNotice(log, key, now)) {
+    addTimeline("Aviso de gravação já publicado no chat desta reunião");
+    return;
+  }
+
+  const text = resolveRecordingNoticeText(settings.recordingChatNoticeText);
+  for (let attempt = 0; attempt <= RECORDING_NOTICE_RETRY_MS.length; attempt += 1) {
+    if (!state.audioActive || state.startTime !== startTime) return;
+    const response = (await chrome.tabs
+      .sendMessage(tabId, { type: "SEND_CHAT_MESSAGE", text })
+      .catch(() => null)) as { success?: boolean } | null | undefined;
+    if (response?.success) {
+      await area.set({ [RECORDING_NOTICE_LOG_KEY]: { ...log, [key]: Date.now() } }).catch(() => {});
+      addTimeline("Aviso de gravação publicado no chat da reunião");
+      await broadcastStateUpdate();
+      return;
+    }
+    const delay = RECORDING_NOTICE_RETRY_MS[attempt];
+    if (delay !== undefined) await sleep(delay);
+  }
+
+  if (!state.audioActive || state.startTime !== startTime) return;
+  addTimeline("Aviso de gravação não publicado: o chat da reunião não foi encontrado");
+  const message =
+    "Não consegui publicar o aviso de gravação no chat. Avise os participantes de que a reunião está sendo gravada.";
+  if (!state.notice) setNotice("capture", "warning", message);
+  notify("recording-notice", "ValorBrain Meet: aviso de gravação não enviado", message);
+  await broadcastStateUpdate(true);
+}
+
 async function maybeWelcomeJoiners(tabId: number | undefined, joiners: string[]) {
   if (!joiners.length || getDuration() <= MIN_MEETING_DURATION_FOR_WELCOME || !tabId) return;
 
@@ -1614,7 +1864,7 @@ async function patchLastSession(sessionId: string, patch: Partial<LastSessionRes
 
 function sessionTitle(session: State): string {
   const topic = session.topics?.find((t) => t?.name)?.name;
-  return topic || session.meetingId || "Reunião no Google Meet";
+  return topic || session.meetingId || `Reunião no ${platformLabelForUrl(session.meetingUrl)}`;
 }
 
 /** Saves a session record, evicting the oldest saved session on quota errors. */
@@ -1677,6 +1927,7 @@ async function autoSendSavedSessionToValorBrain(session: StoredSession) {
     }
     await patchLastSession(session.id, { vb: { status: "pending", at: Date.now() } });
     const vb = await deliverSessionToValorBrain(session, vbSettings);
+    if (vb.status === "sent") void teachCorrectionsToValorBrain(session, vbSettings);
     if (vb.status === "sent") {
       notify(
         "saved",
@@ -1828,6 +2079,14 @@ async function startAudioCapture(
       );
     }
     await broadcastStateUpdate(true);
+    // Both run beside the recording; neither may delay or fail the start.
+    const startedAt = state.startTime;
+    void loadGraphVocabulary().catch((err) =>
+      console.debug(`${LOG_PREFIX} graph vocabulary skipped`, err),
+    );
+    void postRecordingNotice(tabId, startedAt).catch((err) =>
+      console.warn(`${LOG_PREFIX} recording notice failed`, err),
+    );
     return { micActive: state.micActive };
   } catch (err) {
     state.audioActive = false;
@@ -1843,7 +2102,7 @@ async function startAudioCapture(
 async function scanForMeetTabs() {
   if (state.audioActive || isStartingAudio || isStoppingAudio) return;
   try {
-    const tabs = await chrome.tabs.query({ url: "https://meet.google.com/*" });
+    const tabs = await chrome.tabs.query({ url: MEETING_TAB_URLS });
     for (const tab of tabs) {
       const meetingId = getMeetingIdFromUrl(tab.url);
       if (!meetingId) continue;
@@ -1919,7 +2178,9 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
 
       const hasContent = state.transcript.length > 0 || Boolean(state.summary.trim());
       if (hasContent) {
+        // The graph vocabulary belongs to the live recording, not to the saved meeting.
         const snap = snapshot();
+        delete snap.graphVocabulary;
         const session: StoredSession = {
           ...snap,
           id: crypto.randomUUID(),
@@ -1996,13 +2257,12 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   await hydrateState();
 
-  // The recording Meet tab left the meeting (navigated elsewhere): stop and save.
+  // The recording tab left the meeting (navigated elsewhere): stop and save.
   if (
     state.audioActive &&
     tabId === state.targetTabId &&
     typeof changeInfo.url === "string" &&
-    isMeetHostname(state.meetingUrl) &&
-    getMeetingIdFromUrl(changeInfo.url) !== state.meetingId
+    navigatedAwayFromCall(state.meetingUrl, state.meetingId, changeInfo.url)
   ) {
     await stopAudioCapture("Você saiu da reunião");
     return;
@@ -2295,6 +2555,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         await maybeWelcomeJoiners(tabId, joiners);
         await broadcastStateUpdate();
+        if (tabId === state.targetTabId && state.audioActive) {
+          void loadGraphVocabulary().catch(() => undefined);
+        }
         sendResponse({ success: true, joiners });
         return;
       }
@@ -2346,8 +2609,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           if (state.audioActive) {
             addTimeline(
               muted
-                ? "Microfone mudo no Meet: sua voz não está sendo gravada"
-                : "Microfone reativado no Meet",
+                ? "Microfone mudo na reunião: sua voz não está sendo gravada"
+                : "Microfone reativado na reunião",
             );
             chrome.runtime.sendMessage({ type: "OFFSCREEN_SET_MIC_MUTED", muted }).catch(() => {});
           }
@@ -2440,6 +2703,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           : { status: "failed", at: Date.now(), error: result.error };
         await saveSessionRecord({ ...session, vb });
         await patchLastSession(session.id, { vb });
+        if (result.ok) void teachCorrectionsToValorBrain(session, vbSettings);
         sendResponse(result);
         return;
       }
@@ -2520,7 +2784,11 @@ chrome.commands.onCommand.addListener(async (command) => {
       if (state.targetTabId) {
         await startAudioCapture(state.targetTabId, state.meetingId, state.meetingUrl);
       } else {
-        notify("no-meet", "ValorBrain Meet", "Abra a reunião no Google Meet antes de gravar.");
+        notify(
+          "no-meet",
+          "ValorBrain Meet",
+          "Abra a reunião (Google Meet, Zoom ou Teams) antes de gravar.",
+        );
       }
       return;
     }

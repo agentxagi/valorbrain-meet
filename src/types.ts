@@ -28,6 +28,19 @@ export interface TermCorrectionRecord {
   to: string;
   /** Times it was replaced in the transcript. */
   count: number;
+  /** "graph": learned by ValorBrain in an earlier meeting (absent: this meeting's review). */
+  source?: "graph";
+}
+
+/** Vocabulary the ValorBrain graph suggested for the current recording. */
+export interface GraphVocabulary {
+  /** Terms in the engine's order (participants excluded: the prompt names them). */
+  terms: string[];
+  /** Spelling fixes learned in earlier meetings (misheard → right). */
+  corrections: Array<{ from: string; to: string }>;
+  fetchedAt: number;
+  /** The participants the request was made with (a new name triggers a refresh). */
+  participantsKey: string;
 }
 
 /** A timestamped event recorded on the meeting timeline. */
@@ -151,8 +164,10 @@ export interface State {
   vb?: VbDeliveryStatus;
   /** Why the session ended (saved sessions only). */
   endReason?: string;
-  /** Spelling fixes applied to the transcript at the end of the meeting. */
+  /** Spelling fixes applied to the transcript (learned ones as lines arrive, the review at the end). */
   termCorrections?: TermCorrectionRecord[];
+  /** Live recording only: vocabulary from the ValorBrain graph (never saved with the session). */
+  graphVocabulary?: GraphVocabulary | null;
 }
 
 /** Storage metadata summary for a single saved meeting, used in storage usage reports. */

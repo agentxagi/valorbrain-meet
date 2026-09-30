@@ -251,6 +251,11 @@ body {
   margin-top: 2px;
 }
 
+/* A setting's own text field right under its switch (recording notice). */
+.op-toggles > .vb-field {
+  padding-top: 12px;
+}
+
 /* ——— Details ——— */
 .op-details {
   border-top: 1px solid var(--vb-border-default);

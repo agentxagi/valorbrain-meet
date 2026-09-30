@@ -72,3 +72,52 @@ test("allows a valid sender URL while the active meeting id is unknown", () => {
     true,
   );
 });
+
+test("Zoom: the recorded tab must stay in the same meeting number", () => {
+  const zoom = { targetTabId: 7, meetingId: "zoom-85012345678" };
+  assert.equal(
+    isMessageFromActiveMeeting({
+      ...zoom,
+      senderTabId: 7,
+      senderUrl: "https://app.zoom.us/wc/85012345678/join",
+    }),
+    true,
+  );
+  assert.equal(
+    isMessageFromActiveMeeting({
+      ...zoom,
+      senderTabId: 7,
+      senderUrl: "https://app.zoom.us/wc/99912345678/join",
+    }),
+    false,
+  );
+});
+
+test("Teams: the recorded tab is trusted by id even after the URL loses the meeting", () => {
+  const teams = { targetTabId: 9, meetingId: "teams-nja4yze4zmqtywjj" };
+  assert.equal(
+    isMessageFromActiveMeeting({
+      ...teams,
+      senderTabId: 9,
+      senderUrl: "https://teams.microsoft.com/v2/",
+    }),
+    true,
+  );
+  assert.equal(
+    isMessageFromActiveMeeting({
+      ...teams,
+      senderTabId: 10,
+      senderUrl: "https://teams.microsoft.com/v2/",
+    }),
+    false,
+    "another Teams tab is ignored",
+  );
+  assert.equal(
+    isMessageFromActiveMeeting({
+      ...teams,
+      senderTabId: 9,
+      senderUrl: "https://teams.microsoft.com.evil.com/v2/",
+    }),
+    false,
+  );
+});

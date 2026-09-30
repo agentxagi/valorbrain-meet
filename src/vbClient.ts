@@ -6,6 +6,7 @@
 // user-configured `vb.*` settings keys.
 
 import { State } from "./types";
+import { platformLabelForUrl } from "./platforms";
 
 // ---------------------------------------------------------------------------
 // Settings (`vb.*` keys inside the shared `settings` object)
@@ -125,7 +126,7 @@ export function resolveSessionTitle(session: State): string {
   if (topic) return topic.slice(0, 120);
   if (session.meetingId && session.meetingId !== "unknown") return session.meetingId;
   if (session.meetingUrl) return session.meetingUrl;
-  return "Google Meet";
+  return platformLabelForUrl(session.meetingUrl);
 }
 
 /** Builds the `Reunião: <title> (YYYY-MM-DD HH:mm)` memory title. */
@@ -317,9 +318,29 @@ export interface VbRequestOptions {
   fetchImpl?: typeof fetch;
 }
 
-interface RawOutcome {
+export interface RawOutcome {
   response?: Response;
   failure?: VbFailure;
+}
+
+/** Authorization (+ optional tenant) headers for every ValorBrain REST call. */
+export function vbAuthHeaders(settings: VbSettings): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${settings.apiToken}`,
+  };
+  // Tenant ID is optional with OAuth-issued tokens; never send an empty header.
+  if (settings.tenantId) headers["X-Tenant-ID"] = settings.tenantId;
+  return headers;
+}
+
+/** One request with a timeout; network errors become a `VbFailure`, never a throw. */
+export async function requestValorBrain(
+  url: URL,
+  init: RequestInit,
+  options: VbRequestOptions = {},
+): Promise<RawOutcome> {
+  return attemptRequest(url, init, options);
 }
 
 async function attemptRequest(
@@ -347,6 +368,11 @@ async function attemptRequest(
   }
 }
 
+/** Maps a non-2xx response to the error model (null when the response is OK). */
+export function classifyVbResponse(response: Response): VbFailure | null {
+  return classifyResponse(response);
+}
+
 function classifyResponse(response: Response): VbFailure | null {
   if (response.status === 401 || response.status === 403) {
     return failure(
@@ -367,7 +393,7 @@ function classifyResponse(response: Response): VbFailure | null {
   );
 }
 
-async function parseJsonBody(response: Response): Promise<unknown> {
+export async function parseJsonBody(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch {

@@ -30,6 +30,7 @@ import {
 import { isVbConfigured, normalizeVbSettings, testValorBrainConnection } from "./vbClient";
 import { connectValorBrain, VB_API_BASE_URL } from "./vbConnect";
 import { renderStorageDashboard } from "./storageDashboard";
+import { DEFAULT_RECORDING_NOTICE, RECORDING_NOTICE_MAX_CHARS } from "./recordingNotice";
 import { renderApiUsageDashboard } from "./apiUsageDashboard";
 import { isVaultInitialized, unlockCredentials } from "./utils/credentials";
 
@@ -57,6 +58,9 @@ const TOGGLES: Array<{ id: string; key: string; defaultOn: boolean }> = [
   { id: "refinement-toggle", key: "transcriptRefinement", defaultOn: false },
   { id: "late-joiner-toggle", key: "lateJoinerBriefing", defaultOn: true },
   { id: "public-late-joiner-chat-toggle", key: "publicLateJoinerChat", defaultOn: false },
+  { id: "recording-notice-toggle", key: "recordingChatNotice", defaultOn: false },
+  { id: "vb-graph-vocabulary", key: "graphVocabulary", defaultOn: true },
+  { id: "vb-learn-corrections", key: "learnCorrections", defaultOn: true },
 ];
 
 let dirty = false;
@@ -436,6 +440,10 @@ async function loadForm() {
   $<HTMLTextAreaElement>("transcription-vocabulary").value =
     typeof settings.transcriptionVocabulary === "string" ? settings.transcriptionVocabulary : "";
   input("self-name").value = typeof settings.selfName === "string" ? settings.selfName : "";
+  const noticeText = $<HTMLTextAreaElement>("recording-notice-text");
+  noticeText.placeholder = DEFAULT_RECORDING_NOTICE;
+  noticeText.value =
+    typeof settings.recordingChatNoticeText === "string" ? settings.recordingChatNoticeText : "";
 
   const interval = Number(settings.summarizationInterval);
   const intervalValue =
@@ -529,6 +537,10 @@ async function save() {
         .value.trim()
         .slice(0, 600),
       selfName: input("self-name").value.replace(/\s+/g, " ").trim().slice(0, 80),
+      recordingChatNoticeText: $<HTMLTextAreaElement>("recording-notice-text")
+        .value.replace(/\s+/g, " ")
+        .trim()
+        .slice(0, RECORDING_NOTICE_MAX_CHARS),
       summarizationInterval: Number(input("summary-interval").value) || 180,
       vadThreshold: Number(input("vad-threshold").value) || 0.012,
       theme: $<HTMLSelectElement>("theme-select").value,
