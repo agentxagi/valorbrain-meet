@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-09-30
+
+### 🐛 Bug Fixes
+
+- **As formas erradas não vão mais para o ValorBrain.** Em **Detalhes**, a reunião traz só a grafia certa dos termos corrigidos (`Grafia revisada na transcrição: gbrain (4), Replit`). Antes, a linha "D-Brain → gbrain, Draga → Braga" fazia o ValorBrain extrair "D-Brain" e "Draga" como entidades a cada reunião. As formas erradas continuam no painel da extensão e viram apelidos no ValorBrain
+
 ## [2.2.0] - 2026-09-30
 
 A transcrição passa a usar o que o ValorBrain já sabe da sua empresa, e aprende com cada reunião.
