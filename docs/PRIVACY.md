@@ -6,11 +6,14 @@ você configurou.
 
 ## Para onde vão os dados
 
-| Dado                                                              | Destino                           | Quando                                                                                                                 |
-| ----------------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Áudio da reunião (aba + seu microfone)                            | Provedor de transcrição escolhido | Durante a gravação, em trechos. Trechos sem fala são descartados no próprio navegador.                                 |
-| Texto da transcrição e vocabulário da empresa                     | Provedor de resumo escolhido      | Durante a gravação (resumo parcial) e ao encerrar (resumo final)                                                       |
-| Reunião completa (resumo, decisões, próximos passos, transcrição) | Seu tenant do ValorBrain          | Ao encerrar, se conectado e com envio automático ligado, ou quando você clica em **Enviar ao ValorBrain** no Histórico |
+| Dado                                                              | Destino                                     | Quando                                                                                                                     |
+| ----------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Áudio da reunião (aba + seu microfone)                            | Provedor de transcrição escolhido           | Durante a gravação, em trechos. Trechos sem fala são descartados no próprio navegador.                                     |
+| Texto da transcrição e vocabulário da empresa                     | Provedor de resumo escolhido                | Durante a gravação (resumo parcial) e ao encerrar (resumo final)                                                           |
+| Reunião completa (resumo, decisões, próximos passos, transcrição) | Seu tenant do ValorBrain                    | Ao encerrar, se conectado e com envio automático ligado, ou quando você clica em **Enviar ao ValorBrain** no Histórico     |
+| Nomes dos participantes (para buscar o vocabulário da empresa)    | Seu tenant do ValorBrain                    | Ao começar a gravar e quando entra alguém, se conectado, no corpo do pedido (desligável em **Configurações → ValorBrain**) |
+| Correções aceitas na revisão final ("Rapplet" → "Replit")         | Seu tenant do ValorBrain                    | Depois que a reunião é enviada, se **Ensinar ao ValorBrain as correções** estiver ligado                                   |
+| Aviso de gravação (texto das configurações)                       | Chat da própria reunião (só no Google Meet) | Ao começar a gravar, só se você ligou **Avisar no chat que a reunião está sendo gravada**                                  |
 
 Com o **Whisper local**, o áudio não sai do computador. Com o **Whisper remoto** ou a
 **OpenAI**, o áudio vai para esse servidor. Leia a política do provedor que usar.
@@ -34,23 +37,29 @@ Apagar no navegador não apaga o que já foi para o ValorBrain.
 
 ## Permissões do Chrome
 
-| Permissão                                                                             | Para quê                                                         |
-| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `tabCapture`, `offscreen`                                                             | Capturar e processar o áudio da aba da reunião                   |
-| Microfone (pedido uma vez, na página de configurações)                                | Incluir a sua voz na gravação                                    |
-| `tabs`                                                                                | Encontrar a aba do Meet e perceber quando você sai da reunião    |
-| `storage`, `unlimitedStorage`                                                         | Guardar reuniões e configurações neste navegador                 |
-| `sidePanel`                                                                           | Painel da reunião                                                |
-| `notifications`                                                                       | Avisar quando a reunião foi salva, enviada ou deu erro           |
-| `contextMenus`                                                                        | "Gravar esta aba com o ValorBrain Meet" no menu do botão direito |
-| `identity`                                                                            | Login do "Conectar com ValorBrain" (OAuth)                       |
-| Hosts `meet.google.com`, `api.openai.com`, `api.z.ai`, `*.valor.digital`, `localhost` | Página do Meet e provedores padrão                               |
-| Outros hosts (opcional)                                                               | Pedidos ao salvar, só se você configurar outro endereço          |
+| Permissão                                                                             | Para quê                                                           |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `tabCapture`, `offscreen`                                                             | Capturar e processar o áudio da aba da reunião                     |
+| Microfone (pedido uma vez, na página de configurações)                                | Incluir a sua voz na gravação                                      |
+| `tabs`                                                                                | Encontrar a aba da reunião e perceber quando você sai dela         |
+| `storage`, `unlimitedStorage`                                                         | Guardar reuniões e configurações neste navegador                   |
+| `sidePanel`                                                                           | Painel da reunião                                                  |
+| `notifications`                                                                       | Avisar quando a reunião foi salva, enviada ou deu erro             |
+| `contextMenus`                                                                        | "Gravar esta aba com o ValorBrain Meet" no menu do botão direito   |
+| `identity`                                                                            | Login do "Conectar com ValorBrain" (OAuth)                         |
+| Hosts `meet.google.com`, `api.openai.com`, `api.z.ai`, `*.valor.digital`, `localhost` | Página do Meet e provedores padrão                                 |
+| Páginas `*.zoom.us/wc/*` e do Teams web (script de conteúdo, sem permissão de host)   | Ler nomes, quem fala e o microfone nas reuniões do Zoom e do Teams |
+| Outros hosts (opcional)                                                               | Pedidos ao salvar, só se você configurar outro endereço            |
 
 ## Consentimento
 
-Avise os participantes de que a reunião está sendo gravada. O resumo para quem chega
-atrasado aparece só na sua tela; enviá-lo no chat do Meet é opcional e vem desligado.
+Avise os participantes de que a reunião está sendo gravada. **Avisar no chat que a reunião
+está sendo gravada** (Configurações → Recursos, desligado por padrão) publica esse aviso no
+chat da reunião ao começar a gravar, uma vez por reunião; o texto é editável. O resumo para
+quem chega atrasado aparece só na sua tela; enviá-lo no chat é opcional e vem desligado.
+
+O vocabulário que o ValorBrain devolve respeita as permissões da sua conta: documentos que
+você não pode ver não entram na contagem.
 
 ## Problemas de segurança
 

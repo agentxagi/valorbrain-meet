@@ -21,10 +21,21 @@ export const TRANSCRIPTION_PROMPT_MAX_CHARS = 560;
 const NAMES_MAX_CHARS = 160;
 const MAX_NAMES = 12;
 
-/** Built-in terms followed by the company vocabulary from the settings. */
-export function mergeVocabulary(userVocabulary: unknown, maxChars = 300): string[] {
+/**
+ * Built-in terms, then the company vocabulary from the settings, then the
+ * terms the ValorBrain graph suggested for this meeting. The settings list is
+ * the user's own choice and always wins the budget; graph terms fill what is
+ * left.
+ */
+export function mergeVocabulary(
+  userVocabulary: unknown,
+  maxChars = 300,
+  graphTerms: string[] = [],
+): string[] {
   const user = typeof userVocabulary === "string" ? userVocabulary : "";
-  return parseVocabulary([...BUILTIN_VOCABULARY, user].join(", "), maxChars);
+  // A graph term is one term: separators inside it must not split it.
+  const graph = graphTerms.map((term) => String(term ?? "").replace(/[,;\n]+/g, " "));
+  return parseVocabulary([...BUILTIN_VOCABULARY, user, ...graph].join(", "), maxChars);
 }
 
 function uniqueNames(names: string[]): string[] {

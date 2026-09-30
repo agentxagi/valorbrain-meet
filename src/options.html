@@ -43,7 +43,8 @@
             <h1 class="op-welcome-title">Suas reuniões, direto para a memória da empresa.</h1>
             <p class="op-welcome-text">
               O ValorBrain Meet grava a reunião do Google Meet no seu navegador, transcreve, resume
-              em português e envia tudo para o ValorBrain. Sem robô na sala.
+              em português e envia tudo para o ValorBrain. Sem robô na sala. Zoom e Microsoft Teams
+              pelo navegador também funcionam (em teste).
             </p>
             <ol class="op-welcome-steps">
               <li>
@@ -54,7 +55,8 @@
               <li><strong>Microfone</strong>: libere para que a sua voz entre na transcrição.</li>
             </ol>
             <p class="vb-muted op-welcome-text">
-              Depois é só entrar no Meet, clicar no ícone do ValorBrain Meet na barra do Chrome e em
+              Depois é só entrar na reunião, clicar no ícone do ValorBrain Meet na barra do Chrome e
+              em
               <strong>Iniciar gravação</strong>. Fixe o ícone (menu de extensões → alfinete) para
               achá-lo rápido.
             </p>
@@ -304,6 +306,40 @@
               ></label>
             </div>
 
+            <div class="op-toggle">
+              <div>
+                <label class="vb-label" for="vb-graph-vocabulary"
+                  >Usar o vocabulário da empresa que o ValorBrain conhece</label
+                >
+                <p class="vb-hint">
+                  Ao começar a gravar, busca no ValorBrain os nomes de pessoas, clientes, projetos e
+                  produtos que a sua empresa mais cita (quem está na reunião primeiro) e as
+                  correções já aprendidas. A transcrição acerta esses nomes sem você digitar nada.
+                  Para isso, os nomes dos participantes vão para o seu ValorBrain. Só volta o que a
+                  sua conta pode ver.
+                </p>
+              </div>
+              <label class="vb-switch"
+                ><input id="vb-graph-vocabulary" type="checkbox" data-dirty /><span></span
+              ></label>
+            </div>
+
+            <div class="op-toggle">
+              <div>
+                <label class="vb-label" for="vb-learn-corrections"
+                  >Ensinar ao ValorBrain as correções da transcrição</label
+                >
+                <p class="vb-hint">
+                  Quando a revisão final corrige um nome ("Rapplet" → "Replit"), a correção vai para
+                  o ValorBrain junto com a reunião, e as próximas reuniões da empresa já saem
+                  certas. Nunca junta pessoas nem troca um nome que o ValorBrain já conhece.
+                </p>
+              </div>
+              <label class="vb-switch"
+                ><input id="vb-learn-corrections" type="checkbox" data-dirty /><span></span
+              ></label>
+            </div>
+
             <details class="op-details">
               <summary>Configuração manual (token de API)</summary>
               <div class="op-grid">
@@ -488,7 +524,7 @@
               <div class="op-toggle">
                 <div>
                   <label class="vb-label" for="public-late-joiner-chat-toggle"
-                    >Enviar esse resumo no chat do Meet</label
+                    >Enviar esse resumo no chat da reunião</label
                   >
                   <p class="vb-hint">Todos na reunião veem a mensagem. Desligado por padrão.</p>
                 </div>
@@ -498,6 +534,37 @@
                     type="checkbox"
                     data-dirty /><span></span
                 ></label>
+              </div>
+              <div class="op-toggle">
+                <div>
+                  <label class="vb-label" for="recording-notice-toggle"
+                    >Avisar no chat que a reunião está sendo gravada</label
+                  >
+                  <p class="vb-hint">
+                    Ao começar a gravar, publica a mensagem abaixo no chat do Google Meet, uma vez
+                    por reunião. Todos na reunião veem. Avisar quem participa de que a conversa está
+                    sendo gravada é boa prática e, pela LGPD, uma obrigação de transparência. No
+                    Zoom e no Teams ainda não: a extensão lembra você de avisar. Desligado por
+                    padrão.
+                  </p>
+                </div>
+                <label class="vb-switch"
+                  ><input id="recording-notice-toggle" type="checkbox" data-dirty /><span></span
+                ></label>
+              </div>
+              <div class="vb-field op-span-2">
+                <label class="vb-label" for="recording-notice-text">Texto do aviso</label>
+                <textarea
+                  id="recording-notice-text"
+                  class="vb-input op-textarea"
+                  rows="3"
+                  maxlength="500"
+                  data-dirty
+                ></textarea>
+                <p class="vb-hint">
+                  Em branco, vai o texto padrão (em cinza na caixa), que também apresenta o
+                  ValorBrain Meet a quem está na reunião. Até 500 caracteres, numa linha só.
+                </p>
               </div>
             </div>
           </section>

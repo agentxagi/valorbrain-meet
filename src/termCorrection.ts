@@ -219,3 +219,141 @@ export function mergeCorrections(lists: TermCorrection[][]): TermCorrection[] {
   }
   return [...merged.values()];
 }
+
+// ---------------------------------------------------------------------------
+// Corrections learned by the company graph (ValorBrain)
+// ---------------------------------------------------------------------------
+
+/**
+ * Checks a correction that did not come from this meeting's review (the
+ * ValorBrain graph sends the ones accepted in earlier meetings). The server is
+ * trusted to have validated it; this is the second lock: short terms only,
+ * spelled alike (the same 0.5 floor the engine uses), and never the name of
+ * someone in the call.
+ */
+export function isSafeKnownCorrection(
+  from: string,
+  to: string,
+  protectedNames: string[] | Set<string> = [],
+  knownTerms: Set<string> = new Set(),
+): boolean {
+  if (from.length < 2 || from.length > 60 || to.length < 2 || to.length > 60) return false;
+  if (/[<>{}`\u0000-\u001F\u007F]/.test(from + to)) return false;
+  if (wordCount(from) > MAX_FROM_WORDS || wordCount(to) > MAX_TO_WORDS) return false;
+  // "G-Brain" → "gbrain" is a real fix (same letters, other form); only a
+  // case/accent-only difference is a no-op, and ignoring case it would loop.
+  if (!squashTerm(from) || foldTerm(from) === foldTerm(to)) return false;
+  const names = protectedNames instanceof Set ? protectedNames : nameVariants(protectedNames);
+  if (names.has(squashTerm(from))) return false;
+  // Two common words ("sim" → "sem", "contrato" → "contato") are not a name
+  // that was misheard: one side must look like a name, or `to` be a known term.
+  if (!looksLikeName(from) && !looksLikeName(to) && !knownTerms.has(squashTerm(to))) return false;
+  return termSimilarity(from, to) >= 0.5;
+}
+
+/**
+ * Every way a person's name can appear in a sentence: the full name and each
+ * run of consecutive words ("Diego", "Braga", "Diego Braga" for "Diego Braga"),
+ * squashed. A learned correction never rewrites any of them.
+ */
+export function nameVariants(names: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const raw of names) {
+    const words = String(raw || "")
+      .split(/\s+/)
+      .map((word) => word.trim())
+      .filter(Boolean);
+    for (let i = 0; i < words.length; i += 1) {
+      for (let j = i + 1; j <= words.length; j += 1) {
+        const key = squashTerm(words.slice(i, j).join(" "));
+        if (key.length >= 2) out.add(key);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Drops corrections that feed each other (A → B and B → A would swap names in
+ * one pass; A → B and B → C would make the result depend on the order).
+ */
+export function dropCorrectionCycles<T extends TermCorrection>(corrections: T[]): T[] {
+  const targets = new Set(corrections.map((c) => foldTerm(c.to)));
+  return corrections.filter((c) => !targets.has(foldTerm(c.from)));
+}
+
+/** Lower-case, accents removed, spaces collapsed (the engine's alias key). */
+export function foldTerm(value: string): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Applies learned corrections ignoring case ("d-brain" and "D-Brain" are the
+ * same mishearing), whole words only, longest first, in one pass. Counts are
+ * keyed by the correction's own `from`.
+ */
+export function applyKnownCorrections(
+  text: string,
+  corrections: TermCorrection[],
+): { text: string; counts: Map<string, number> } {
+  const counts = new Map<string, number>();
+  if (!text || corrections.length === 0) return { text, counts };
+  const byKey = new Map<string, TermCorrection>();
+  for (const correction of corrections) {
+    const key = correction.from.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, correction);
+  }
+  const alternatives = [...byKey.values()]
+    .map((c) => c.from)
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp);
+  const pattern = new RegExp(
+    `(?<![\\p{L}\\p{N}])(?:${alternatives.join("|")})(?![\\p{L}\\p{N}])`,
+    "giu",
+  );
+  const replaced = text.replace(pattern, (match) => {
+    const correction = byKey.get(match.toLowerCase());
+    if (!correction) return match;
+    counts.set(correction.from, (counts.get(correction.from) ?? 0) + 1);
+    return correction.to;
+  });
+  return { text: replaced, counts };
+}
+
+/**
+ * The corrections worth teaching the graph after a meeting: the ones the final
+ * review accepted and really applied. Learned ones came from the graph already.
+ */
+export function learnableCorrections(
+  corrections: Array<TermCorrection & { count?: number; source?: string }>,
+): TermCorrection[] {
+  // A review fix that undoes a learned one ("gbrain" back to "D-Brain") says
+  // the learned alias may be wrong; teaching the reverse would create a cycle.
+  const learnedTargets = new Set(
+    corrections
+      .filter((c) => c?.source === "graph" && typeof c.to === "string")
+      .map((c) => foldTerm(c.to)),
+  );
+  const seen = new Set<string>();
+  const out: TermCorrection[] = [];
+  for (const correction of corrections) {
+    if (!correction || typeof correction.from !== "string" || typeof correction.to !== "string") {
+      continue;
+    }
+    if (correction.source === "graph") continue;
+    if (learnedTargets.has(foldTerm(correction.from))) continue;
+    if (typeof correction.count === "number" && correction.count <= 0) continue;
+    const from = correction.from.replace(/\s+/g, " ").trim();
+    const to = correction.to.replace(/\s+/g, " ").trim();
+    const key = foldTerm(from);
+    if (!from || !to || !key || seen.has(key) || key === foldTerm(to)) continue;
+    seen.add(key);
+    out.push({ from, to });
+  }
+  return out;
+}

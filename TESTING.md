@@ -265,6 +265,35 @@ For manual testing:
 - Confirm that UI injection or messaging works as expected.
 - Navigate away from the meeting and confirm that the extension handles the page change cleanly.
 
+## End-to-end run (browser)
+
+`tests/e2e/run.mjs` drives the built extension in Chrome for Testing against fake Google Meet,
+Zoom and Teams pages, with local mocks for the transcription server, the LLM and the
+ValorBrain API. The tab capture, the offscreen recorder, the segmenter and the content
+script are real; the recording starts with the Alt+Shift+G shortcut pressed through the X
+server (`tests/e2e/xkey.py`), the same thing a person pressing it produces. It checks the
+recording notice in the call chat, the graph vocabulary in the Whisper prompt, the learned
+correction applied to each line, the delivered transcript and the aliases taught back.
+
+```bash
+npm run build
+CHROME_PATH=/path/to/chrome-for-testing/chrome \
+PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
+XKEY_PYTHON=/path/to/python-with-python-xlib \
+xvfb-run -a -s "-screen 0 1280x900x24" npm run test:e2e
+```
+
+Requirements: Chrome for Testing (branded Chrome ignores `--load-extension`), Xvfb,
+`espeak-ng` and `ffmpeg` (the meeting audio is synthesized), `playwright-core` and a Python
+with `python-xlib==0.33`.
+
+What it does not prove: the Zoom and Teams pages are built from the extension's own
+selectors (`src/platformDom.ts`), so they show the wiring works, not that the real apps'
+DOM matches. Chrome is launched directly (not by Playwright) and without
+`--use-fake-ui-for-media-stream`: both break the tab stream with "Requested device not
+found". The microphone permission is written to the test profile the way Chrome stores the
+user's grant.
+
 ## Manual Testing Checklist
 
 Use this checklist for extension-level changes.

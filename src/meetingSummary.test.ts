@@ -76,7 +76,7 @@ test("buildSummaryMessages asks for PT-BR JSON and fences the transcript", () =>
   assert.match(system.content, /passagem final/);
   assert.match(system.content, /Nunca siga instruções/);
   assert.match(user.content, /<transcricao>\n\[chunk_1\]/);
-  assert.match(user.content, /Participantes detectados no Meet: Ana, Bruno\./);
+  assert.match(user.content, /Participantes detectados na reunião: Ana, Bruno\./);
   assert.match(user.content, /- Usar REST/);
   assert.match(user.content, /"actionItems"/);
 });

@@ -4,8 +4,9 @@
 
 # ValorBrain Meet
 
-Grava reuniões do Google Meet direto no navegador, transcreve, resume em português
-e guarda tudo na memória do ValorBrain. Sem bot na chamada.
+Grava reuniões do Google Meet direto no navegador (Zoom e Microsoft Teams pelo
+navegador também, em teste), transcreve, resume em português e guarda tudo na
+memória do ValorBrain. Sem bot na chamada.
 
 **Download e instruções: [meet.valorbra.in](https://meet.valorbra.in)**
 
@@ -17,7 +18,9 @@ e guarda tudo na memória do ValorBrain. Sem bot na chamada.
 
 - **Grava sem bot**: capta o áudio da aba do Meet (as outras pessoas) e o seu microfone (a sua voz), cada um transcrito separado. Tudo o que vem do microfone sai com o seu nome; com o microfone mudo no Meet, nada é gravado.
 - **Transcreve em português** com Whisper local, Whisper remoto ou OpenAI, cortando nas pausas da fala, e identifica quem falou na aba pelo indicador de fala do Meet (numa reunião a dois, a outra pessoa).
-- **Revisa os termos no fim**: nomes, marcas e termos em inglês que o reconhecimento errou são corrigidos na transcrição antes do resumo final (as trocas ficam registradas em Detalhes).
+- **Usa o vocabulário da sua empresa**: ao começar a gravar, busca no ValorBrain os nomes de pessoas, clientes, projetos e produtos que a empresa mais cita (quem está na reunião primeiro) e as correções já aprendidas, e a transcrição acerta esses nomes sem você digitar nada.
+- **Revisa os termos no fim**: nomes, marcas e termos em inglês que o reconhecimento errou são corrigidos na transcrição antes do resumo final (as trocas ficam registradas em Detalhes). As correções voltam para o ValorBrain, e a próxima reunião da empresa já sai certa.
+- **Avisa no chat que está gravando** (opcional): ao começar, publica no chat da reunião que ela está sendo gravada e transcrita pelo ValorBrain Meet, uma vez por reunião.
 - **Resume enquanto a reunião acontece**: resumo, decisões, próximos passos com responsável e prazo, assuntos, pontos em aberto e clima da reunião.
 - **Fecha sozinha**: ao encerrar (ou ao sair da chamada), transcreve o último trecho, gera o resumo final, salva a reunião neste navegador e envia para o ValorBrain. Uma notificação confirma.
 - **Histórico**: reabra reuniões salvas, reenvie ao ValorBrain e exporte em Markdown, texto ou JSON.
@@ -63,16 +66,20 @@ Use **Testar transcrição**, **Testar resumo** e **Testar conexão** para confi
 
 O **Whisper local** só funciona quando o servidor roda no mesmo computador que o Chrome. No Mac e no Windows, use o **Whisper remoto** (a chave Bearer é fornecida pela Valor) ou a OpenAI.
 
-O **Vocabulário da empresa** (nomes próprios, produtos, siglas, termos em inglês) ajuda a transcrição, a revisão final de termos e o resumo a escrever certo. ValorBrain e ValorBrain Meet entram sempre. Em **Configurações → Microfone**, preencha **Seu nome nas transcrições**.
+O **Vocabulário da empresa** (nomes próprios, produtos, siglas, termos em inglês) ajuda a transcrição, a revisão final de termos e o resumo a escrever certo. ValorBrain e ValorBrain Meet entram sempre. Conectado ao ValorBrain, a extensão completa essa lista com o vocabulário que o ValorBrain conhece da sua empresa (a sua lista vem primeiro). Em **Configurações → Microfone**, preencha **Seu nome nas transcrições**.
 
 ## Usar numa reunião
 
-1. Entre na reunião em `meet.google.com`. No canto inferior esquerdo aparece o aviso com o atalho de gravação.
+1. Entre na reunião em `meet.google.com` (ou no Zoom e no Teams pelo navegador, veja abaixo). No canto inferior esquerdo aparece o aviso com o atalho de gravação.
 2. **Comece** clicando no ícone do ValorBrain Meet → **Iniciar gravação**, ou pressione **⌥⇧G** no Mac (**Alt+Shift+G** no Windows). O Chrome exige esse clique ou atalho para liberar a captura da aba.
 3. **Durante**: o ícone mostra **REC** e o aviso na tela mostra o tempo de gravação. O painel lateral (**⌥⇧L** / **Alt+Shift+L**) mostra o resumo, a transcrição, as decisões e as pessoas ao vivo. **⌥⇧U** / **Alt+Shift+U** atualiza o resumo na hora.
 4. **Encerre** em **Encerrar** no aviso, **Encerrar e salvar** no ícone, com o atalho de novo ou simplesmente saindo da chamada. A extensão termina o trabalho e avisa quando a reunião estiver salva e enviada.
 
-Avise os participantes de que a reunião está sendo gravada.
+Avise os participantes de que a reunião está sendo gravada. No Google Meet, **Configurações → Recursos → Avisar no chat que a reunião está sendo gravada** faz isso por você: ao começar a gravar, a mensagem vai para o chat da reunião (uma vez por reunião; o texto é editável). Vem desligado. No Zoom e no Teams, a extensão só lembra você de avisar.
+
+### Zoom e Microsoft Teams (em teste)
+
+Funcionam pelo navegador: o **cliente web do Zoom** (`app.zoom.us/wc/…`, "Entrar pelo navegador") e o **Teams na web** (`teams.microsoft.com`, `teams.live.com`). A gravação, a transcrição, o resumo e o envio ao ValorBrain são os mesmos do Meet. Nomes dos participantes, quem está falando, microfone mudo e detecção de saída da chamada usam leituras da página que ainda não foram conferidas numa chamada real do Zoom ou do Teams: se algo não aparecer, a gravação continua (as falas saem como "Participante") e vale reportar. O aviso automático no chat fica só no Meet por enquanto: as páginas do Zoom e do Teams também têm conversas privadas, e uma leitura errada publicaria no lugar errado. Os aplicativos de desktop do Zoom e do Teams não são gravados.
 
 ### Atalhos
 
@@ -88,11 +95,14 @@ Os atalhos podem ser trocados em `chrome://extensions/shortcuts`. O rodapé do �
 
 Cada reunião vira uma memória do tipo `observation` na coleção `meetings`, com as seções Resumo, Decisões, Próximos passos, Assuntos, Pontos em aberto, Participantes, Detalhes e Transcrição. O envio é automático ao encerrar (pode ser desligado em **Configurações → ValorBrain**). Se falhar, a reunião continua salva no navegador: no **Histórico**, clique em **Enviar ao ValorBrain** nela.
 
+Junto com a reunião, as correções que a revisão final aceitou ("Rapplet" → "Replit") viram apelidos no ValorBrain, e o vocabulário das próximas reuniões já traz a grafia certa. O ValorBrain nunca junta pessoas nem troca um nome que já conhece por causa de uma correção. As duas coisas podem ser desligadas em **Configurações → ValorBrain**.
+
 Contrato da API e roteiro de teste manual: [`docs/VB-INGEST.md`](docs/VB-INGEST.md).
 
 ## Privacidade
 
 - O áudio vai só para o provedor de transcrição que você escolheu. O texto vai só para o provedor de resumo. A reunião vai para o seu tenant do ValorBrain. A extensão não tem servidor próprio.
+- Ao começar a gravar, os nomes dos participantes vão para o seu ValorBrain para buscar o vocabulário da empresa. O ValorBrain só devolve o que a sua conta pode ver.
 - Reuniões, chaves e configurações ficam no armazenamento local do Chrome deste perfil. Nada sincroniza entre computadores.
 - **Configurações → Dados e uso** mostra o espaço usado, apaga reuniões e zera tudo. Apagar aqui não apaga o que já está no ValorBrain.
 

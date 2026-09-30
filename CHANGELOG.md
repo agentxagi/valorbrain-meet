@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-30
+
+A transcrição passa a usar o que o ValorBrain já sabe da sua empresa, e aprende com cada reunião.
+
+### 🚀 Features
+
+- **Vocabulário da empresa vindo do ValorBrain.** Ao começar a gravar, a extensão pede ao ValorBrain os nomes de pessoas, clientes, projetos e produtos que a empresa mais cita (quem está na reunião primeiro, depois quem costuma aparecer com essas pessoas e em reuniões) e completa o **Vocabulário da empresa** no prompt do Whisper, na revisão final e no resumo. A sua lista das configurações vem sempre primeiro. Pede de novo quando entra alguém. Os nomes dos participantes vão no corpo do pedido, nunca na URL, e o ValorBrain só conta o que a sua conta pode ver. Desligável em **Configurações → ValorBrain**
+- **Correções aprendidas.** O que a revisão final corrigiu numa reunião ("Rapplet" → "Replit") volta para o ValorBrain como apelido quando a reunião é enviada, e as próximas reuniões da empresa já chegam com a correção: ela é aplicada a cada fala assim que é transcrita, sem diferenciar maiúsculas. A extensão confere cada correção antes de usar: termo curto, grafia parecida, um dos lados com cara de nome, nunca uma parte do nome de alguém da reunião ("Diego" de "Diego Braga") e nunca um par que trocaria dois nomes de lugar. O ValorBrain nunca junta pessoas nem troca um nome que já conhece. Desligável em **Configurações → ValorBrain**
+- **Aviso de gravação no chat (opcional).** Em **Configurações → Recursos**, **Avisar no chat que a reunião está sendo gravada** publica no chat do Google Meet, ao começar a gravar, que a reunião está sendo gravada e transcrita pelo ValorBrain Meet, com o link [meet.valorbra.in](https://meet.valorbra.in). Uma vez por reunião; o texto é editável. A extensão só considera enviado quando a caixa de mensagem esvazia; se o chat não aparecer, avisa para você informar os participantes. No Zoom e no Teams, ainda não publica (as páginas deles também têm conversas privadas): só lembra você de avisar. Vem desligado
+- **Zoom e Microsoft Teams pelo navegador (em teste).** O cliente web do Zoom (`app.zoom.us/wc/…`) e o Teams na web (`teams.microsoft.com`, `teams.live.com`) são reconhecidos como reuniões: o atalho, o ícone e o aviso na página funcionam, e a reunião é salva e enviada ao ValorBrain como no Meet. Nomes, quem fala, microfone mudo e saída da chamada (no Teams, também quando os controles da chamada somem) usam leituras da página que ainda não foram conferidas numa chamada real do Zoom ou do Teams: se falharem, a gravação continua com as falas como "Participante"
+
+### 🐛 Bug Fixes
+
+- O aviso no chat e o resumo para quem chega atrasado só usam a caixa de mensagem visível, nunca uma escondida, e só na sala que está sendo gravada
+- A tela de "você saiu da reunião" só conta quando está visível
+
+### 🔧 Interno
+
+- Teste ponta a ponta no navegador (`npm run test:e2e`, ver TESTING.md): Chrome for Testing, páginas falsas de Meet, Zoom e Teams, captura real da aba e do microfone, atalho pelo servidor X e mocks de transcrição, IA e ValorBrain
+
 ## [2.1.0] - 2026-09-29
 
 A partir das duas primeiras reuniões reais gravadas com a 2.0 ("D-Brain" em vez de gbrain, todas as falas como "Participante", cortes a cada 25 s).

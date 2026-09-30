@@ -61,3 +61,16 @@ test("prompt-breaking characters are removed", () => {
   });
   assert.ok(!/[<>{}`]/.test(prompt), prompt);
 });
+
+test("graph terms fill the glossary after the settings list, deduplicated and budgeted", () => {
+  const terms = mergeVocabulary("gbrain, Resend", 60, [
+    "resend",
+    "Supabase",
+    "Erick, Santos",
+    "Twenty",
+  ]);
+  assert.deepEqual(terms.slice(0, 4), ["ValorBrain", "ValorBrain Meet", "gbrain", "Resend"]);
+  assert.ok(terms.includes("Supabase"));
+  assert.ok(!terms.includes("Erick"), "a graph term is never split on its commas");
+  assert.ok(terms.join(", ").length <= 60);
+});
