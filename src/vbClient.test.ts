@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  correctedTermsSummary,
   resolveAutoSend,
   buildValorBrainContent,
   buildValorBrainPayload,
@@ -378,4 +379,17 @@ test("testValorBrainConnection refuses to run with an incomplete config", async 
 
   assert.equal(result.ok, false);
   assert.match(result.message, /Base URL/i);
+});
+
+test("the corrected terms are listed by the right spelling only, with how many times", () => {
+  assert.equal(
+    correctedTermsSummary([
+      { from: "D-Brain", to: "gbrain", count: 3 },
+      { from: "G-Brain", to: "gbrain", count: 1 },
+      { from: "Rapplet", to: "Replit", count: 1 },
+      { from: "", to: "Nada", count: 1 },
+    ]),
+    "gbrain (4), Replit",
+  );
+  assert.equal(correctedTermsSummary([]), "");
 });

@@ -76,6 +76,11 @@ X-Tenant-ID: <tenant>        (só se configurado)
 O título usa o primeiro assunto identificado pelo resumo; sem assunto, o código da reunião.
 Seções sem conteúdo (Assuntos, Pontos em aberto, Participantes) são omitidas.
 
+Em **Detalhes**, `Grafia revisada na transcrição: gbrain (4), Replit` lista só a grafia certa dos
+termos corrigidos. As formas erradas ("D-Brain") não vão para a memória: o ValorBrain extrai
+entidades desse texto e elas voltariam como entidades próprias. Elas ficam no grafo como apelidos
+(ensinados depois do envio) e na linha do tempo do painel da extensão.
+
 A resposta deve trazer `path` ou `docid`; esse valor aparece como referência do documento.
 
 ### Erros
@@ -122,7 +127,7 @@ Os nomes vão no corpo, nunca na URL (proxies e CDNs guardam URLs em log). Engin
   palavras inteiras. A extensão confere cada uma antes de usar: termo curto, grafia parecida
   (a mesma régua de 0,5 do engine), um dos lados com cara de nome (maiúscula, dígito ou hífen)
   ou `to` entre os termos servidos, nunca uma parte do nome de alguém da reunião, e nenhum par
-  que se alimenta (A → B com B → A trocaria os nomes). Aparecem em **Termos corrigidos na
+  que se alimenta (A → B com B → A trocaria os nomes). Entram em **Grafia revisada na
   transcrição** com as da revisão, contadas só nas falas que ficaram (eco descartado não conta).
 - Espera no máximo 8 s (cabeçalhos e corpo) e nunca atrasa a gravação. Token sem permissão ou
   rede fora: a reunião segue só com o vocabulário das configurações.

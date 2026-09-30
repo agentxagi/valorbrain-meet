@@ -152,6 +152,32 @@ function humanParticipants(session: State): string[] {
 }
 
 /**
+ * The terms whose spelling the transcript fixed, by the right spelling only:
+ * "gbrain (4), Replit". The misheard forms stay out of the memory: the
+ * ValorBrain extracts entities from this text, and "D-Brain" or "Draga" would
+ * come back as entities of their own. They live in the graph as aliases
+ * (taught after delivery) and in the local session's details.
+ */
+export function correctedTermsSummary(
+  corrections: Array<{ from?: string; to?: string; count?: number }>,
+): string {
+  const totals = new Map<string, { to: string; count: number }>();
+  for (const correction of corrections) {
+    const to = String(correction?.to ?? "").trim();
+    if (!correction?.from || !to) continue;
+    const key = to.toLowerCase();
+    const count = Math.max(1, Number(correction.count) || 1);
+    const current = totals.get(key);
+    if (current) current.count += count;
+    else totals.set(key, { to, count });
+  }
+  return [...totals.values()]
+    .slice(0, 20)
+    .map(({ to, count }) => (count > 1 ? `${to} (${count})` : to))
+    .join(", ");
+}
+
+/**
  * Builds the memory content: summary, decisions, next steps, topics, open
  * points, participants, meeting details and the full transcript, all under
  * PT-BR headings.
@@ -225,15 +251,8 @@ export function buildValorBrainContent(session: State): string {
   }
   if (session.meetingUrl) lines.push(`- Reunião: ${session.meetingUrl}`);
   else if (session.meetingId) lines.push(`- Reunião: ${session.meetingId}`);
-  const corrections = (session.termCorrections ?? []).filter((c) => c?.from && c?.to);
-  if (corrections.length > 0) {
-    lines.push(
-      `- Termos corrigidos na transcrição: ${corrections
-        .slice(0, 20)
-        .map((c) => `${c.from} → ${c.to}`)
-        .join(", ")}`,
-    );
-  }
+  const corrected = correctedTermsSummary(session.termCorrections ?? []);
+  if (corrected) lines.push(`- Grafia revisada na transcrição: ${corrected}`);
   lines.push("- Registrado pelo ValorBrain Meet (transcrição automática, pode conter erros)");
   lines.push("");
 

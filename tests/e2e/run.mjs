@@ -446,11 +446,11 @@ try {
   const stored = seen.stores[0].content;
   const transcriptPart = stored.split("## Transcrição")[1] ?? "";
   check(
-    "Meet: delivered transcript has the right spellings",
+    "Meet: delivered meeting has the right spellings, and no misheard form anywhere",
     /gbrain/.test(transcriptPart) &&
       /Replit/.test(transcriptPart) &&
-      !/Rapplet|D-Brain/.test(transcriptPart),
-    /Termos corrigidos[^\n]*/.exec(stored)?.[0] ?? "",
+      !/Rapplet|D-Brain/.test(stored),
+    /Grafia revisada[^\n]*/.exec(stored)?.[0] ?? "",
   );
   await waitUntil(() => seen.aliases.length > 0, "aliases taught", 20_000);
   check(

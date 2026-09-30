@@ -396,10 +396,10 @@ test("the graph vocabulary, the chat notice and the learned fixes work together"
     aliases: [{ from: "Rapplet", to: "Replit" }],
   });
   const store = fetchCalls.find((c) => c.url === `${VB}/api/v1/memory/store`)!;
-  assert.match(
-    JSON.parse(String(store.init.body)).content,
-    /Termos corrigidos na transcrição: D-Brain → gbrain, Rapplet → Replit/,
-  );
+  const content = JSON.parse(String(store.init.body)).content as string;
+  assert.match(content, /- Grafia revisada na transcrição: gbrain, Replit\n/);
+  // The misheard forms never reach the memory (the graph would extract them).
+  assert.doesNotMatch(content, /D-Brain|Rapplet/);
 });
 
 test("a second recording in the same call does not post the notice again", async () => {
