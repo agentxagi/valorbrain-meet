@@ -6,8 +6,10 @@ import {
   applyTermCorrections,
   buildTermCorrectionMessages,
   chunkLines,
+  dropCorrectionCycles,
   isSafeKnownCorrection,
   learnableCorrections,
+  nameVariants,
   mergeCorrections,
   parseTermCorrections,
   squashTerm,
@@ -175,5 +177,48 @@ test("only this meeting's applied review fixes are taught back to the graph", ()
       { from: "Rapplet", to: "Replit" },
       { from: "Supa Base", to: "Supabase" },
     ],
+  );
+});
+
+test("any part of a participant's name is protected, and common words need a name-like side", () => {
+  const names = nameVariants(["Diego Braga", "Ana Souza Lima"]);
+  assert.ok(names.has("diego") && names.has("braga") && names.has("diegobraga"));
+  assert.ok(names.has("souzalima") && names.has("anasouza"));
+  assert.equal(isSafeKnownCorrection("Diego", "Tiago", ["Diego Braga"]), false);
+  assert.equal(isSafeKnownCorrection("Braga", "Draga", ["Diego Braga"]), false);
+  assert.equal(isSafeKnownCorrection("sim", "sem"), false, "two common words");
+  assert.equal(isSafeKnownCorrection("contrato", "contato"), false);
+  assert.equal(isSafeKnownCorrection("resenja", "Resend"), true, "the right side is a name");
+  assert.equal(
+    isSafeKnownCorrection("gibrain", "gbrain", [], new Set(["gbrain"])),
+    true,
+    "a served term",
+  );
+});
+
+test("corrections that feed each other are dropped", () => {
+  assert.deepEqual(
+    dropCorrectionCycles([
+      { from: "Diego", to: "Tiago" },
+      { from: "Tiago", to: "Diego" },
+      { from: "D-Brain", to: "gbrain" },
+      { from: "gbrain", to: "GBrain" },
+      { from: "Rapplet", to: "Replit" },
+    ]),
+    [
+      { from: "D-Brain", to: "gbrain" },
+      { from: "Rapplet", to: "Replit" },
+    ],
+  );
+});
+
+test("a review fix that undoes a learned one is not taught back", () => {
+  assert.deepEqual(
+    learnableCorrections([
+      { from: "Diego", to: "Tiago", count: 2, source: "graph" },
+      { from: "Tiago", to: "Diego", count: 2 },
+      { from: "Rapplet", to: "Replit", count: 1 },
+    ]),
+    [{ from: "Rapplet", to: "Replit" }],
   );
 });

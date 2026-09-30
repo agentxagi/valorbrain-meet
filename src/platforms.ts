@@ -23,10 +23,13 @@ export const PLATFORM_LABELS: Record<MeetingPlatform, string> = {
   teams: "Microsoft Teams",
 };
 
-/** Match patterns for `chrome.tabs.query` (must stay in sync with the manifest). */
+/**
+ * Match patterns for `chrome.tabs.query`, the same as the manifest's
+ * content-script matches (Zoom: the web client only, not the whole site).
+ */
 export const MEETING_TAB_URLS = [
   "https://meet.google.com/*",
-  "https://*.zoom.us/*",
+  "https://*.zoom.us/wc/*",
   "https://teams.microsoft.com/*",
   "https://teams.live.com/*",
   "https://teams.cloud.microsoft/*",
@@ -120,10 +123,15 @@ export function platformLabelForUrl(url: string | null | undefined): string {
 
 /**
  * Whether the recorded tab navigating to `nextUrl` means the user left the
- * call. Meet and Zoom keep the meeting id in the URL for the whole call;
- * Teams drops it once the call starts, so only leaving Teams counts there
- * (hanging up is caught by the in-page "you left" screen instead). A generic
- * tab recording (webinar, video) never stops on navigation.
+ * call.
+ *
+ * - Meet and Zoom keep the meeting id in the URL for the whole call: another
+ *   id (or none) means the call is over.
+ * - Teams drops the id once the call starts, so a URL without one proves
+ *   nothing: leaving Teams, or a URL carrying another meeting's id, does.
+ *   Hanging up is caught in the page (the call controls disappear).
+ * - A recording that did not start on a call URL (a webinar, a replay, any
+ *   tab from the context menu) never stops on navigation.
  */
 export function navigatedAwayFromCall(
   meetingUrl: string | null | undefined,
@@ -132,6 +140,25 @@ export function navigatedAwayFromCall(
 ): boolean {
   const platform = platformForUrl(meetingUrl);
   if (!platform) return false;
-  if (platform === "teams") return platformForUrl(nextUrl) !== "teams";
-  return meetingRefFromUrl(nextUrl)?.meetingId !== meetingId;
+  const next = meetingRefFromUrl(nextUrl);
+  if (platform === "teams") {
+    if (platformForUrl(nextUrl) !== "teams") return true;
+    return Boolean(next && meetingId && next.meetingId !== meetingId);
+  }
+  const current = meetingRefFromUrl(meetingUrl);
+  if (!current || current.meetingId !== meetingId) return false;
+  return next?.meetingId !== meetingId;
+}
+
+/**
+ * The meeting id to remember the recording notice by: only an id that comes
+ * from the call URL itself (a tab title or "unknown" could repeat across
+ * meetings, or change within one).
+ */
+export function stableMeetingId(
+  meetingUrl: string | null | undefined,
+  meetingId: string | null | undefined,
+): string | null {
+  const ref = meetingRefFromUrl(meetingUrl);
+  return ref && meetingId && ref.meetingId === meetingId ? ref.meetingId : null;
 }

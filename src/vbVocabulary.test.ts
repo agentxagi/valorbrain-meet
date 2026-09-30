@@ -76,7 +76,7 @@ test("a malformed answer yields an empty vocabulary, never an error", () => {
   assert.deepEqual(parseVocabularyResponse([1, 2], []).terms, []);
 });
 
-test("fetchMeetVocabulary asks for the call's participants with the connection token", async () => {
+test("fetchMeetVocabulary sends the call's participants in a POST body, never in the URL", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const result = await fetchMeetVocabulary(
     { ...SETTINGS, tenantId: "tenant-1" },
@@ -90,21 +90,71 @@ test("fetchMeetVocabulary asks for the call's participants with the connection t
   );
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
-  const url = new URL(calls[0].url);
-  assert.equal(
-    url.origin + url.pathname,
-    "https://valorbrain-api.valor.digital/api/v1/meet/vocabulary",
-  );
-  assert.equal(url.searchParams.get("participants"), "Gustavo,Erick");
-  assert.equal(url.searchParams.get("limit"), "40");
+  assert.equal(calls[0].url, "https://valorbrain-api.valor.digital/api/v1/meet/vocabulary");
+  assert.equal(calls[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0].init.body)), {
+    participants: ["Gustavo", "Erick"],
+    limit: 40,
+  });
   const headers = calls[0].init.headers as Record<string, string>;
   assert.equal(headers.Authorization, "Bearer vbm_test");
   assert.equal(headers["X-Tenant-ID"], "tenant-1");
-  assert.equal(calls[0].init.method, "GET");
   if (result.ok) assert.ok(result.vocabulary.terms.includes("gbrain"));
 });
 
-test("fetchMeetVocabulary reports an older engine (404) and bad tokens without throwing", async () => {
+test("an engine without the POST route is asked by GET, without the names", async () => {
+  const calls: Array<{ url: string; method?: string }> = [];
+  const result = await fetchMeetVocabulary(SETTINGS, ["Gustavo", "Erick"], {
+    fetchImpl: (async (url: string, init: RequestInit) => {
+      calls.push({ url, method: init.method });
+      return init.method === "POST"
+        ? jsonResponse(404, { error: "not found" })
+        : jsonResponse(200, ENGINE_ANSWER);
+    }) as unknown as typeof fetch,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    calls.map((c) => c.method),
+    ["POST", "GET"],
+  );
+  const legacy = new URL(calls[1].url);
+  assert.equal(legacy.searchParams.get("participants"), null, "names never go in the URL");
+  assert.equal(legacy.searchParams.get("limit"), "40");
+});
+
+test("a response whose body never arrives does not hold the caller", async () => {
+  const started = Date.now();
+  const result = await fetchMeetVocabulary(SETTINGS, [], {
+    timeoutMs: 80,
+    fetchImpl: (async () =>
+      new Response(new ReadableStream({ start() {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch,
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.vocabulary.terms, []);
+  assert.ok(Date.now() - started < 2000);
+});
+
+test("learned corrections never touch part of a participant's name, and never swap names", () => {
+  const vocabulary = parseVocabularyResponse(
+    {
+      terms: [],
+      corrections: [
+        { from: "Diego", to: "Tiago" },
+        { from: "Tiago", to: "Diego" },
+        { from: "Braga", to: "Draga" },
+        { from: "Rapplet", to: "Replit" },
+        { from: "sim", to: "sem" },
+      ],
+    },
+    ["Diego Braga"],
+  );
+  assert.deepEqual(vocabulary.corrections, [{ from: "Rapplet", to: "Replit" }]);
+});
+
+test("fetchMeetVocabulary reports an engine without the route (404) and bad tokens without throwing", async () => {
   const notFound = await fetchMeetVocabulary(SETTINGS, [], {
     fetchImpl: (async () => jsonResponse(404, { error: "not found" })) as unknown as typeof fetch,
   });

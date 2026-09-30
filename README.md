@@ -75,11 +75,11 @@ O **Vocabulário da empresa** (nomes próprios, produtos, siglas, termos em ingl
 3. **Durante**: o ícone mostra **REC** e o aviso na tela mostra o tempo de gravação. O painel lateral (**⌥⇧L** / **Alt+Shift+L**) mostra o resumo, a transcrição, as decisões e as pessoas ao vivo. **⌥⇧U** / **Alt+Shift+U** atualiza o resumo na hora.
 4. **Encerre** em **Encerrar** no aviso, **Encerrar e salvar** no ícone, com o atalho de novo ou simplesmente saindo da chamada. A extensão termina o trabalho e avisa quando a reunião estiver salva e enviada.
 
-Avise os participantes de que a reunião está sendo gravada. Em **Configurações → Recursos**, **Avisar no chat que a reunião está sendo gravada** faz isso por você: ao começar a gravar, a mensagem vai para o chat da reunião (uma vez por reunião; o texto é editável). Vem desligado.
+Avise os participantes de que a reunião está sendo gravada. No Google Meet, **Configurações → Recursos → Avisar no chat que a reunião está sendo gravada** faz isso por você: ao começar a gravar, a mensagem vai para o chat da reunião (uma vez por reunião; o texto é editável). Vem desligado. No Zoom e no Teams, a extensão só lembra você de avisar.
 
 ### Zoom e Microsoft Teams (em teste)
 
-Funcionam pelo navegador: o **cliente web do Zoom** (`app.zoom.us/wc/…`, "Entrar pelo navegador") e o **Teams na web** (`teams.microsoft.com`, `teams.live.com`). A gravação, a transcrição, o resumo e o envio ao ValorBrain são os mesmos do Meet. Nomes dos participantes, quem está falando, microfone mudo, aviso no chat e detecção de saída da chamada usam leituras da página que ainda não foram conferidas numa chamada real do Zoom ou do Teams: se algo não aparecer, a gravação continua (as falas saem como "Participante") e vale reportar. Os aplicativos de desktop do Zoom e do Teams não são gravados.
+Funcionam pelo navegador: o **cliente web do Zoom** (`app.zoom.us/wc/…`, "Entrar pelo navegador") e o **Teams na web** (`teams.microsoft.com`, `teams.live.com`). A gravação, a transcrição, o resumo e o envio ao ValorBrain são os mesmos do Meet. Nomes dos participantes, quem está falando, microfone mudo e detecção de saída da chamada usam leituras da página que ainda não foram conferidas numa chamada real do Zoom ou do Teams: se algo não aparecer, a gravação continua (as falas saem como "Participante") e vale reportar. O aviso automático no chat fica só no Meet por enquanto: as páginas do Zoom e do Teams também têm conversas privadas, e uma leitura errada publicaria no lugar errado. Os aplicativos de desktop do Zoom e do Teams não são gravados.
 
 ### Atalhos
 

@@ -194,7 +194,12 @@ const server = createServer(async (req, res) => {
     });
   }
   if (url.pathname === "/api/v1/meet/vocabulary") {
-    seen.vocabulary.push(Object.fromEntries(url.searchParams));
+    const request = req.method === "POST" ? JSON.parse(body.toString("utf8") || "{}") : {};
+    seen.vocabulary.push({
+      method: req.method,
+      participants: (request.participants ?? []).join(","),
+      query: url.search,
+    });
     return send(res, 200, {
       terms: [
         { term: "gbrain", kind: "tool", reason: "meeting" },
@@ -403,10 +408,16 @@ try {
   );
 
   await waitUntil(() => seen.vocabulary.length > 0, "graph vocabulary request");
+  await waitUntil(
+    () => seen.vocabulary.some((v) => /Ana Souza/.test(v.participants)),
+    "vocabulary refreshed with the people in the call",
+  ).catch(() => null);
   const participantsAsked = seen.vocabulary.map((v) => v.participants ?? "").join(" | ");
   check(
-    "Meet: graph vocabulary asked with the call's participants",
-    /Gus Teste/.test(participantsAsked) && /Ana Souza/.test(participantsAsked),
+    "Meet: graph vocabulary asked with the call's participants, in the body",
+    /Gus Teste/.test(participantsAsked) &&
+      /Ana Souza/.test(participantsAsked) &&
+      seen.vocabulary.every((v) => v.method === "POST" && !/participants/.test(v.query)),
     participantsAsked,
   );
 
@@ -477,11 +488,16 @@ try {
       started?.audioActive === true,
       started?.error ?? started?.meetingId,
     );
-    const posted = await waitUntil(
-      () => page.evaluate(() => window.__chatMessages?.[0] ?? null),
-      `${label} chat notice`,
+    const warned = await waitUntil(async () => {
+      const s = await sw({ type: "GET_STATE" });
+      return s?.notice?.message?.includes("ainda não está disponível") ? s.notice.message : null;
+    }, `${label} notice left to the user`);
+    const typed = await page.evaluate(() => window.__chatMessages?.length ?? 0);
+    check(
+      `${label}: nothing typed in the chat, the user is told to warn the participants`,
+      typed === 0,
+      warned.slice(0, 70),
     );
-    check(`${label}: recording notice posted in the (fake) chat`, /ValorBrain Meet/.test(posted));
     const names = await waitUntil(async () => {
       const s = await sw({ type: "GET_FULL_STATE" });
       return s?.participants?.includes(expectedName) ? s.participants : null;

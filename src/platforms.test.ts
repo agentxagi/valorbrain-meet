@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   MEETING_TAB_URLS,
   meetingRefFromUrl,
+  navigatedAwayFromCall,
   platformForHostname,
   platformForUrl,
   platformLabelForUrl,
+  stableMeetingId,
 } from "./platforms.ts";
 
 test("platform detection uses exact hostnames only", () => {
@@ -96,9 +98,95 @@ test("Teams: thread id from join links, numeric id from /meet links", () => {
 
 test("tab query patterns and labels cover every platform", () => {
   assert.ok(MEETING_TAB_URLS.includes("https://meet.google.com/*"));
-  assert.ok(MEETING_TAB_URLS.includes("https://*.zoom.us/*"));
+  assert.ok(MEETING_TAB_URLS.includes("https://*.zoom.us/wc/*"));
   assert.ok(MEETING_TAB_URLS.includes("https://teams.microsoft.com/*"));
   assert.equal(platformLabelForUrl("https://app.zoom.us/wc/85012345678/join"), "Zoom");
   assert.equal(platformLabelForUrl("https://teams.live.com/meet/9390567463821"), "Microsoft Teams");
   assert.equal(platformLabelForUrl("https://meet.google.com/abc-defg-hij"), "Google Meet");
+});
+
+const MEET = "https://meet.google.com/abc-defg-hij";
+const ZOOM = "https://app.zoom.us/wc/85012345678/join";
+const TEAMS_JOIN =
+  "https://teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/19:meeting_NjA4YzE4ZmQtYWJjZC00ZWY@thread.v2/0";
+const TEAMS_ID = "teams-nja4yze4zmqtywjj";
+
+test("Meet and Zoom: leaving the meeting id in the URL ends the recording", () => {
+  assert.equal(navigatedAwayFromCall(MEET, "abc-defg-hij", `${MEET}?authuser=0`), false);
+  assert.equal(
+    navigatedAwayFromCall(MEET, "abc-defg-hij", "https://meet.google.com/xyz-abcd-efg"),
+    true,
+  );
+  assert.equal(navigatedAwayFromCall(MEET, "abc-defg-hij", "https://meet.google.com/"), true);
+  assert.equal(navigatedAwayFromCall(MEET, "abc-defg-hij", "https://www.google.com/"), true);
+  assert.equal(
+    navigatedAwayFromCall(ZOOM, "zoom-85012345678", "https://app.zoom.us/wc/85012345678/join?x=1"),
+    false,
+  );
+  assert.equal(
+    navigatedAwayFromCall(ZOOM, "zoom-85012345678", "https://app.zoom.us/wc/85012345678/leave"),
+    false,
+    "leave page: caught in the page",
+  );
+  assert.equal(
+    navigatedAwayFromCall(ZOOM, "zoom-85012345678", "https://app.zoom.us/wc/99912345678/join"),
+    true,
+  );
+  assert.equal(navigatedAwayFromCall(ZOOM, "zoom-85012345678", "https://zoom.us/"), true);
+});
+
+test("Teams: a URL without the id proves nothing; another meeting or leaving Teams does", () => {
+  assert.equal(
+    navigatedAwayFromCall(TEAMS_JOIN, TEAMS_ID, "https://teams.microsoft.com/v2/"),
+    false,
+  );
+  assert.equal(
+    navigatedAwayFromCall(TEAMS_JOIN, TEAMS_ID, "https://teams.microsoft.com/v2/#/calendar"),
+    false,
+  );
+  assert.equal(
+    navigatedAwayFromCall(TEAMS_JOIN, TEAMS_ID, "https://teams.microsoft.com/meet/2468013579"),
+    true,
+  );
+  assert.equal(
+    navigatedAwayFromCall(TEAMS_JOIN, TEAMS_ID, "https://outlook.office.com/mail"),
+    true,
+  );
+});
+
+test("a recording that did not start on a call URL never stops on navigation", () => {
+  assert.equal(
+    navigatedAwayFromCall("https://example.com/webinar", "Webinar", "https://example.com/other"),
+    false,
+  );
+  assert.equal(
+    navigatedAwayFromCall(
+      "https://app.zoom.us/rec/play/abc",
+      "Replay",
+      "https://app.zoom.us/rec/share/x",
+    ),
+    false,
+  );
+  assert.equal(navigatedAwayFromCall(null, null, MEET), false);
+  // Started from the context menu on Teams, labelled by the tab title.
+  assert.equal(
+    navigatedAwayFromCall(
+      "https://teams.microsoft.com/v2/",
+      "Reunião | Microsoft Teams",
+      "https://teams.microsoft.com/v2/#/chat",
+    ),
+    false,
+  );
+});
+
+test("the notice is remembered only by an id taken from the call URL", () => {
+  assert.equal(stableMeetingId(MEET, "abc-defg-hij"), "abc-defg-hij");
+  assert.equal(stableMeetingId(TEAMS_JOIN, TEAMS_ID), TEAMS_ID);
+  assert.equal(
+    stableMeetingId("https://teams.microsoft.com/v2/", "Reunião semanal"),
+    null,
+    "a tab title",
+  );
+  assert.equal(stableMeetingId(MEET, "unknown"), null);
+  assert.equal(stableMeetingId(null, "abc-defg-hij"), null);
 });

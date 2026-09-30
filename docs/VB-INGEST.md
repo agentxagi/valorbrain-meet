@@ -101,7 +101,10 @@ por isso não serve como teste.
 Ao começar a gravar (e de novo quando entram participantes novos, no máximo 4 vezes por
 gravação, com 30 s de intervalo), a extensão pede ao ValorBrain o vocabulário da reunião:
 
-`GET {baseUrl}/api/v1/meet/vocabulary?participants=Gustavo,Ana%20Souza&limit=40`
+`POST {baseUrl}/api/v1/meet/vocabulary` com `{ "participants": ["Gustavo", "Ana Souza"], "limit": 40 }`
+
+Os nomes vão no corpo, nunca na URL (proxies e CDNs guardam URLs em log). Engine sem essa rota
+(404/405): a extensão pede `GET …/api/v1/meet/vocabulary?limit=40`, sem os nomes.
 
 ```json
 {
@@ -117,10 +120,17 @@ gravação, com 30 s de intervalo), a extensão pede ao ValorBrain o vocabulári
   repetem). O engine só conta documentos que a conta conectada pode ver.
 - `corrections` são aplicadas a cada fala transcrita, sem diferenciar maiúsculas e só em
   palavras inteiras. A extensão confere cada uma antes de usar: termo curto, grafia parecida
-  (a mesma régua de 0,5 do engine) e nunca o nome de alguém da reunião. Aparecem em
-  **Termos corrigidos na transcrição** com as da revisão.
-- Espera no máximo 8 s e nunca atrasa a gravação. Engine antigo (404), token sem permissão
-  ou rede fora: a reunião segue só com o vocabulário das configurações.
+  (a mesma régua de 0,5 do engine), um dos lados com cara de nome (maiúscula, dígito ou hífen)
+  ou `to` entre os termos servidos, nunca uma parte do nome de alguém da reunião, e nenhum par
+  que se alimenta (A → B com B → A trocaria os nomes). Aparecem em **Termos corrigidos na
+  transcrição** com as da revisão, contadas só nas falas que ficaram (eco descartado não conta).
+- Espera no máximo 8 s (cabeçalhos e corpo) e nunca atrasa a gravação. Token sem permissão ou
+  rede fora: a reunião segue só com o vocabulário das configurações.
+- No máximo 4 pedidos por gravação, com 30 s entre eles; gente que entra durante um pedido
+  gera um novo pedido quando ele termina.
+
+A revisão final não ensina uma correção que desfaz uma aprendida (o ValorBrain recusa também:
+`to` que já é apelido).
 
 Depois que a reunião chega ao ValorBrain, as correções que a revisão final aceitou (não as que
 vieram do ValorBrain) vão como apelidos:
@@ -140,9 +150,17 @@ usuário vale também aqui).
 
 Com **Configurações → Recursos → Avisar no chat que a reunião está sendo gravada** ligado
 (`recordingChatNotice`, desligado por padrão), a extensão publica a mensagem de
-`recordingChatNoticeText` (ou o texto padrão) no chat da reunião ao começar a gravar. Uma vez
-por reunião: gravar de novo na mesma chamada em até 3 h não repete. Se o chat não aparecer em
-~30 s, a pessoa é avisada para informar os participantes. Nada vai ao ValorBrain.
+`recordingChatNoticeText` (ou o texto padrão) no chat do Google Meet ao começar a gravar.
+
+- Uma vez por reunião: gravar de novo na mesma chamada em até 3 h não repete. A reunião é
+  lembrada pelo código da URL da chamada, nunca pelo título da aba.
+- Só na sala gravada (o content script confere o código da reunião na URL) e só enquanto a
+  gravação continua; enviado = a caixa de mensagem esvaziou.
+- Se o chat não aparecer em ~30 s, a pessoa é avisada para informar os participantes.
+- Zoom e Teams: não publica (as páginas também têm conversas privadas; a leitura do chat da
+  reunião ainda não foi conferida numa chamada real). A pessoa é avisada na hora.
+
+Nada vai ao ValorBrain.
 
 ## Permissões
 

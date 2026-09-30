@@ -48,7 +48,9 @@ let messageListener: MessageListener | undefined;
 let offscreenOpen = false;
 const fetchCalls: Array<{ url: string; init: RequestInit }> = [];
 const tabMessages: Array<{ tabId: number; message: AnyRecord }> = [];
-let chatAvailable = true;
+/** Answers of the content script to SEND_CHAT_MESSAGE, in order (then `chatAvailable`). */
+const chatAvailable = true;
+const chatAnswers: boolean[] = [];
 const sttResponses: AnyRecord[] = [];
 let correctionResponse: AnyRecord = { correcoes: [] };
 
@@ -212,7 +214,9 @@ function installChromeMock() {
       query: async () => [],
       sendMessage: async (tabId: number, message: AnyRecord) => {
         tabMessages.push({ tabId, message });
-        if (message.type === "SEND_CHAT_MESSAGE") return { success: chatAvailable };
+        if (message.type === "SEND_CHAT_MESSAGE") {
+          return { success: chatAnswers.length > 0 ? chatAnswers.shift() : chatAvailable };
+        }
         return undefined;
       },
       create: async () => ({}),
@@ -234,6 +238,10 @@ function installChromeMock() {
 
 installChromeMock();
 await import("./background.ts");
+// Same module instances as the service worker's: shorten its waits.
+const { recordingNoticeTiming } = await import("./recordingNotice.ts");
+const { vocabularyTiming } = await import("./vbVocabulary.ts");
+recordingNoticeTiming.retryMs = [30, 30, 30];
 
 function sendMessage(message: AnyRecord, sender: AnyRecord = {}): Promise<AnyRecord> {
   return new Promise((resolve) => {
@@ -332,11 +340,13 @@ test("the graph vocabulary, the chat notice and the learned fixes work together"
   assert.equal(notices[0].tabId, TAB_ID);
   assert.match(notices[0].message.text, /gravada e transcrita pelo ValorBrain Meet/);
 
-  // Vocabulary: asked with the recording user's name, the connection token.
+  // Vocabulary: asked with the recording user's name (in the body), the connection token.
   const vocabularyCall = fetchCalls.find((c) => c.url.startsWith(`${VB}/api/v1/meet/vocabulary`))!;
   assert.ok(vocabularyCall, "the graph vocabulary was requested");
-  assert.equal(new URL(vocabularyCall.url).searchParams.get("participants"), "Gustavo");
+  assert.equal(vocabularyCall.init.method, "POST");
+  assert.deepEqual(JSON.parse(String(vocabularyCall.init.body)).participants, ["Gustavo"]);
   assert.equal((vocabularyCall.init.headers as AnyRecord).Authorization, "Bearer vbm_test_token");
+  assert.equal(notices[0].message.expectedMeetingId, "cfy-astc-cey", "posted only into this room");
 
   // The learned correction fixed the line as it arrived.
   assert.equal(
@@ -433,43 +443,139 @@ test("with the options off: no notice, no graph request, nothing taught", async 
   assert.equal(fetchCalls.filter((c) => c.url.includes("/api/v1/meet/")).length, 0);
 });
 
-test("Zoom: the call tab records, its participants count and the notice retries without a chat", async () => {
+test("a chat that shows up late gets the notice; a stopped recording gets nothing", async () => {
   localStore.settings = {
     ...localStore.settings,
     recordingChatNotice: true,
     graphVocabulary: true,
     learnCorrections: true,
   };
-  chatAvailable = false;
+  // Retry: the chat is not there on the first try, then it is.
+  chatAnswers.push(false);
   tabMessages.length = 0;
-  const zoomUrl = "https://app.zoom.us/wc/85012345678/join";
-  const start = await sendMessage({
-    type: "MANUAL_START_AUDIO",
-    tabId: TAB_ID,
-    meetingId: "zoom-85012345678",
-    meetingUrl: zoomUrl,
-    streamId: "stream-zoom",
-  });
-  assert.equal(start.success, true, JSON.stringify(start));
+  let savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  await record("https://meet.google.com/aaa-bbbb-ccc", "aaa-bbbb-ccc", ["Primeira pauta."]);
+  const posted = await waitFor(async () => {
+    const s = await sendMessage({ type: "GET_STATE" });
+    return s.timeline?.some((e: AnyRecord) => /Aviso de gravação publicado/.test(e.event));
+  }, "notice after a retry");
+  assert.ok(posted);
+  assert.equal(tabMessages.filter((m) => m.message.type === "SEND_CHAT_MESSAGE").length, 2);
+  await stopAndWaitSaved(savedBefore);
 
-  // Participants from the Zoom tab count (same meeting number).
-  const sender = { tab: { id: TAB_ID, url: zoomUrl } };
-  const participants = await sendMessage(
-    { type: "PARTICIPANTS_UPDATED", participants: ["Gustavo", "Ana Souza"] },
-    sender,
-  );
-  assert.equal(participants.success, true);
-  assert.notEqual(participants.ignored, true);
-
-  // The first try fails (no chat yet); the retries keep going in the background.
+  // Stop while it is still retrying: the first try fails, the stop comes
+  // during the wait, and no further try is made (the chat is back by then).
+  recordingNoticeTiming.retryMs = [400, 400, 400];
+  chatAnswers.push(false);
+  tabMessages.length = 0;
+  savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  await record("https://meet.google.com/ddd-eeee-fff", "ddd-eeee-fff", ["Segunda pauta."]);
   await waitFor(
     () => tabMessages.some((m) => m.message.type === "SEND_CHAT_MESSAGE"),
-    "first notice attempt",
+    "first attempt",
   );
-  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
-  await waitFor(
-    async () => ((await sendMessage({ type: "GET_STATE" })).audioActive === false ? true : null),
-    "stop",
+  await stopAndWaitSaved(savedBefore);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(tabMessages.filter((m) => m.message.type === "SEND_CHAT_MESSAGE").length, 1);
+  recordingNoticeTiming.retryMs = [30, 30, 30];
+});
+
+test("new participants refresh the vocabulary, up to the per-recording cap", async () => {
+  vocabularyTiming.refreshMinMs = 0;
+  vocabularyTiming.maxFetches = 3;
+  fetchCalls.length = 0;
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  const url = "https://meet.google.com/ggg-hhhh-iii";
+  await record(url, "ggg-hhhh-iii", ["Abertura."]);
+  const sender = { tab: { id: TAB_ID, url } };
+  const vocabularyBodies = () =>
+    fetchCalls
+      .filter((c) => c.url.startsWith(`${VB}/api/v1/meet/vocabulary`))
+      .map((c) => JSON.parse(String(c.init.body)).participants as string[]);
+  const roster = ["Gustavo", "Ana Souza"];
+  for (const person of ["Bruno Lima", "Carla Dias", "Diego Braga", "Eva Rocha"]) {
+    roster.push(person);
+    await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: [...roster] }, sender);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const bodies = vocabularyBodies();
+  assert.equal(bodies.length, 3, JSON.stringify(bodies));
+  assert.deepEqual(bodies[0], ["Gustavo"]);
+  assert.ok(bodies[1].includes("Ana Souza"), "the first refresh brings the people who joined");
+  await stopAndWaitSaved(savedBefore);
+  vocabularyTiming.refreshMinMs = 30_000;
+  vocabularyTiming.maxFetches = 4;
+});
+
+test("with auto-send off, the fixes are taught only when the meeting is sent by hand", async () => {
+  localStore.settings = { ...localStore.settings, "vb.autoSend": false };
+  fetchCalls.length = 0;
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  await record("https://meet.google.com/jjj-kkkk-lll", "jjj-kkkk-lll", ["O Rapplet voltou."]);
+  correctionResponse = { correcoes: [{ de: "Rapplet", para: "Replit" }] };
+  const saved = await stopAndWaitSaved(savedBefore);
+  correctionResponse = { correcoes: [] };
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(fetchCalls.filter((c) => c.url === `${VB}/api/v1/meet/aliases`).length, 0);
+  assert.equal(fetchCalls.filter((c) => c.url === `${VB}/api/v1/memory/store`).length, 0);
+
+  const sent = await sendMessage({ type: "VB_SEND_SESSION", sessionId: saved.id });
+  assert.equal(sent.ok, true, JSON.stringify(sent));
+  const aliases = await waitFor(
+    () => fetchCalls.find((c) => c.url === `${VB}/api/v1/meet/aliases`),
+    "aliases after the manual send",
   );
-  chatAvailable = true;
+  assert.deepEqual(JSON.parse(String(aliases.init.body)), {
+    aliases: [{ from: "Rapplet", to: "Replit" }],
+  });
+  localStore.settings = { ...localStore.settings, "vb.autoSend": true };
+});
+
+test("Zoom and Teams: recorded, participants count, and the notice is left to the user", async () => {
+  for (const [meetingUrl, meetingId, senderUrl] of [
+    [
+      "https://app.zoom.us/wc/85012345678/join",
+      "zoom-85012345678",
+      "https://app.zoom.us/wc/85012345678/join",
+    ],
+    [
+      "https://teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/19:meeting_NjA4YzE4ZmQtYWJjZC00ZWY@thread.v2/0",
+      "teams-nja4yze4zmqtywjj",
+      // Mid-call the Teams web client drops the meeting from the URL.
+      "https://teams.microsoft.com/v2/",
+    ],
+  ]) {
+    tabMessages.length = 0;
+    const start = await sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: TAB_ID,
+      meetingId,
+      meetingUrl,
+      streamId: `stream-${meetingId}`,
+    });
+    assert.equal(start.success, true, JSON.stringify(start));
+    const participants = await sendMessage(
+      { type: "PARTICIPANTS_UPDATED", participants: ["Gustavo", "Ana Souza"] },
+      { tab: { id: TAB_ID, url: senderUrl } },
+    );
+    assert.equal(participants.success, true);
+    assert.notEqual(participants.ignored, true, `${meetingId}: participants from the call tab`);
+
+    const state = await waitFor(async () => {
+      const s = await sendMessage({ type: "GET_STATE" });
+      return s.notice?.message?.includes("ainda não está disponível") ? s : null;
+    }, `${meetingId} notice warning`);
+    assert.equal(state.notice.severity, "warning");
+    assert.equal(
+      tabMessages.filter((m) => m.message.type === "SEND_CHAT_MESSAGE").length,
+      0,
+      "nothing typed into a Zoom/Teams chat",
+    );
+    await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+    await waitFor(
+      async () => ((await sendMessage({ type: "GET_STATE" })).audioActive === false ? true : null),
+      `${meetingId} stop`,
+    );
+  }
 });

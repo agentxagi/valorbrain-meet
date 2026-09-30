@@ -20,6 +20,12 @@ export const RECORDING_NOTICE_MAX_CHARS = 500;
 /** A second recording in the same call within this window does not post again. */
 export const RECORDING_NOTICE_REPEAT_MS = 3 * 60 * 60 * 1000;
 
+/**
+ * Waits between tries while the chat is not there yet (lobby, panel loading).
+ * Mutable only so tests can shorten it.
+ */
+export const recordingNoticeTiming = { retryMs: [4_000, 8_000, 15_000] };
+
 const LOG_MAX_ENTRIES = 50;
 
 /** The notice text from the settings: one line, no control characters, capped. */

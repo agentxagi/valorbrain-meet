@@ -16,6 +16,13 @@
 import type { MeetingPlatform } from "./platforms";
 
 export interface PlatformDom {
+  /**
+   * Whether the extension may type in this platform's meeting chat. Off for
+   * Zoom and Teams until checked on real calls: their pages also hold private
+   * chats (Zoom's "To:" keeps the last recipient; Teams' chat app stays open
+   * beside the call), and a wrong guess would post into the wrong conversation.
+   */
+  chatVerified: boolean;
   /** Buttons that open the chat panel. */
   chatToggleButtons: string[];
   /** The chat message box (textarea or contenteditable). */
@@ -61,6 +68,7 @@ const MEET_POST_CALL_TEXTS =
 
 export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
   meet: {
+    chatVerified: true,
     chatToggleButtons: [
       'button[aria-label*="Chat"]',
       'button[aria-label*="chat" i]',
@@ -114,6 +122,7 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
   },
 
   zoom: {
+    chatVerified: false,
     chatToggleButtons: [
       'button[aria-label*="chat panel" i]',
       'button[aria-label*="bate-papo" i]',
@@ -167,6 +176,7 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
   },
 
   teams: {
+    chatVerified: false,
     chatToggleButtons: [
       "#chat-button",
       'button[data-tid="calling-toolbar-chat-button"]',
@@ -203,7 +213,7 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
       '[aria-label*="speaking" i]',
       '[aria-label*="falando" i]',
     ],
-    postCallLabels: /^(rejoin|reingressar|ingressar novamente|voltar a entrar|dismiss)$/i,
+    postCallLabels: /^(rejoin|reingressar|ingressar novamente|voltar a entrar)$/i,
     postCallTexts:
       /(you left the meeting|you've left the meeting|the meeting has ended|call ended|você saiu da reunião|a reunião terminou|a chamada terminou|chamada encerrada)/i,
     inCallIndicators: [

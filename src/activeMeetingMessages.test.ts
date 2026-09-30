@@ -94,7 +94,12 @@ test("Zoom: the recorded tab must stay in the same meeting number", () => {
 });
 
 test("Teams: the recorded tab is trusted by id even after the URL loses the meeting", () => {
-  const teams = { targetTabId: 9, meetingId: "teams-nja4yze4zmqtywjj" };
+  const teams = {
+    targetTabId: 9,
+    meetingId: "teams-nja4yze4zmqtywjj",
+    meetingUrl:
+      "https://teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/19:meeting_NjA4YzE4ZmQtYWJjZC00ZWY@thread.v2/0",
+  };
   assert.equal(
     isMessageFromActiveMeeting({
       ...teams,
@@ -119,5 +124,33 @@ test("Teams: the recorded tab is trusted by id even after the URL loses the meet
       senderUrl: "https://teams.microsoft.com.evil.com/v2/",
     }),
     false,
+  );
+});
+
+test("Teams: another meeting's id, or a recording that did not start on Teams, is not trusted", () => {
+  const teams = {
+    targetTabId: 9,
+    meetingId: "teams-nja4yze4zmqtywjj",
+    meetingUrl: "https://teams.live.com/meet/9390567463821",
+  };
+  assert.equal(
+    isMessageFromActiveMeeting({
+      ...teams,
+      meetingId: "teams-9390567463821",
+      senderTabId: 9,
+      senderUrl: "https://teams.live.com/meet/1111111111111",
+    }),
+    false,
+  );
+  assert.equal(
+    isMessageFromActiveMeeting({
+      targetTabId: 9,
+      meetingId: "Aba do navegador",
+      meetingUrl: "https://example.com/webinar",
+      senderTabId: 9,
+      senderUrl: "https://teams.microsoft.com/v2/",
+    }),
+    false,
+    "a generic tab recording that later shows Teams",
   );
 });

@@ -3,8 +3,9 @@
 // Google Meet: the structure the content script reads (tiles with
 // data-participant-id / data-self-name, the chat panel, the leave screen).
 // Zoom and Teams: built from the selectors in src/platformDom.ts. They prove
-// the wiring (the adapter finds names and posts in the chat), NOT that the
-// real Zoom/Teams DOM looks like this.
+// the wiring (the adapter finds names, the recording runs, and nothing is
+// typed into their chats while that stays disabled), NOT that the real
+// Zoom/Teams DOM looks like this.
 
 const CHAT_SCRIPT = `
   window.__chatMessages = [];

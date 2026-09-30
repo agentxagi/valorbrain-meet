@@ -3,8 +3,10 @@
  * the transcription, and the way back: spelling fixes accepted in a meeting
  * become aliases in the graph, so the next meeting starts right.
  *
- *   GET  /api/v1/meet/vocabulary?participants=Ana,Bruno&limit=40
+ *   POST /api/v1/meet/vocabulary  { participants: ["Ana", "Bruno"], limit: 40 }
  *        → { terms: [{term, kind, reason}], corrections: [{from, to}], participants }
+ *        (names go in the body, never in a URL that access logs keep; an engine
+ *        without the POST route gets a GET without names)
  *   POST /api/v1/meet/aliases  { aliases: [{ from, to }] }
  *        → { recorded: [...], skipped: [...] }
  *
@@ -18,9 +20,12 @@
 import { sanitizePromptText } from "./meetingSummary";
 import type { GraphVocabulary } from "./types";
 import {
+  dropCorrectionCycles,
   foldTerm,
   isSafeKnownCorrection,
   learnableCorrections,
+  nameVariants,
+  squashTerm,
   type TermCorrection,
 } from "./termCorrection";
 import {
@@ -40,6 +45,11 @@ export const VB_ALIASES_PATH = "/api/v1/meet/aliases";
 export const VOCABULARY_TIMEOUT_MS = 8_000;
 export const VOCABULARY_LIMIT = 40;
 export const MAX_ALIASES_PER_REQUEST = 50;
+/**
+ * Requests per recording and the spacing between them (first one at the
+ * start, the others when new people join). Mutable only for tests.
+ */
+export const vocabularyTiming = { maxFetches: 4, refreshMinMs: 30_000 };
 const MAX_TERMS = 120;
 const MAX_CORRECTIONS = 200;
 const MAX_PARTICIPANTS = 20;
@@ -89,6 +99,7 @@ export function parseVocabularyResponse(
       : {};
   const names = vocabularyParticipants(participants);
   const nameKeys = new Set(names.map(foldTerm));
+  const protectedNames = nameVariants(names);
 
   const seen = new Set<string>();
   const terms: string[] = [];
@@ -104,27 +115,48 @@ export function parseVocabularyResponse(
     if (terms.length >= MAX_TERMS) break;
   }
 
-  const corrections: TermCorrection[] = [];
+  const knownTerms = new Set(terms.map(squashTerm));
+  const candidates: TermCorrection[] = [];
   const seenFrom = new Set<string>();
   for (const item of Array.isArray(record.corrections) ? record.corrections : []) {
     if (!item || typeof item !== "object") continue;
     const entry = item as Record<string, unknown>;
     const from = typeof entry.from === "string" ? entry.from.replace(/\s+/g, " ").trim() : "";
     const to = typeof entry.to === "string" ? entry.to.replace(/\s+/g, " ").trim() : "";
-    if (!isSafeKnownCorrection(from, to, names)) continue;
+    if (!isSafeKnownCorrection(from, to, [], knownTerms)) continue;
     const key = foldTerm(from);
     if (seenFrom.has(key)) continue;
     seenFrom.add(key);
-    corrections.push({ from, to });
-    if (corrections.length >= MAX_CORRECTIONS) break;
+    candidates.push({ from, to });
+    if (candidates.length >= MAX_CORRECTIONS) break;
   }
+  // Cycles are a property of the whole alias set (A → B with B → A swaps
+  // names), so they go before the per-meeting name protection.
+  const corrections = dropCorrectionCycles(candidates).filter(
+    (c) => !protectedNames.has(squashTerm(c.from)),
+  );
 
   return { terms, corrections, fetchedAt: now, participantsKey: participantsKey(names) };
 }
 
+/** The body read with a deadline: a stalled response never holds the caller. */
+async function readJsonWithin(response: Response, ms: number): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  try {
+    return await Promise.race([parseJsonBody(response), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
- * Asks the tenant graph for the vocabulary of this meeting. Never throws; a
- * missing endpoint (older engine) comes back as a `server` failure.
+ * Asks the tenant graph for the vocabulary of this meeting. Never throws. The
+ * participant names travel in a POST body; an engine without that route
+ * (404/405) is asked again by GET, without names (terms and learned fixes
+ * still come, only the participant-first ranking is lost).
  */
 export async function fetchMeetVocabulary(
   settings: VbSettings,
@@ -140,18 +172,31 @@ export async function fetchMeetVocabulary(
     return configFailure(`Base URL do ValorBrain inválida: ${settings.baseUrl}`);
   }
   const names = vocabularyParticipants(participants);
-  if (names.length > 0) url.searchParams.set("participants", names.join(","));
-  url.searchParams.set("limit", String(options.limit ?? VOCABULARY_LIMIT));
+  const limit = options.limit ?? VOCABULARY_LIMIT;
+  const timeoutMs = options.timeoutMs ?? VOCABULARY_TIMEOUT_MS;
 
-  const outcome = await requestValorBrain(
+  let outcome = await requestValorBrain(
     url,
-    { method: "GET", headers: vbAuthHeaders(settings) },
-    { ...options, timeoutMs: options.timeoutMs ?? VOCABULARY_TIMEOUT_MS },
+    {
+      method: "POST",
+      headers: vbAuthHeaders(settings),
+      body: JSON.stringify({ participants: names, limit }),
+    },
+    { ...options, timeoutMs },
   );
+  if (outcome.response && (outcome.response.status === 404 || outcome.response.status === 405)) {
+    const legacy = new URL(url);
+    legacy.searchParams.set("limit", String(limit));
+    outcome = await requestValorBrain(
+      legacy,
+      { method: "GET", headers: vbAuthHeaders(settings) },
+      { ...options, timeoutMs },
+    );
+  }
   if (outcome.failure) return outcome.failure;
   const verdict = classifyVbResponse(outcome.response!);
   if (verdict) return verdict;
-  const body = await parseJsonBody(outcome.response!);
+  const body = await readJsonWithin(outcome.response!, timeoutMs);
   return { ok: true, vocabulary: parseVocabularyResponse(body, names) };
 }
 

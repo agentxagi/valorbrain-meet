@@ -8,7 +8,7 @@ import {
   type ParticipantNameCandidate,
 } from "./participantDetection.ts";
 import { micMutedFromLabel, PLATFORM_DOM, splitDisplayName } from "./platformDom.ts";
-import { platformForHostname } from "./platforms.ts";
+import { meetingRefFromUrl, platformForHostname } from "./platforms.ts";
 import { shortcutKeys } from "./ui/shortcut.ts";
 
 (() => {
@@ -73,7 +73,7 @@ import { shortcutKeys } from "./ui/shortcut.ts";
   function isVisible(el: Element | null): el is HTMLElement {
     if (!el) return false;
     const rect = (el as HTMLElement).getBoundingClientRect?.();
-    return !rect || rect.width > 0 || rect.height > 0;
+    return Boolean(rect && (rect.width > 0 || rect.height > 0));
   }
 
   function queryFirstVisible(selectors: string[]): HTMLElement | null {
@@ -112,11 +112,30 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     return null;
   }
 
-  async function sendChatMessage(message: string): Promise<boolean> {
+  /** The chat box emptied after sending: the message really left. */
+  async function composeBoxCleared(chatInput: HTMLElement, message: string): Promise<boolean> {
+    const probe = message.slice(0, 40);
+    for (let i = 0; i < 8; i += 1) {
+      await wait(150);
+      if (!document.contains(chatInput) || !getTextValue(chatInput).includes(probe)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Types and sends a message in this call's chat. `expectedMeetingId` (when
+   * given) must still be the room on screen. Returns true only when the chat
+   * box emptied, i.e. the message was sent.
+   */
+  async function sendChatMessage(message: string, expectedMeetingId?: string): Promise<boolean> {
     try {
-      // Zoom and Teams pages also host things that are not the call (Teams
-      // chats): post only while the call UI is on screen.
-      if (PLATFORM !== "meet" && !isMeetingRoomPath()) return false;
+      // Zoom and Teams also show private chats on the same page: not until
+      // their meeting chat has been checked on real calls (platformDom.ts).
+      if (!DOM.chatVerified) return false;
+      if (!isMeetingRoomPath()) return false;
+      // The tab may have moved to another room since the worker asked.
+      const shownMeetingId = meetingRefFromUrl(location.href)?.meetingId;
+      if (expectedMeetingId && shownMeetingId !== expectedMeetingId) return false;
       const chatInput = await ensureChatPanelOpen();
       if (!chatInput) return false;
       setInputValue(chatInput, message);
@@ -133,7 +152,7 @@ import { shortcutKeys } from "./ui/shortcut.ts";
           new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true }),
         );
       }
-      return true;
+      return await composeBoxCleared(chatInput, message);
     } catch (err) {
       console.error(`${LOG} could not send the chat message:`, err);
       return false;
@@ -413,17 +432,40 @@ import { shortcutKeys } from "./ui/shortcut.ts";
 
   let leaveTimer: ReturnType<typeof setInterval> | null = null;
   let leaveReported = false;
+  /** Zoom/Teams: the call controls were seen in this recording (their loss = hang-up). */
+  let callControlsSeen = false;
+  let callControlsMissingTicks = 0;
+
+  /**
+   * Zoom and Teams keep the page after hanging up: the call toolbar going away
+   * (for ~6 s, so a re-render does not count) means the call ended.
+   */
+  function callControlsGone(): boolean {
+    if (PLATFORM === "meet" || DOM.inCallIndicators.length === 0) return false;
+    const present = DOM.inCallIndicators.some((selector) =>
+      isVisible(document.querySelector(selector)),
+    );
+    if (present) {
+      callControlsSeen = true;
+      callControlsMissingTicks = 0;
+      return false;
+    }
+    if (!callControlsSeen) return false;
+    callControlsMissingTicks += 1;
+    return callControlsMissingTicks >= 4;
+  }
 
   function postCallScreenVisible(): boolean {
     if (DOM.postCallPath?.test(location.pathname)) return true;
     const buttons = document.querySelectorAll<HTMLElement>('button, [role="button"]');
     for (const button of buttons) {
+      if (!isVisible(button)) continue;
       const label = (button.getAttribute("aria-label") || button.textContent || "").trim();
       if (label && label.length < 40 && POST_CALL_LABELS.test(label)) return true;
     }
     const headings = document.querySelectorAll<HTMLElement>('h1, h2, [role="heading"]');
     for (const heading of headings) {
-      if (POST_CALL_TEXTS.test(heading.textContent || "")) return true;
+      if (isVisible(heading) && POST_CALL_TEXTS.test(heading.textContent || "")) return true;
     }
     return false;
   }
@@ -431,8 +473,12 @@ import { shortcutKeys } from "./ui/shortcut.ts";
   function startLeaveDetection() {
     if (leaveTimer) return;
     leaveReported = false;
+    callControlsSeen = false;
+    callControlsMissingTicks = 0;
     leaveTimer = setInterval(() => {
-      if (leaveReported || !postCallScreenVisible()) return;
+      if (leaveReported) return;
+      const gone = callControlsGone();
+      if (!gone && !postCallScreenVisible()) return;
       leaveReported = true;
       chrome.runtime.sendMessage({ type: "MEETING_ENDED" }).catch(() => {
         leaveReported = false;
@@ -641,7 +687,9 @@ import { shortcutKeys } from "./ui/shortcut.ts";
       return false;
     }
     if (message?.type === "SEND_CHAT_MESSAGE") {
-      void sendChatMessage(message.text).then((success) => sendResponse({ success }));
+      const expected =
+        typeof message.expectedMeetingId === "string" ? message.expectedMeetingId : undefined;
+      void sendChatMessage(message.text, expected).then((success) => sendResponse({ success }));
       return true;
     }
     if (message?.type === "STATE_UPDATE") {

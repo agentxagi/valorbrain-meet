@@ -40,12 +40,16 @@ import { getMeetingIdFromUrl } from "./meetingTabs";
 import {
   MEETING_TAB_URLS,
   navigatedAwayFromCall,
+  PLATFORM_LABELS,
   platformForUrl,
   platformLabelForUrl,
+  stableMeetingId,
 } from "./platforms";
+import { PLATFORM_DOM } from "./platformDom";
 import {
   pruneRecordingNoticeLog,
   recordingNoticeKey,
+  recordingNoticeTiming,
   resolveRecordingNoticeText,
   shouldPostRecordingNotice,
 } from "./recordingNotice";
@@ -53,6 +57,7 @@ import {
   fetchMeetVocabulary,
   participantsKey,
   recordMeetAliases,
+  vocabularyTiming,
   type GraphVocabulary,
 } from "./vbVocabulary";
 import { isMessageFromActiveMeeting } from "./activeMeetingMessages";
@@ -118,6 +123,7 @@ import {
   buildTermCorrectionMessages,
   chunkLines,
   mergeCorrections,
+  nameVariants,
   parseTermCorrections,
   squashTerm,
   type TermCorrection,
@@ -142,11 +148,6 @@ const SPEAKER_EVENT_WINDOW_MS = 10 * 60_000;
 const ECHO_LOOKBACK_LINES = 12;
 /** Minimum spacing between two notifications of the same kind. */
 const NOTIFICATION_THROTTLE_MS = 5 * 60_000;
-/** Graph vocabulary: at most this many requests per recording, this far apart. */
-const VOCABULARY_MAX_FETCHES = 4;
-const VOCABULARY_REFRESH_MIN_MS = 30_000;
-/** Recording notice: tries while the chat is not there yet (lobby, panel loading). */
-const RECORDING_NOTICE_RETRY_MS = [4_000, 8_000, 15_000];
 /** chrome.storage.session key: when the notice was posted per meeting. */
 const RECORDING_NOTICE_LOG_KEY = "recordingNoticeLog";
 
@@ -276,7 +277,7 @@ let summaryInFlight: Promise<void> | null = null;
  */
 let summaryQuotaPause: { until: number; provider: string } | null = null;
 /** Graph vocabulary requests made for the current recording (reset by a new start time). */
-let vocabularyRequests = { startTime: 0, count: 0, lastAt: 0, inFlight: false };
+let vocabularyRequests = { startTime: 0, count: 0, lastAt: 0, inFlight: false, stale: false };
 let vocabularyRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function providerKey(config: ProviderConfig, apiKey: string | null): string {
@@ -1154,7 +1155,8 @@ async function processQueuedAudioChunk({ id, item }: AudioChunkQueueItem<QueuedA
   const refined =
     settings.transcriptRefinement === true ? await refineTranscription(result.text) : result.text;
   if (state.startTime !== startTimeAtCall) return;
-  const text = applyLearnedCorrections(refined, settings);
+  const learned = applyLearnedCorrections(refined, settings);
+  const text = learned.text;
 
   // Timestamp = when the segment started (falls back to arrival minus duration).
   const segmentStartedAt =
@@ -1193,6 +1195,7 @@ async function processQueuedAudioChunk({ id, item }: AudioChunkQueueItem<QueuedA
     startedAt,
     endedAt,
   });
+  if (inserted) learned.record();
   if (!inserted) {
     // The meeting audio leaking into the microphone (speakers, no headphones).
     if (state.stats) state.stats.chunksFiltered += 1;
@@ -1530,10 +1533,14 @@ async function loadGraphVocabulary(): Promise<void> {
   const startTime = state.startTime;
   if (!state.audioActive || !startTime) return;
   if (vocabularyRequests.startTime !== startTime) {
-    vocabularyRequests = { startTime, count: 0, lastAt: 0, inFlight: false };
+    vocabularyRequests = { startTime, count: 0, lastAt: 0, inFlight: false, stale: false };
   }
   const requests = vocabularyRequests;
-  if (requests.inFlight || requests.count >= VOCABULARY_MAX_FETCHES) return;
+  if (requests.count >= vocabularyTiming.maxFetches) return;
+  if (requests.inFlight) {
+    requests.stale = true; // people changed mid-request: ask again when it ends
+    return;
+  }
 
   const settings = (await getSettings()) as PipelineSettings;
   if (settings.graphVocabulary === false) return;
@@ -1544,7 +1551,7 @@ async function loadGraphVocabulary(): Promise<void> {
   const key = participantsKey(participants);
   if (state.graphVocabulary && state.graphVocabulary.participantsKey === key) return;
 
-  const wait = requests.lastAt + VOCABULARY_REFRESH_MIN_MS - Date.now();
+  const wait = requests.lastAt + vocabularyTiming.refreshMinMs - Date.now();
   if (requests.count > 0 && wait > 0) {
     if (!vocabularyRetryTimer) {
       vocabularyRetryTimer = setTimeout(() => {
@@ -1579,6 +1586,10 @@ async function loadGraphVocabulary(): Promise<void> {
     console.debug(`${LOG_PREFIX} graph vocabulary request failed`, err);
   } finally {
     requests.inFlight = false;
+    if (requests.stale && state.startTime === startTime) {
+      requests.stale = false;
+      void loadGraphVocabulary().catch(() => undefined);
+    }
   }
 }
 
@@ -1587,26 +1598,32 @@ async function loadGraphVocabulary(): Promise<void> {
  * (learned by the graph), as each line arrives. Never rewrites the name of
  * someone in the call.
  */
-function applyLearnedCorrections(text: string, settings: PipelineSettings): string {
+function applyLearnedCorrections(
+  text: string,
+  settings: PipelineSettings,
+): { text: string; record: () => void } {
+  const noop = { text, record: () => {} };
   const learned = state.graphVocabulary?.corrections ?? [];
-  if (!text || learned.length === 0) return text;
-  const names = new Set(
-    [...selfNameCandidates(settings), ...state.participants].map(squashTerm).filter(Boolean),
-  );
+  if (!text || learned.length === 0) return noop;
+  // Any part of a participant's name ("Diego" of "Diego Braga") is off limits.
+  const names = nameVariants([...selfNameCandidates(settings), ...state.participants]);
   const usable = learned.filter((c) => !names.has(squashTerm(c.from)));
   const { text: fixed, counts } = applyKnownCorrections(text, usable);
-  if (counts.size === 0) return text;
-  const records = state.termCorrections ?? (state.termCorrections = []);
-  for (const correction of usable) {
-    const count = counts.get(correction.from);
-    if (!count) continue;
-    const existing = records.find(
-      (r) => r.source === "graph" && r.from === correction.from && r.to === correction.to,
-    );
-    if (existing) existing.count += count;
-    else records.push({ ...correction, count, source: "graph" });
-  }
-  return fixed;
+  if (counts.size === 0) return noop;
+  // Counted only if the line is kept (an echo of the tab is dropped).
+  const record = () => {
+    const records = state.termCorrections ?? (state.termCorrections = []);
+    for (const correction of usable) {
+      const count = counts.get(correction.from);
+      if (!count) continue;
+      const existing = records.find(
+        (r) => r.source === "graph" && r.from === correction.from && r.to === correction.to,
+      );
+      if (existing) existing.count += count;
+      else records.push({ ...correction, count, source: "graph" });
+    }
+  };
+  return { text: fixed, record };
 }
 
 /**
@@ -1757,37 +1774,66 @@ async function postRecordingNotice(tabId: number, startTime: number): Promise<vo
   if (settings.recordingChatNotice !== true) return;
   const platform = platformForUrl(state.meetingUrl);
   if (!platform) return; // a generic tab (webinar, video): no call chat to post into
+  const stillRecording = () =>
+    state.audioActive &&
+    state.startTime === startTime &&
+    state.targetTabId === tabId &&
+    !state.finalizing &&
+    !isStoppingAudio;
+
+  if (!PLATFORM_DOM[platform].chatVerified) {
+    // Zoom/Teams: their pages also hold private chats; posting there is not
+    // safe until checked on real calls. Say so instead of guessing.
+    const message = `No ${PLATFORM_LABELS[platform]}, o aviso automático no chat ainda não está disponível. Avise os participantes de que a reunião está sendo gravada.`;
+    addTimeline(`Aviso de gravação não publicado: ${PLATFORM_LABELS[platform]} ainda em teste`);
+    if (!state.notice) setNotice("capture", "warning", message);
+    await broadcastStateUpdate(true);
+    return;
+  }
 
   const area = chrome.storage.session ?? chrome.storage.local;
-  const key = recordingNoticeKey(platform, state.meetingId);
+  // Remembered only by an id taken from the call URL: a tab title or
+  // "unknown" could repeat across meetings or change within one.
+  const meetingId = stableMeetingId(state.meetingUrl, state.meetingId);
+  const key = meetingId ? recordingNoticeKey(platform, meetingId) : null;
   const now = Date.now();
   const stored = (await area.get(RECORDING_NOTICE_LOG_KEY).catch(() => ({}))) as Record<
     string,
     unknown
   >;
   const log = pruneRecordingNoticeLog(stored[RECORDING_NOTICE_LOG_KEY], now);
-  if (!shouldPostRecordingNotice(log, key, now)) {
+  if (key && !shouldPostRecordingNotice(log, key, now)) {
     addTimeline("Aviso de gravação já publicado no chat desta reunião");
     return;
   }
 
   const text = resolveRecordingNoticeText(settings.recordingChatNoticeText);
-  for (let attempt = 0; attempt <= RECORDING_NOTICE_RETRY_MS.length; attempt += 1) {
-    if (!state.audioActive || state.startTime !== startTime) return;
+  const delays = recordingNoticeTiming.retryMs;
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    if (!stillRecording()) return;
     const response = (await chrome.tabs
-      .sendMessage(tabId, { type: "SEND_CHAT_MESSAGE", text })
+      .sendMessage(tabId, {
+        type: "SEND_CHAT_MESSAGE",
+        text,
+        // The content script refuses if the tab shows another room by now.
+        ...(meetingId ? { expectedMeetingId: meetingId } : {}),
+      })
       .catch(() => null)) as { success?: boolean } | null | undefined;
     if (response?.success) {
-      await area.set({ [RECORDING_NOTICE_LOG_KEY]: { ...log, [key]: Date.now() } }).catch(() => {});
+      if (key) {
+        await area
+          .set({ [RECORDING_NOTICE_LOG_KEY]: { ...log, [key]: Date.now() } })
+          .catch(() => {});
+      }
       addTimeline("Aviso de gravação publicado no chat da reunião");
       await broadcastStateUpdate();
       return;
     }
-    const delay = RECORDING_NOTICE_RETRY_MS[attempt];
+    const delay = delays[attempt];
     if (delay !== undefined) await sleep(delay);
   }
 
-  if (!state.audioActive || state.startTime !== startTime) return;
+  if (!stillRecording()) return;
   addTimeline("Aviso de gravação não publicado: o chat da reunião não foi encontrado");
   const message =
     "Não consegui publicar o aviso de gravação no chat. Avise os participantes de que a reunião está sendo gravada.";
@@ -2518,6 +2564,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             senderUrl: sender?.tab?.url || sender?.url,
             targetTabId: state.targetTabId,
             meetingId: state.meetingId,
+            meetingUrl: state.meetingUrl,
           })
         ) {
           sendResponse({ success: true, ignored: true });
@@ -2569,6 +2616,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             senderUrl: sender?.tab?.url || sender?.url,
             targetTabId: state.targetTabId,
             meetingId: state.meetingId,
+            meetingUrl: state.meetingUrl,
           })
         ) {
           sendResponse({ success: true, ignored: true });
@@ -2598,6 +2646,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             senderUrl: sender?.tab?.url || sender?.url,
             targetTabId: state.targetTabId,
             meetingId: state.meetingId,
+            meetingUrl: state.meetingUrl,
           })
         ) {
           sendResponse({ success: true, ignored: true });
