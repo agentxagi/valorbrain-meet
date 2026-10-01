@@ -365,7 +365,8 @@ test("the graph vocabulary, the chat notice and the learned fixes work together"
   // participant the graph returned is named in the prompt already.
   const sttCall = fetchCalls.find((c) => c.url.endsWith("/audio/transcriptions"))!;
   const prompt = String((sttCall.init.body as FormData).get("prompt"));
-  assert.match(prompt, /^Termos: ValorBrain, ValorBrain Meet, gbrain, Supabase, Valor Digital\./);
+  // The company's terms only (nothing built in), as a plain list: no labels.
+  assert.match(prompt, /^gbrain, Supabase, Valor Digital\./);
 
   correctionResponse = { correcoes: [{ de: "Rapplet", para: "Replit" }] };
   const saved = await stopAndWaitSaved(0);

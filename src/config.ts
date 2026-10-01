@@ -25,8 +25,12 @@ export const FIRST_SUMMARY_MIN_ELAPSED_S = 60;
 /** Items per array kept in the STATE_UPDATE payload sent to the popup/side panel. */
 export const UI_ARRAY_LIMIT = 400;
 
-/** Default transcription language (ISO 639-1); "auto" lets the model detect it. */
-export const DEFAULT_TRANSCRIPTION_LANGUAGE = "pt";
+/**
+ * Default transcription language (ISO 639-1); "auto" lets the model detect it
+ * and locks it after the first clear segments (meetingLanguage.ts). The
+ * product serves meetings in any language, so nothing is assumed.
+ */
+export const DEFAULT_TRANSCRIPTION_LANGUAGE = "auto";
 
 /** Maximum number of tokens the AI may generate for a late-joiner briefing message. */
 export const JOINER_MESSAGE_MAX_TOKENS = 120;

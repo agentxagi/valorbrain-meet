@@ -136,12 +136,32 @@
               <div class="vb-field">
                 <label class="vb-label" for="transcription-language">Idioma da reunião</label>
                 <select id="transcription-language" class="vb-select" data-dirty>
-                  <option value="pt">Português (Brasil)</option>
+                  <option value="auto">Detectar automaticamente</option>
+                  <option value="pt">Português</option>
                   <option value="en">Inglês</option>
                   <option value="es">Espanhol</option>
-                  <option value="auto">Detectar automaticamente</option>
+                  <option value="fr">Francês</option>
+                  <option value="de">Alemão</option>
+                  <option value="it">Italiano</option>
+                  <option value="nl">Holandês</option>
+                  <option value="pl">Polonês</option>
+                  <option value="ru">Russo</option>
+                  <option value="uk">Ucraniano</option>
+                  <option value="tr">Turco</option>
+                  <option value="ar">Árabe</option>
+                  <option value="he">Hebraico</option>
+                  <option value="hi">Hindi</option>
+                  <option value="id">Indonésio</option>
+                  <option value="vi">Vietnamita</option>
+                  <option value="th">Tailandês</option>
+                  <option value="ja">Japonês</option>
+                  <option value="ko">Coreano</option>
+                  <option value="zh">Chinês</option>
                 </select>
-                <p class="vb-hint">Fixar o idioma evita trechos transcritos na língua errada.</p>
+                <p class="vb-hint">
+                  Em "Detectar", o idioma é fixado sozinho depois das primeiras falas e o resumo sai
+                  nele. Escolha um idioma se as reuniões acontecem sempre no mesmo.
+                </p>
               </div>
               <div class="vb-field op-span-2">
                 <label class="vb-label" for="transcription-vocabulary"
@@ -156,9 +176,9 @@
                   data-dirty
                 ></textarea>
                 <p class="vb-hint">
-                  Nomes próprios, produtos, siglas e termos em inglês, separados por vírgula.
-                  ValorBrain e ValorBrain Meet já entram sempre. No fim da reunião, a transcrição é
-                  revisada com essa lista antes de ir para o ValorBrain.
+                  Nomes próprios, produtos, siglas e termos estrangeiros, separados por vírgula. No
+                  fim da reunião, a transcrição é revisada com essa lista antes de ir para o
+                  ValorBrain.
                 </p>
               </div>
             </div>
