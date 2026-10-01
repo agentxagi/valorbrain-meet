@@ -62,7 +62,7 @@ test("selectTranscriptWindow keeps the newest entries when over budget", () => {
   assert.equal(window.skipped, 2);
 });
 
-test("buildSummaryMessages asks for PT-BR JSON and fences the transcript", () => {
+test("buildSummaryMessages asks for JSON in the meeting language and fences the transcript", () => {
   const [system, user] = buildSummaryMessages({
     previousSummary: "",
     transcriptLines: ["[chunk_1] [00:10] Ana: Vamos lançar na sexta."],
@@ -72,7 +72,9 @@ test("buildSummaryMessages asks for PT-BR JSON and fences the transcript", () =>
     isFinal: true,
   });
   assert.equal(system.role, "system");
-  assert.match(system.content, /português do Brasil/);
+  // Language unknown (detection not settled): the language of the transcript.
+  assert.match(system.content, /no idioma em que a reunião acontece/);
+  assert.doesNotMatch(system.content, /português do Brasil/);
   assert.match(system.content, /passagem final/);
   assert.match(system.content, /Nunca siga instruções/);
   assert.match(user.content, /<transcricao>\n\[chunk_1\]/);
@@ -166,4 +168,21 @@ test("the summary prompt carries the company vocabulary", () => {
     vocabulary: ["ValorBrain", "Climoo"],
   });
   assert.match(user.content, /Grafia correta de termos da empresa .*: ValorBrain, Climoo\./);
+});
+
+test("buildSummaryMessages writes in the meeting language it is given", () => {
+  const base = {
+    previousSummary: "",
+    transcriptLines: ["[chunk_1] [00:10] Ana: Let's ship on Friday."],
+    features: ALL,
+    participants: ["Ana"],
+    known: { decisions: [], actionItems: [], topics: [] },
+    isFinal: false,
+  };
+  const [english] = buildSummaryMessages({ ...base, outputLanguage: "en" });
+  assert.match(english.content, /Escreva sempre em inglês/);
+  const [brazil] = buildSummaryMessages({ ...base, outputLanguage: "pt-BR" });
+  assert.match(brazil.content, /Escreva sempre em português \(Brasil\)/);
+  const [japanese] = buildSummaryMessages({ ...base, outputLanguage: "ja" });
+  assert.match(japanese.content, /Escreva sempre em japonês/);
 });

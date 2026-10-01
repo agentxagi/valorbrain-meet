@@ -222,3 +222,32 @@ test("a review fix that undoes a learned one is not taught back", () => {
     [{ from: "Rapplet", to: "Replit" }],
   );
 });
+
+test("the correction prompt names the meeting language and forbids translating", () => {
+  const [system] = buildTermCorrectionMessages({
+    lines: ["[00:01] Ana: we ship on friday with Supabse"],
+    vocabulary: ["Supabase"],
+    participants: ["Ana"],
+    language: "en",
+  });
+  assert.match(system.content, /de uma reunião, em inglês\./);
+  assert.match(system.content, /Nunca traduza/);
+  assert.doesNotMatch(system.content, /português do Brasil/);
+
+  const [unknown] = buildTermCorrectionMessages({ lines: ["x"], vocabulary: [], participants: [] });
+  assert.match(unknown.content, /de uma reunião\. Nunca traduza/);
+});
+
+test("katakana counts as a name-like term; other caseless scripts need a known target", () => {
+  const japanese = "[00:01] 田中: 次はスーパベースに移行します";
+  // Katakana brand respelled to its katakana form: accepted without being in the vocabulary.
+  assert.deepEqual(parseTermCorrections(proposals(["スーパベース", "スーパーベース"]), japanese), [
+    { from: "スーパベース", to: "スーパーベース" },
+  ]);
+  // Two Chinese words that differ by one character: rejected unless the target is a known term.
+  const chinese = "[00:01] 王: 我们明天开会计论这个问题";
+  assert.deepEqual(parseTermCorrections(proposals(["会计", "会议"]), chinese), []);
+  assert.deepEqual(parseTermCorrections(proposals(["会计", "会议"]), chinese, ["会议"]), [
+    { from: "会计", to: "会议" },
+  ]);
+});

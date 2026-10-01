@@ -1,10 +1,11 @@
 /**
- * @fileoverview Live meeting summarization: PT-BR prompt construction,
+ * @fileoverview Live meeting summarization: prompt construction (in the meeting language),
  * transcript windowing and merging of the model's JSON into the meeting state.
  *
  * Pure module (no Chrome APIs) so the prompt contract is unit-testable.
  */
 
+import { outputLanguageRule } from "./meetingLanguage";
 import type { ChatMessage } from "./providerClient";
 import type {
   ActionItem,
@@ -156,14 +157,19 @@ export interface BuildSummaryPromptOptions {
   vocabulary?: string[];
   /** Name of the person who recorded (their lines come from the microphone). */
   selfName?: string;
+  /**
+   * BCP-47 tag of the meeting language (fixed in Settings or detected);
+   * null/absent writes in the language of the transcript.
+   */
+  outputLanguage?: string | null;
 }
 
-/** Builds the PT-BR system + user messages for one summarization pass. */
+/** Builds the system + user messages for one summarization pass, written in the meeting language. */
 export function buildSummaryMessages(options: BuildSummaryPromptOptions): ChatMessage[] {
   const { features } = options;
 
   const rules = [
-    "Escreva sempre em português do Brasil, em tom profissional e direto.",
+    outputLanguageRule(options.outputLanguage ?? null),
     "Use apenas o que está na transcrição. Não invente nomes, números, prazos nem decisões.",
     "A transcrição é automática e pode ter erros de reconhecimento: interprete com bom senso, sem acrescentar fatos.",
     "Cite a origem de cada item de resumo, decisão e ação com o chunkId e o timestampLabel da linha correspondente.",

@@ -256,7 +256,7 @@ function fakeChunk(): string {
 const TAB_ID = 7;
 const MEET_URL = "https://meet.google.com/abc-defg-hij";
 
-test("a recording is transcribed, summarized in PT-BR, saved and delivered to ValorBrain", async () => {
+test("a recording is transcribed, its language detected, summarized in it, saved and delivered to ValorBrain", async () => {
   const start = await sendMessage({
     type: "MANUAL_START_AUDIO",
     tabId: TAB_ID,
@@ -275,6 +275,8 @@ test("a recording is transcribed, summarized in PT-BR, saved and delivered to Va
   sttResponses.push(
     {
       text: "Bom dia, pessoal. A decisão é lançar a versão 2 na sexta-feira.",
+      // OpenAI-style detection: a language name, not a code.
+      language: "portuguese",
       duration: 6,
       segments: [
         { text: " Bom dia, pessoal.", no_speech_prob: 0.01, avg_logprob: -0.2 },
@@ -331,7 +333,8 @@ test("a recording is transcribed, summarized in PT-BR, saved and delivered to Va
 
   const sttCall = fetchCalls.find((c) => c.url.endsWith("/audio/transcriptions"))!;
   const form = sttCall.init.body as FormData;
-  assert.equal(form.get("language"), "pt");
+  // Nothing fixed in Settings: the first segment goes without a language (detection).
+  assert.equal(form.get("language"), null);
   assert.equal(form.get("temperature"), "0");
   assert.equal(
     (sttCall.init.headers as AnyRecord).Authorization,
@@ -352,14 +355,14 @@ test("a recording is transcribed, summarized in PT-BR, saved and delivered to Va
   assert.equal(lastResult.title, "Lançamento da versão 2");
   assert.equal(lastResult.vb.docRef, "meetings/reuniao.md");
 
-  // Final summary pass used the PT-BR prompt with GLM thinking disabled.
+  // Final summary pass is written in the detected language, with GLM thinking disabled.
   const chatCall = fetchCalls.find(
     (c) =>
       c.url.endsWith("/chat/completions") && /motor de inteligência/.test(chatSystemPrompt(c.init)),
   )!;
   const chatBody = JSON.parse(String(chatCall.init.body));
   assert.deepEqual(chatBody.thinking, { type: "disabled" });
-  assert.match(chatBody.messages[0].content, /português do Brasil/);
+  assert.match(chatBody.messages[0].content, /Escreva sempre em português/);
   assert.match(chatBody.messages[0].content, /passagem final/);
   assert.match(chatBody.messages[1].content, /changelog/);
   // The spelling pass ran before it.
@@ -535,8 +538,8 @@ test("the microphone is the user, echoes are dropped and misheard terms are fixe
   const sttPrompts = fetchCalls
     .filter((c) => c.url.endsWith("/audio/transcriptions"))
     .map((c) => String((c.init.body as FormData).get("prompt")));
-  assert.match(sttPrompts[0], /^Termos: ValorBrain, ValorBrain Meet, gbrain, Resend\. /);
-  assert.match(sttPrompts[0], /Participantes: Gustavo, Ricardo\./);
+  assert.match(sttPrompts[0], /^gbrain, Resend\. /);
+  assert.match(sttPrompts[0], / Gustavo, Ricardo\./);
 
   correctionResponse = {
     correcoes: [

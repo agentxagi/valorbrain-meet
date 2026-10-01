@@ -4,22 +4,45 @@
  * Whisper reads the prompt as "the text before this audio": spellings in it
  * are copied (company terms, participant names) and the last words give
  * continuity across segments. Whisper keeps only the last ~223 prompt tokens
- * and drops the beginning, so the whole prompt stays within a character budget
- * where the glossary is never the part that gets cut: the recent text is
- * trimmed first.
+ * and drops the beginning, so the whole prompt stays within a budget where
+ * the glossary is never the part that gets cut: the recent text is trimmed
+ * first.
+ *
+ * The budget is in UTF-8 bytes, not characters: tokens follow bytes much more
+ * closely across scripts (about one byte per character in Latin text, two in
+ * Cyrillic, Greek or Hebrew, three in Chinese, Japanese and Korean), so a
+ * character budget sized for Portuguese overflowed the window in other
+ * scripts and cut the glossary off.
+ *
+ * The prompt carries no labels ("Terms:", "Participantes:"): Whisper treats the
+ * prompt as speech, and words in one language nudge it towards that language.
+ * Terms and names go in as plain lists.
  *
  * Pure module: no Chrome APIs, unit-tested in node.
  */
 
 import { parseVocabulary, sanitizePromptText } from "./meetingSummary";
 
-/** Product names every meeting may mention, always spelled right. */
-export const BUILTIN_VOCABULARY = ["ValorBrain", "ValorBrain Meet"];
+/**
+ * Terms every meeting gets regardless of the company: none. A brand belongs
+ * to the company's own vocabulary (Settings, or the ValorBrain graph), never
+ * to the extension, or every customer would get our product name forced into
+ * their transcripts.
+ */
+export const BUILTIN_VOCABULARY: readonly string[] = [];
 
-/** ~560 characters of PT-BR stay under Whisper's 223-token prompt window. */
-export const TRANSCRIPTION_PROMPT_MAX_CHARS = 560;
-const NAMES_MAX_CHARS = 160;
+/** ~600 UTF-8 bytes stay inside Whisper's 223-token prompt window in any script. */
+export const TRANSCRIPTION_PROMPT_MAX_BYTES = 600;
+const GLOSSARY_MAX_BYTES = 360;
+const NAMES_MAX_BYTES = 170;
 const MAX_NAMES = 12;
+
+const encoder = new TextEncoder();
+
+/** Size of a text in UTF-8 bytes. */
+export function utf8Bytes(text: string): number {
+  return encoder.encode(text).length;
+}
 
 /**
  * Built-in terms, then the company vocabulary from the settings, then the
@@ -54,12 +77,32 @@ function uniqueNames(names: string[]): string[] {
   return out;
 }
 
-/** The last `maxChars` of `text`, starting at a word boundary. */
-function tail(text: string, maxChars: number): string {
+/** Joins items with ", " while the result fits in `maxBytes`. */
+function listWithin(items: string[], maxBytes: number): string {
+  let out = "";
+  for (const item of items) {
+    const next = out ? `${out}, ${item}` : item;
+    if (utf8Bytes(next) > maxBytes) break;
+    out = next;
+  }
+  return out;
+}
+
+/** The end of `text` that fits in `maxBytes`, starting at a word boundary when there is one. */
+function tail(text: string, maxBytes: number): string {
   const clean = sanitizePromptText(text, 4000);
-  if (maxChars <= 0) return "";
-  if (clean.length <= maxChars) return clean;
-  const cut = clean.slice(clean.length - maxChars);
+  if (maxBytes <= 0 || !clean) return "";
+  if (utf8Bytes(clean) <= maxBytes) return clean;
+  const chars = Array.from(clean);
+  let start = chars.length;
+  let used = 0;
+  while (start > 0) {
+    const size = utf8Bytes(chars[start - 1]!);
+    if (used + size > maxBytes) break;
+    used += size;
+    start -= 1;
+  }
+  const cut = chars.slice(start).join("");
   const space = cut.indexOf(" ");
   return (space > 0 && space < 40 ? cut.slice(space + 1) : cut).trim();
 }
@@ -69,25 +112,22 @@ export interface TranscriptionPromptInput {
   names: string[];
   /** What was said right before this segment (same speaker side when known). */
   recentText: string;
-  maxChars?: number;
+  maxBytes?: number;
 }
 
-/** `Termos: … Participantes: … <últimas palavras>` within the budget. */
+/** `<terms>. <names>. <last words>` within the byte budget, terms first. */
 export function buildTranscriptionPrompt(input: TranscriptionPromptInput): string {
-  const maxChars = input.maxChars ?? TRANSCRIPTION_PROMPT_MAX_CHARS;
+  const maxBytes = input.maxBytes ?? TRANSCRIPTION_PROMPT_MAX_BYTES;
   const parts: string[] = [];
-  if (input.vocabulary.length > 0) parts.push(`Termos: ${input.vocabulary.join(", ")}.`);
 
-  let names = "";
-  for (const name of uniqueNames(input.names)) {
-    const next = names ? `${names}, ${name}` : name;
-    if (next.length > NAMES_MAX_CHARS) break;
-    names = next;
-  }
-  if (names) parts.push(`Participantes: ${names}.`);
+  const glossary = listWithin(input.vocabulary, Math.min(GLOSSARY_MAX_BYTES, maxBytes - 1));
+  if (glossary) parts.push(`${glossary}.`);
 
-  let prompt = parts.join(" ").slice(0, maxChars);
-  const recent = tail(input.recentText, maxChars - prompt.length - 1);
+  const names = listWithin(uniqueNames(input.names), NAMES_MAX_BYTES);
+  if (names && utf8Bytes([...parts, `${names}.`].join(" ")) <= maxBytes) parts.push(`${names}.`);
+
+  let prompt = parts.join(" ");
+  const recent = tail(input.recentText, maxBytes - utf8Bytes(prompt) - 1);
   if (recent) prompt = prompt ? `${prompt} ${recent}` : recent;
   return prompt.trim();
 }

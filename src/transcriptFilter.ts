@@ -2,7 +2,7 @@
  * @fileoverview Post-processing for speech-to-text responses.
  *
  * Whisper-family models invent text on silence or noise ("Legendas pela
- * comunidade Amara.org", "Obrigado por assistir", "Thanks for watching") and
+ * comunidade Amara.org", "Thanks for watching", "ご視聴ありがとうございました") and
  * sometimes loop on their own output. This module keeps only the text a user
  * would recognise as speech, using the verbose_json quality fields when the
  * server provides them and a conservative phrase list otherwise.
@@ -69,6 +69,21 @@ const HARD_HALLUCINATIONS = [
   "please subscribe",
   "subtítulos realizados por la comunidad de amara org",
   "gracias por ver el video",
+  // The same subtitle credits in other languages: Whisper learned them from
+  // subtitled video and emits them on silence in whatever language it detects.
+  "sous titres réalisés par la communauté d amara org",
+  "untertitel im auftrag des zdf",
+  "untertitelung im auftrag des zdf",
+  "untertitel der amara org community",
+  "sottotitoli creati dalla comunità amara org",
+  "napisy stworzone przez społeczność amara org",
+  "ondertiteling door de amara org gemeenschap",
+  "субтитры сделал dimatorzok",
+  "субтитры создавал dimatorzok",
+  "редактор субтитров",
+  "字幕由amara org社区提供",
+  "请不吝点赞 订阅 转发 打赏支持明镜与点点栏目",
+  "チャンネル登録よろしくお願いします",
 ];
 
 /**
@@ -86,6 +101,15 @@ const SOFT_HALLUCINATIONS = new Set([
   "thanks",
   "you",
   "bye",
+  "gracias",
+  "merci",
+  "danke",
+  "grazie",
+  "спасибо",
+  "продолжение следует",
+  "ご視聴ありがとうございました",
+  "시청해주셔서 감사합니다",
+  "谢谢观看",
 ]);
 
 /** Minimum length for an exact repeat of a recent entry to be treated as a loop. */

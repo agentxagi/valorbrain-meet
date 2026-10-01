@@ -12,6 +12,7 @@
  * Pure module: no Chrome APIs, unit-tested in node.
  */
 
+import { languageDisplayName } from "./meetingLanguage";
 import type { ChatMessage } from "./providerClient";
 import { sanitizePromptText } from "./meetingSummary";
 
@@ -69,11 +70,105 @@ function wordCount(value: string): number {
   return value.split(/\s+/).filter(Boolean).length;
 }
 
-function occurs(text: string, term: string): boolean {
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, "u").test(text);
+/**
+ * Scripts written without spaces between words (Chinese, Japanese, Thai, Lao,
+ * Khmer, Burmese). There "a whole word" cannot mean "no letter on either
+ * side", or no term would ever match inside a sentence; word edges come from
+ * `Intl.Segmenter` instead.
+ */
+const UNSPACED_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+/** Offsets where a word starts or ends, by Intl.Segmenter; null without it. */
+function wordEdges(text: string): Set<number> | null {
+  const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+  if (!Segmenter) return null;
+  const edges = new Set<number>([0, text.length]);
+  for (const part of new Segmenter(undefined, { granularity: "word" }).segment(text)) {
+    edges.add(part.index);
+    edges.add(part.index + part.segment.length);
+  }
+  return edges;
 }
 
-const looksLikeName = (value: string) => /[\p{Lu}\p{N}-]/u.test(value);
+interface TermMatch {
+  start: number;
+  end: number;
+  /** The text as found (its case may differ from the term when ignoring case). */
+  text: string;
+}
+
+/**
+ * Whole-word occurrences of the terms, left to right, the longest term winning
+ * at each position, never overlapping. Spaced scripts use the letter/digit
+ * boundary; unspaced ones the segmenter's word edges (they have no case, so
+ * `ignoreCase` does not apply to them).
+ */
+function findTerms(text: string, terms: string[], ignoreCase: boolean): TermMatch[] {
+  const byLength = [...new Set(terms)].filter(Boolean).sort((a, b) => b.length - a.length);
+  const spaced = byLength.filter((t) => !UNSPACED_SCRIPT.test(t));
+  const unspaced = byLength.filter((t) => UNSPACED_SCRIPT.test(t));
+  const found: TermMatch[] = [];
+  if (spaced.length > 0) {
+    const pattern = new RegExp(
+      `(?<![\\p{L}\\p{N}])(?:${spaced.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}])`,
+      ignoreCase ? "giu" : "gu",
+    );
+    for (const m of text.matchAll(pattern)) {
+      found.push({ start: m.index!, end: m.index! + m[0].length, text: m[0] });
+    }
+  }
+  if (unspaced.length > 0) {
+    const edges = wordEdges(text);
+    for (const term of unspaced) {
+      for (let i = text.indexOf(term); i !== -1; i = text.indexOf(term, i + 1)) {
+        const end = i + term.length;
+        if (!edges || (edges.has(i) && edges.has(end))) found.push({ start: i, end, text: term });
+      }
+    }
+  }
+  found.sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
+  const out: TermMatch[] = [];
+  let lastEnd = -1;
+  for (const m of found) {
+    if (m.start < lastEnd) continue;
+    out.push(m);
+    lastEnd = m.end;
+  }
+  return out;
+}
+
+/** Rebuilds `text` with each match replaced (a null replacement keeps the match). */
+function replaceMatches(
+  text: string,
+  matches: TermMatch[],
+  replace: (m: TermMatch) => string | null,
+): string {
+  let out = "";
+  let pos = 0;
+  for (const m of matches) {
+    const to = replace(m);
+    if (to === null) continue;
+    out += text.slice(pos, m.start) + to;
+    pos = m.end;
+  }
+  return out + text.slice(pos);
+}
+
+function occurs(text: string, term: string): boolean {
+  return findTerms(text, [term], false).length > 0;
+}
+
+/**
+ * A term that can be a proper name: a capital letter, a digit or a hyphen.
+ * Scripts without letter case give no such signal; Japanese katakana does
+ * (it is how foreign names, brands and products are written), so a katakana
+ * term counts too. Other caseless scripts (Chinese, Korean, Arabic, Hindi,
+ * Thai…) still need the target to be a known term (vocabulary or participant)
+ * before a correction is accepted: the conservative side when case cannot help.
+ */
+export const looksLikeName = (value: string) =>
+  /[\p{Lu}\p{N}-]/u.test(value) || /^[\p{Script=Katakana}\u30FC\u30FB\s]+$/u.test(value.trim());
 
 /** Transcript lines grouped into LLM-sized chunks, never splitting a line. */
 export function chunkLines(lines: string[], maxChars = CORRECTION_CHUNK_CHARS): string[][] {
@@ -97,12 +192,15 @@ export interface CorrectionPromptInput {
   lines: string[];
   vocabulary: string[];
   participants: string[];
+  /** BCP-47 tag of the meeting language; null/absent when it is not known. */
+  language?: string | null;
 }
 
-/** PT-BR system + user messages asking only for spelling fixes of terms. */
+/** System + user messages asking only for spelling fixes of terms, in any meeting language. */
 export function buildTermCorrectionMessages(input: CorrectionPromptInput): ChatMessage[] {
-  const system = `Você revisa a grafia de termos na transcrição automática de uma reunião em português do Brasil.
-O reconhecimento de voz erra nomes de pessoas, empresas, produtos e termos em inglês falados com sotaque (por exemplo "Rapplet" no lugar de "Replit" ou "SuperBase" no lugar de "Supabase").
+  const spoken = input.language ? `, em ${languageDisplayName(input.language)}` : "";
+  const system = `Você revisa a grafia de termos na transcrição automática de uma reunião${spoken}. Nunca traduza: cada correção fica no idioma em que o trecho foi dito.
+O reconhecimento de voz erra nomes de pessoas, empresas, produtos e termos estrangeiros falados com sotaque (por exemplo "Rapplet" no lugar de "Replit" ou "SuperBase" no lugar de "Supabase").
 
 Liste SOMENTE correções de grafia desses termos:
 - Use os termos da empresa e os nomes dos participantes como grafia correta.
@@ -195,15 +293,10 @@ export function applyTermCorrections(
   const counts = new Map<string, number>();
   if (!text || corrections.length === 0) return { text, counts };
   const byFrom = new Map(corrections.map((c) => [c.from, c.to]));
-  const alternatives = [...byFrom.keys()].sort((a, b) => b.length - a.length).map(escapeRegExp);
-  const pattern = new RegExp(
-    `(?<![\\p{L}\\p{N}])(?:${alternatives.join("|")})(?![\\p{L}\\p{N}])`,
-    "gu",
-  );
-  const replaced = text.replace(pattern, (match) => {
-    const to = byFrom.get(match);
-    if (to === undefined) return match;
-    counts.set(match, (counts.get(match) ?? 0) + 1);
+  const replaced = replaceMatches(text, findTerms(text, [...byFrom.keys()], false), (m) => {
+    const to = byFrom.get(m.text);
+    if (to === undefined) return null;
+    counts.set(m.text, (counts.get(m.text) ?? 0) + 1);
     return to;
   });
   return { text: replaced, counts };
@@ -308,17 +401,10 @@ export function applyKnownCorrections(
     const key = correction.from.toLowerCase();
     if (!byKey.has(key)) byKey.set(key, correction);
   }
-  const alternatives = [...byKey.values()]
-    .map((c) => c.from)
-    .sort((a, b) => b.length - a.length)
-    .map(escapeRegExp);
-  const pattern = new RegExp(
-    `(?<![\\p{L}\\p{N}])(?:${alternatives.join("|")})(?![\\p{L}\\p{N}])`,
-    "giu",
-  );
-  const replaced = text.replace(pattern, (match) => {
-    const correction = byKey.get(match.toLowerCase());
-    if (!correction) return match;
+  const froms = [...byKey.values()].map((c) => c.from);
+  const replaced = replaceMatches(text, findTerms(text, froms, true), (m) => {
+    const correction = byKey.get(m.text.toLowerCase());
+    if (!correction) return null;
     counts.set(correction.from, (counts.get(correction.from) ?? 0) + 1);
     return correction.to;
   });

@@ -147,3 +147,14 @@ test("empty responses report the empty reason", () => {
   assert.equal(cleanTranscription(null).reason, "empty");
   assert.equal(cleanTranscription({ text: "  ", segments: [] }).text, "");
 });
+
+test("subtitle credits are recognised in other languages too", () => {
+  assert.equal(isHardHallucination("Sous-titres réalisés par la communauté d'Amara.org"), true);
+  assert.equal(isHardHallucination("Untertitel im Auftrag des ZDF, 2021"), true);
+  assert.equal(isHardHallucination("Sottotitoli creati dalla comunità Amara.org"), true);
+  assert.equal(isHardHallucination("字幕由Amara.org社区提供"), true);
+  assert.equal(isHardHallucination("Субтитры сделал DimaTorzok"), true);
+  assert.equal(isHardHallucination("チャンネル登録よろしくお願いします"), true);
+  assert.equal(isHardHallucination("Wir starten das Projekt am Freitag."), false);
+  assert.equal(isHardHallucination("来週の会議で決めましょう"), false);
+});

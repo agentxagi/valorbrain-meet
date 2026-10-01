@@ -6,6 +6,7 @@ import { hydrateIcons, icon, type IconName } from "./ui/icons";
 import { escapeHtml } from "./utils/domHelpers";
 import { hostOf, maskSecret } from "./ui/format";
 import { getSettings } from "./settings";
+import { DEFAULT_TRANSCRIPTION_LANGUAGE } from "./config";
 import {
   getProviderConfig,
   getProviderProfile,
@@ -434,9 +435,13 @@ async function loadForm() {
     setStatus(fieldId(role, "test-status"), "", "");
   }
 
-  const language =
-    typeof settings.transcriptionLanguage === "string" ? settings.transcriptionLanguage : "pt";
-  $<HTMLSelectElement>("transcription-language").value = language;
+  // A saved value the list no longer offers falls back to detection.
+  const languageSelect = $<HTMLSelectElement>("transcription-language");
+  const saved =
+    typeof settings.transcriptionLanguage === "string" ? settings.transcriptionLanguage : "";
+  languageSelect.value = [...languageSelect.options].some((o) => o.value === saved)
+    ? saved
+    : DEFAULT_TRANSCRIPTION_LANGUAGE;
   $<HTMLTextAreaElement>("transcription-vocabulary").value =
     typeof settings.transcriptionVocabulary === "string" ? settings.transcriptionVocabulary : "";
   input("self-name").value = typeof settings.selfName === "string" ? settings.selfName : "";

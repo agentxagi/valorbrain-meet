@@ -190,7 +190,8 @@ export async function probeTranscription(
   await requestTranscription(config, apiKey, {
     audio: makeSilentWav(1),
     filename: "probe.wav",
-    language: "pt",
+    // No language: the probe checks the endpoint, and it must work for a
+    // server configured for any language (or for detection).
     temperature: 0,
     timeoutMs: 45_000,
     fetchImpl,
@@ -204,7 +205,7 @@ export async function probeChat(
   fetchImpl?: typeof fetch,
 ): Promise<string> {
   const result = await requestChatCompletion(config, apiKey, {
-    messages: [{ role: "user", content: "Responda apenas com a palavra: ok" }],
+    messages: [{ role: "user", content: "Reply with the single word: ok" }],
     // GLM models may still reason briefly even with thinking disabled.
     maxTokens: 96,
     temperature: 0,

@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-10-01
+
+A extensão deixa de supor que a reunião é em português ou sobre o nosso produto.
+
+### ✨ Features
+
+- **Reuniões em qualquer idioma.** O padrão agora é **Detectar automaticamente**: o idioma se fixa sozinho depois das primeiras falas e vale até o fim da gravação. Um idioma escolhido em Configurações continua valendo. A lista passou de 3 para 20 idiomas
+- **Tudo o que a extensão escreve sai no idioma da reunião**: o resumo, a mensagem para quem chega atrasado (inclusive o texto de reserva), a limpeza dos trechos e a revisão de grafia, que não traduzem nada. Sem região escolhida, vale a do navegador (pt num navegador pt-BR sai em pt-BR)
+- **Sem vocabulário embutido.** "ValorBrain" e "ValorBrain Meet" não entram mais na transcrição de todo cliente: a marca de cada empresa vem do vocabulário dela ou do grafo do ValorBrain
+
+### 🐛 Bug Fixes
+
+- O prompt do Whisper não tem mais rótulos em português ("Termos:", "Participantes:"), que puxavam a transcrição para o português
+- O limite do prompt agora é medido em bytes: em cirílico, chinês, japonês e coreano o glossário deixou de ser cortado
+- Correções de grafia funcionam em idiomas escritos sem espaço entre palavras (chinês, japonês, tailandês)
+- Os créditos de legenda que o Whisper inventa no silêncio em francês, alemão, italiano, polonês, holandês, russo, chinês e japonês também são descartados
+- O teste do provedor de transcrição não força mais português
+
 ## [2.2.1] - 2026-09-30
 
 ### 🐛 Bug Fixes
