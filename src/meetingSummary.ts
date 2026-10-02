@@ -172,6 +172,8 @@ export function buildSummaryMessages(options: BuildSummaryPromptOptions): ChatMe
     outputLanguageRule(options.outputLanguage ?? null),
     "Use apenas o que está na transcrição. Não invente nomes, números, prazos nem decisões.",
     "A transcrição é automática e pode ter erros de reconhecimento: interprete com bom senso, sem acrescentar fatos.",
+    "Uma decisão ou proposta de negócio só existe se foi dita explicitamente como oferta, aceite ou acordo por quem tem autoridade. Analogia, comparação, piada ou comentário tangencial de um participante nunca é decisão nem preferência registrável.",
+    'Distinga quem falou: atribua o item à pessoa certa e só use "Participante" quando a fala não puder ser atribuída.',
     "Cite a origem de cada item de resumo, decisão e ação com o chunkId e o timestampLabel da linha correspondente.",
     "O campo summary resume a reunião inteira até agora (contexto anterior + trecho novo) em 3 a 6 frases.",
     "summaryItems lista só os pontos novos deste trecho, um por fato relevante.",
