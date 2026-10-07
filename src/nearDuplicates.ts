@@ -361,28 +361,67 @@ const UNSPACED_SCRIPT =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 /**
- * What a text says beyond its articles, case and accents apart: its numbers
- * (by their digits) and its words of at least 3 letters (2 in scripts written
- * without spaces).
+ * Words of 3 letters or more that are in almost any sentence (pt, en, es):
+ * prepositions, conjunctions, pronouns, auxiliary verbs. Two items that share
+ * only these have nothing in common.
+ */
+const FUNCTION_WORDS = wordSet([
+  // pt
+  "para pra pro com que por pelo pela pelos pelas dos das nos nas num numa uns umas mais menos",
+  "muito muita muitos muitas pouco pouca até sem sob sobre entre após desde como quando onde",
+  "porque porém mas também ainda já não sim isso isto esse essa esses essas este esta estes estas",
+  "aquele aquela aquilo ele ela eles elas você vocês nós seu sua seus suas meu minha nosso nossa",
+  "dele dela deles delas cada todo toda todos todas outro outra outros outras mesmo mesma qual",
+  "quais quem ser ter estar foi era são vai vão vamos está estão tem têm fica pode deve depois",
+  "antes agora aqui ali então bem",
+  // en
+  "the and for with from this that these those into onto about after before over under will",
+  "would shall should can could may might must have has had are was were been being not but",
+  "our your their them they his her its who what when where which how all any also just more",
+  "most some such than then there here very",
+  // es
+  "los las del con una unos unas pero más sin ese esa eso esto ella ellos ellas sus muy también",
+  "cuando donde están son fue hay",
+]);
+
+/**
+ * What a text says beyond its articles and function words, case and accents
+ * apart: its numbers (by their digits) and its words of at least 3 letters (2
+ * in scripts written without spaces).
  */
 function contentWords(text: string): Set<string> {
   const content = new Set<string>();
   for (const word of similarityWords(itemTokens(withoutMarks(text)))) {
     for (const digits of word.match(/\p{N}+/gu) ?? []) content.add(withoutLeadingZeros(digits));
     const letters = word.replace(/[^\p{L}]/gu, "").length;
-    if (!ARTICLES.has(word) && letters >= (UNSPACED_SCRIPT.test(word) ? 2 : 3)) content.add(word);
+    if (ARTICLES.has(word) || FUNCTION_WORDS.has(word)) continue;
+    if (letters >= (UNSPACED_SCRIPT.test(word) ? 2 : 3)) content.add(word);
   }
   return content;
 }
 
+/** The words of these names, as sharesContent reads them ("Leonardo Castro" → leonardo, castro). */
+export function nameWords(names: Iterable<string>): Set<string> {
+  const words = new Set<string>();
+  for (const name of names) {
+    for (const word of contentWords(name)) if (/\p{L}/u.test(word)) words.add(word);
+  }
+  return words;
+}
+
 /**
- * True when two texts have a number or a word of content in common. The
- * review uses it to keep apart two items it was told are the same but that
- * share nothing (meetingConsolidation.ts).
+ * True when two texts have a number or a word of content in common, the
+ * words in `ignored` apart (the names of the people in the meeting: two items
+ * that both mention Gustavo are not the same item for that). The review uses
+ * it to keep apart two items it was told are the same (meetingConsolidation.ts).
  */
-export function sharesContent(a: string, b: string): boolean {
+export function sharesContent(
+  a: string,
+  b: string,
+  ignored: ReadonlySet<string> = new Set(),
+): boolean {
   const content = contentWords(b);
-  for (const word of contentWords(a)) if (content.has(word)) return true;
+  for (const word of contentWords(a)) if (content.has(word) && !ignored.has(word)) return true;
   return false;
 }
 

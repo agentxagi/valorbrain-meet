@@ -27,6 +27,7 @@ import {
   appendDistinct,
   decisionRule,
   isPlaceholderName,
+  nameWords,
   normalizeItemText,
   sharesContent,
   topicRule,
@@ -520,14 +521,23 @@ function rebuild<T>(items: T[], groups: Group[], shown: number, merge: (group: G
 }
 
 /**
- * A "same" item that shares no word or number with the item kept is no
- * repeat: it stays as an item of its own, so a wrong id never deletes one.
- * (Not for topics: those are merged into broader themes in other words.)
+ * A "same" item that has nothing in common with the item kept (no number, no
+ * word of content: function words and the names of the people in the meeting
+ * do not count) is no repeat: it stays as an item of its own. That stops a
+ * wrong id from deleting an unrelated item; a wrong id between two items that
+ * share a word still merges them. (Not for topics: those are merged into
+ * broader themes in other words.)
  */
-function splitUnrelated(groups: Group[] | null, text: (index: number) => string): Group[] | null {
+function splitUnrelated(
+  groups: Group[] | null,
+  text: (index: number) => string,
+  names: ReadonlySet<string>,
+): Group[] | null {
   if (!groups) return null;
   return groups.flatMap((group) => {
-    const unrelated = group.same.filter((index) => !sharesContent(text(group.keep), text(index)));
+    const unrelated = group.same.filter(
+      (index) => !sharesContent(text(group.keep), text(index), names),
+    );
     if (unrelated.length === 0) return [group];
     return [
       { ...group, same: group.same.filter((index) => !unrelated.includes(index)) },
@@ -645,18 +655,23 @@ export function applyConsolidation(
     index < shown.unresolved
       ? state.unresolvedDiscussions[index]
       : state.questionsRaised[index - shown.unresolved];
+  const names = knownNames(state, context);
+  const peopleWords = nameWords(names.values());
   const decisions = splitUnrelated(
     groupsOf("decisions", "D", shown.decisions, EMPTIED_LIST_MAX),
     (index) => state.decisions[index].text,
+    peopleWords,
   );
   const actionItems = splitUnrelated(
     groupsOf("actionItems", "A", shown.actionItems, EMPTIED_LIST_MAX),
     (index) => state.actionItems[index].task,
+    peopleWords,
   );
   const topics = groupsOf("topics", "T", shown.topics, 0);
   const openPoints = splitUnrelated(
     groupsOf("openPoints", "P", shown.unresolved + shown.questions, EMPTIED_LIST_MAX),
     openPointText,
+    peopleWords,
   );
 
   const present = [decisions, actionItems, topics, openPoints].filter(
@@ -670,7 +685,6 @@ export function applyConsolidation(
   if (shownTotal > 3 && present.every((groups) => groups.length === 0)) return refused;
 
   const original = copyRecordLists(state);
-  const names = knownNames(state, context);
   if (decisions) {
     const items = state.decisions;
     state.decisions = rebuild(items, decisions, shown.decisions, (group) =>

@@ -408,7 +408,7 @@ test("a kept item takes the owner, deadline and author it lacks from its repeats
     state,
     {
       decisions: [{ keep: "D3", same: ["D2"] }],
-      actionItems: [{ keep: "A1", same: ["A2", "A3"] }],
+      actionItems: [{ keep: "A1", same: ["A3"] }],
     },
     CONTEXT,
   );
@@ -435,8 +435,8 @@ test("a kept item takes the owner, deadline and author it lacks from its repeats
   ]);
 
   const ideas = salesCall();
-  ideas.actionItems[1].isSpeculative = true;
-  applyConsolidation(ideas, { actionItems: [{ keep: "A1", same: ["A2"] }] }, CONTEXT);
+  ideas.actionItems[2].isSpeculative = true;
+  applyConsolidation(ideas, { actionItems: [{ keep: "A1", same: ["A3"] }] }, CONTEXT);
   assert.equal(ideas.actionItems[0].isSpeculative, true);
   const confirmed = salesCall();
   applyConsolidation(confirmed, { actionItems: [{ keep: "A1", isSpeculative: false }] }, CONTEXT);
@@ -746,6 +746,16 @@ test("a repeat that shares no word or number with the item kept stays on its own
   assert.deepEqual(state.unresolvedDiscussions, []);
   assert.deepEqual(state.questionsRaised, ["Tudo bem com vocês?", "Quando começa a mentoria?"]);
   assert.deepEqual(state.topics, [{ name: "Programa de mentoria", status: "active" }]);
+
+  // A name of someone in the meeting or a function word in common is not enough.
+  const people = salesCall();
+  people.decisions[0] = { text: "Gustavo decide não aderir ao programa agora" };
+  people.decisions[1] = { text: "Gustavo vai pagar a entrada com cartão" };
+  applyConsolidation(people, { decisions: [{ keep: "D1", same: ["D2"] }] }, CONTEXT);
+  assert.deepEqual(
+    people.decisions.map((d) => d.text),
+    ["Gustavo decide não aderir ao programa agora", "Gustavo vai pagar a entrada com cartão"],
+  );
 
   // A number in common is enough ("12" in "12 parcelas" and "12x").
   const numbers: ConsolidationState = {

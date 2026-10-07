@@ -7,6 +7,7 @@ import {
   decisionRule,
   isNearDuplicate,
   isPlaceholderName,
+  nameWords,
   normalizeItemText,
   sharesContent,
   textRule,
@@ -246,6 +247,24 @@ test("sharesContent looks for a number or a word of content in common", () => {
   assert.equal(sharesContent("我们决定下周发布新版本", "下周开会"), true, "two characters suffice");
   assert.equal(sharesContent("Enviar o link da reunião", "Ligar para a Ana"), false);
   assert.equal(sharesContent("O de a", "a de o"), false, "articles and short words do not count");
+  assert.equal(
+    sharesContent("Enviar o contrato para o cliente", "Ligar para a equipe com urgência"),
+    false,
+    "nor do function words",
+  );
+  assert.equal(
+    sharesContent(
+      "Gustavo decide não aderir ao programa agora",
+      "Gustavo vai pagar a entrada com cartão",
+      nameWords(["Gustavo Lima", "Ana de Souza"]),
+    ),
+    false,
+    "nor the names of the people in the meeting",
+  );
+  assert.deepEqual(
+    [...nameWords(["Leonardo Castro", "Ana de Souza"])],
+    ["leonardo", "castro", "ana", "souza"],
+  );
   assert.equal(sharesContent("我们决定下周发布新版本", "价格方案"), false);
 });
 
