@@ -51,13 +51,13 @@ export interface ConsolidationPromptInput extends ConsolidationState {
   outputLanguage?: string | null;
 }
 
-/** How many items of each list the prompt showed: ids point into these first items. */
+/** The first items of each list the prompt showed, by their text: ids point at them. */
 export interface PromptedItems {
-  decisions: number;
-  actionItems: number;
-  topics: number;
-  unresolvedDiscussions: number;
-  questionsRaised: number;
+  decisions: string[];
+  actionItems: string[];
+  topics: string[];
+  unresolvedDiscussions: string[];
+  questionsRaised: string[];
 }
 
 /** Per kind, at most this many items or characters go to the model; the rest stay as they are. */
@@ -139,11 +139,11 @@ export function promptedItems(state: ConsolidationState): PromptedItems {
   const lines = promptLines(state);
   const unresolved = Math.min(lines.openPoints.length, state.unresolvedDiscussions.length);
   return {
-    decisions: lines.decisions.length,
-    actionItems: lines.actionItems.length,
-    topics: lines.topics.length,
-    unresolvedDiscussions: unresolved,
-    questionsRaised: lines.openPoints.length - unresolved,
+    decisions: state.decisions.slice(0, lines.decisions.length).map((d) => d.text),
+    actionItems: state.actionItems.slice(0, lines.actionItems.length).map((a) => a.task),
+    topics: state.topics.slice(0, lines.topics.length).map((t) => t.name),
+    unresolvedDiscussions: state.unresolvedDiscussions.slice(0, unresolved),
+    questionsRaised: state.questionsRaised.slice(0, lines.openPoints.length - unresolved),
   };
 }
 
@@ -284,14 +284,20 @@ function parseId(value: unknown, prefix: string, shown: number): number | null {
 /**
  * The model's groups for one kind: ids of that kind that were shown, each
  * used once (first use wins). A group whose "keep" is invalid or already
- * used is dropped whole: its "same" ids are not promoted.
+ * used is dropped whole: its "same" ids are not promoted. A bare id ("P5")
+ * reads as {"keep": "P5"}.
  */
 function parseGroups(raw: unknown[], prefix: string, shown: number): Group[] {
   const used = new Set<number>();
   const groups: Group[] = [];
   for (const entry of raw) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const answer = entry as Record<string, unknown>;
+    const answer =
+      typeof entry === "string"
+        ? { keep: entry }
+        : entry && typeof entry === "object" && !Array.isArray(entry)
+          ? (entry as Record<string, unknown>)
+          : null;
+    if (!answer) continue;
     const keep = parseId(answer.keep, prefix, shown);
     if (keep === null || used.has(keep)) continue;
     used.add(keep);
@@ -308,17 +314,14 @@ function parseGroups(raw: unknown[], prefix: string, shown: number): Group[] {
   return groups;
 }
 
-interface KnownNames {
-  /** Normalized name → the name as written in the meeting. */
-  exact: Map<string, string>;
-  /** Each run of consecutive words of a known name ("leonardo", "leonardo castro"). */
-  parts: Set<string>;
-}
-
-/** Participants, who recorded, and every "by"/"owner" already on an item. */
-function knownNames(state: ConsolidationState, context: ConsolidationContext): KnownNames {
-  const exact = new Map<string, string>();
-  const parts = new Set<string>();
+/**
+ * Names known in the meeting: participants, who recorded, and every
+ * "by"/"owner" already on an item, with each run of their words ("Leonardo",
+ * "Castro", "Leonardo Castro"), keyed ignoring case and accents and mapped to
+ * how the meeting writes them.
+ */
+function knownNames(state: ConsolidationState, context: ConsolidationContext): Map<string, string> {
+  const known = new Map<string, string>();
   const names = [
     ...context.participants,
     context.selfName,
@@ -327,41 +330,61 @@ function knownNames(state: ConsolidationState, context: ConsolidationContext): K
   ];
   for (const raw of names) {
     const name = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, 100) : "";
-    const key = normalizeItemText(name);
-    if (!key || isPlaceholderName(name)) continue;
-    if (!exact.has(key)) exact.set(key, name);
-    const words = key.split(" ");
+    if (!normalizeItemText(name) || isPlaceholderName(name)) continue;
+    const words = name.split(" ");
     for (let i = 0; i < words.length; i += 1) {
       for (let j = i + 1; j <= words.length; j += 1) {
         const part = words.slice(i, j).join(" ");
-        if (part.length >= 2) parts.add(part);
+        const key = normalizeItemText(part);
+        if (key.length >= 2 && !isPlaceholderName(part) && !known.has(key)) known.set(key, part);
       }
     }
   }
-  return { exact, parts };
+  return known;
 }
 
 /** Scripts written without spaces, where a name is found inside the text. */
 const UNSPACED_SCRIPT =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
-/** True when the normalized `name` is in `text` as whole words. */
-function mentions(text: string | undefined, name: string): boolean {
-  const haystack = normalizeItemText(text);
-  return UNSPACED_SCRIPT.test(name)
-    ? haystack.includes(name)
-    : ` ${haystack} `.includes(` ${name} `);
+/** Accents removed, letter case kept. */
+function withoutAccents(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .normalize("NFC");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * True when `name` is written in `text` as a name: capitalized as the model
+ * wrote it, whole words, accents aside ("Carlos Levy" in "…ao Carlos Levy"; not
+ * "agora" or "Proposta" from "a proposta agora"). Scripts without letter case
+ * only need to contain it.
+ */
+function namedIn(text: string | undefined, name: string): boolean {
+  if (!text) return false;
+  const haystack = withoutAccents(text);
+  const needle = withoutAccents(name);
+  if (!/[\p{Lu}\p{Ll}]/u.test(needle)) return haystack.includes(needle);
+  if (!/^\p{Lu}/u.test(needle)) return false;
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(needle)}(?![\\p{L}\\p{N}])`, "u").test(
+    haystack,
+  );
 }
 
 /**
  * A name the model wrote for "by" or "owner", accepted only when it is
- * grounded in the meeting: a participant, who recorded, a name already on an
- * item, or words of the group's own items (ignoring case and accents). A known
- * name comes back as written in the meeting. Anything else is ignored.
+ * grounded in the meeting: a known name or part of one (ignoring case and
+ * accents; it comes back as the meeting writes it), or a name written in the
+ * group's own items. Anything else, placeholders included, is ignored.
  */
 function groundedName(
   value: unknown,
-  names: KnownNames,
+  names: Map<string, string>,
   groupTexts: Array<string | undefined>,
 ): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -369,20 +392,18 @@ function groundedName(
   if (!name || name.length > 100 || /[<>{}`\u0000-\u001F\u007F]/.test(name)) return undefined;
   const key = normalizeItemText(name);
   if (!key || isPlaceholderName(name)) return undefined;
-  const known = names.exact.get(key);
+  const known = names.get(key);
   if (known) return known;
-  if (names.parts.has(key)) return name;
-  // Short words ("o", "de") are in every sentence; a name in the text is longer.
-  const minLength = UNSPACED_SCRIPT.test(key) ? 2 : 3;
-  if (key.length >= minLength && groupTexts.some((text) => mentions(text, key))) return name;
-  return undefined;
+  // Short words are in every sentence; a name found in the text is longer.
+  if (key.length < (UNSPACED_SCRIPT.test(key) ? 2 : 3)) return undefined;
+  return groupTexts.some((text) => namedIn(text, name)) ? name : undefined;
 }
 
 function enumValue(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-function mergeDecisionGroup(items: Decision[], group: Group, names: KnownNames): Decision {
+function mergeDecisionGroup(items: Decision[], group: Group, names: Map<string, string>): Decision {
   let merged: Decision = { ...items[group.keep] };
   for (const index of group.same) merged = absorbDecision(merged, items[index]);
   const classification = enumValue(group.answer.classification);
@@ -395,7 +416,11 @@ function mergeDecisionGroup(items: Decision[], group: Group, names: KnownNames):
   return merged;
 }
 
-function mergeActionGroup(items: ActionItem[], group: Group, names: KnownNames): ActionItem {
+function mergeActionGroup(
+  items: ActionItem[],
+  group: Group,
+  names: Map<string, string>,
+): ActionItem {
   let merged: ActionItem = { ...items[group.keep] };
   for (const index of group.same) merged = absorbAction(merged, items[index]);
   if (typeof group.answer.isSpeculative === "boolean") {
@@ -430,19 +455,30 @@ function rebuild<T>(items: T[], groups: Group[], shown: number, merge: (group: G
 }
 
 /**
- * True when every list still holds the items the prompt showed. Lists only
- * grow during the request; one that shrank means the ids would now point at
- * other items.
+ * True when every list still starts with the items the prompt showed. Lists
+ * only grow during the request; any other change (an item gone, the list
+ * shifted) means the ids would now point at other items.
  */
 function stillShown(prompted: PromptedItems, state: ConsolidationState): boolean {
-  const fits = (shown: number, length: number) =>
-    Number.isInteger(shown) && shown >= 0 && shown <= length;
+  const starts = (shown: unknown, texts: string[]) =>
+    Array.isArray(shown) &&
+    shown.length <= texts.length &&
+    shown.every((text, i) => text === texts[i]);
   return (
-    fits(prompted.decisions, state.decisions.length) &&
-    fits(prompted.actionItems, state.actionItems.length) &&
-    fits(prompted.topics, state.topics.length) &&
-    fits(prompted.unresolvedDiscussions, state.unresolvedDiscussions.length) &&
-    fits(prompted.questionsRaised, state.questionsRaised.length)
+    starts(
+      prompted.decisions,
+      state.decisions.map((d) => d.text),
+    ) &&
+    starts(
+      prompted.actionItems,
+      state.actionItems.map((a) => a.task),
+    ) &&
+    starts(
+      prompted.topics,
+      state.topics.map((t) => t.name),
+    ) &&
+    starts(prompted.unresolvedDiscussions, state.unresolvedDiscussions) &&
+    starts(prompted.questionsRaised, state.questionsRaised)
   );
 }
 
@@ -458,9 +494,12 @@ function stillShown(prompted: PromptedItems, state: ConsolidationState): boolean
  *   already appear in the meeting (see groundedName);
  * - the order is the meeting's, not the model's; open points go back to the
  *   list they came from; items not shown stay as they are;
- * - a kind missing from the answer stays as it is, and an answer whose lists
- *   all come back empty is refused when there were more than 3 items (so is
- *   any answer once a list lost items it showed).
+ * - a kind missing from the answer stays as it is, and so does one whose
+ *   entries are all unusable (a malformed list is not "keep nothing") or, for
+ *   topics, an empty one (a meeting with topics has main themes);
+ * - an answer whose lists all come back empty is refused when there were
+ *   more than 3 items, and so is any answer once a list no longer starts with
+ *   the items it showed.
  */
 export function applyConsolidation(
   state: ConsolidationState,
@@ -476,21 +515,31 @@ export function applyConsolidation(
 
   const prompted = context.prompted ?? promptedItems(state);
   if (!stillShown(prompted, state)) return refused;
-  const shownOpen = prompted.unresolvedDiscussions + prompted.questionsRaised;
-  const groupsOf = (key: string, prefix: string, shown: number) => {
-    const raw = parsed[key];
-    return Array.isArray(raw) ? parseGroups(raw, prefix, shown) : null;
+  const shown = {
+    decisions: prompted.decisions.length,
+    actionItems: prompted.actionItems.length,
+    topics: prompted.topics.length,
+    unresolved: prompted.unresolvedDiscussions.length,
+    questions: prompted.questionsRaised.length,
   };
-  const decisions = groupsOf("decisions", "D", prompted.decisions);
-  const actionItems = groupsOf("actionItems", "A", prompted.actionItems);
-  const topics = groupsOf("topics", "T", prompted.topics);
-  const openPoints = groupsOf("openPoints", "P", shownOpen);
+  const groupsOf = (key: string, prefix: string, count: number) => {
+    const raw = parsed[key];
+    if (!Array.isArray(raw)) return null;
+    const groups = parseGroups(raw, prefix, count);
+    return raw.length > 0 && groups.length === 0 ? null : groups;
+  };
+  const decisions = groupsOf("decisions", "D", shown.decisions);
+  const actionItems = groupsOf("actionItems", "A", shown.actionItems);
+  let topics = groupsOf("topics", "T", shown.topics);
+  if (topics && topics.length === 0 && shown.topics > 0) topics = null;
+  const openPoints = groupsOf("openPoints", "P", shown.unresolved + shown.questions);
 
   const present = [decisions, actionItems, topics, openPoints].filter(
     (groups): groups is Group[] => groups !== null,
   );
   if (present.length === 0) return refused;
-  const shownTotal = prompted.decisions + prompted.actionItems + prompted.topics + shownOpen;
+  const shownTotal =
+    shown.decisions + shown.actionItems + shown.topics + shown.unresolved + shown.questions;
   // An answer that keeps nothing at all is a broken answer, not a meeting
   // without content: it must never wipe the record.
   if (shownTotal > 3 && present.every((groups) => groups.length === 0)) return refused;
@@ -498,38 +547,35 @@ export function applyConsolidation(
   const names = knownNames(state, context);
   if (decisions) {
     const items = state.decisions;
-    state.decisions = rebuild(items, decisions, prompted.decisions, (group) =>
+    state.decisions = rebuild(items, decisions, shown.decisions, (group) =>
       mergeDecisionGroup(items, group, names),
     );
   }
   if (actionItems) {
     const items = state.actionItems;
-    state.actionItems = rebuild(items, actionItems, prompted.actionItems, (group) =>
+    state.actionItems = rebuild(items, actionItems, shown.actionItems, (group) =>
       mergeActionGroup(items, group, names),
     );
   }
   if (topics) {
     const items = state.topics;
-    state.topics = rebuild(items, topics, prompted.topics, (group) =>
-      mergeTopicGroup(items, group),
-    );
+    state.topics = rebuild(items, topics, shown.topics, (group) => mergeTopicGroup(items, group));
   }
   if (openPoints) {
     const unresolved = state.unresolvedDiscussions;
     const questions = state.questionsRaised;
-    const split = prompted.unresolvedDiscussions;
     state.unresolvedDiscussions = rebuild(
       unresolved,
-      openPoints.filter((group) => group.keep < split),
-      split,
+      openPoints.filter((group) => group.keep < shown.unresolved),
+      shown.unresolved,
       (group) => unresolved[group.keep],
     );
     state.questionsRaised = rebuild(
       questions,
       openPoints
-        .filter((group) => group.keep >= split)
-        .map((group) => ({ ...group, keep: group.keep - split })),
-      prompted.questionsRaised,
+        .filter((group) => group.keep >= shown.unresolved)
+        .map((group) => ({ ...group, keep: group.keep - shown.unresolved })),
+      shown.questions,
       (group) => questions[group.keep],
     );
   }

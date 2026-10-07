@@ -75,7 +75,7 @@ function salesCall(): ConsolidationState & { summary: string } {
         isSpeculative: false,
       },
       {
-        task: "Explicar o follow-up ao Carlos Levy",
+        task: "Carlos Levy vai mandar o contrato revisado agora",
         chunkId: "chunk_80",
         timestampLabel: "1:20:00",
         confidence: "medium",
@@ -201,10 +201,12 @@ test("a very long record is capped per kind and the rest is said to stay as it i
     questionsRaised: ["Qual o preço?"],
   };
   const prompted = promptedItems(state);
-  assert.equal(prompted.decisions, 150);
-  assert.ok(prompted.actionItems > 10 && prompted.actionItems < 25, String(prompted.actionItems));
-  assert.equal(prompted.unresolvedDiscussions, 150);
-  assert.equal(prompted.questionsRaised, 0);
+  assert.equal(prompted.decisions.length, 150);
+  assert.equal(prompted.decisions[149], "Decisão 150");
+  const shownActions = prompted.actionItems.length;
+  assert.ok(shownActions > 10 && shownActions < 25, String(shownActions));
+  assert.equal(prompted.unresolvedDiscussions.length, 150);
+  assert.deepEqual(prompted.questionsRaised, []);
 
   const [, user] = buildConsolidationMessages({ ...state, summary: "", participants: [] });
   assert.match(
@@ -214,7 +216,7 @@ test("a very long record is capped per kind and the rest is said to stay as it i
   assert.doesNotMatch(user.content, /D151/);
   const actionLines = /<proximos_passos>\n([\s\S]*?)\n<\/proximos_passos>/.exec(user.content)![1];
   assert.ok(actionLines.length <= 12_000 + 80);
-  assert.equal(actionLines.match(/^A\d+ /gm)?.length, prompted.actionItems);
+  assert.equal(actionLines.match(/^A\d+ /gm)?.length, shownActions);
   assert.match(
     user.content,
     /\(\+11 itens que não couberam aqui ficam como estão\)\n<\/pontos_em_aberto>/,
@@ -268,7 +270,7 @@ test("the record keeps only the chosen items, merged, in the meeting's order", (
       isSpeculative: false,
     },
     {
-      task: "Explicar o follow-up ao Carlos Levy",
+      task: "Carlos Levy vai mandar o contrato revisado agora",
       chunkId: "chunk_80",
       timestampLabel: "1:20:00",
       confidence: "medium",
@@ -348,7 +350,7 @@ test("ids must be of the right kind, exist and be used once", () => {
         { keep: "D0" },
         { keep: 2 },
         { keep: "D 2" },
-        "D1", // not a group
+        ["D1"], // not a group
         null,
         { keep: "D2", same: ["D2", "D3", "X1", "D3", 4] }, // D2 itself and D3 again are ignored
         { keep: "D3", same: ["D1"] }, // D3 is taken: the group is skipped, D1 is not promoted
@@ -370,11 +372,15 @@ test("names are accepted only when they appear in the meeting", () => {
     ["LEONARDO CASTRO", "Leonardo Castro"],
     ["Castro", "Castro"], // part of a participant's name
     ["bruno", "Bruno"], // already the author of another item
-    ["Carlos", "Carlos"], // in the item's own text
+    ["Carlos", "Carlos"], // written as a name in the item's own text
     ["Ana", undefined], // invented
     ["Participante", undefined], // a placeholder is not a name
     ["Você", undefined],
-    ["o", undefined], // a word of the text, not a name
+    // Words of the text, not names written in it.
+    ["o", undefined],
+    ["agora", undefined],
+    ["Contrato", undefined],
+    ["carlos levy", undefined],
     ["<b>Gustavo</b>", undefined],
     ["G".repeat(120), undefined],
     [42, undefined],
@@ -448,6 +454,26 @@ test("a kind missing from the answer, or not a list, stays as it is", () => {
   assert.deepEqual(state.questionsRaised, salesCall().questionsRaised);
 });
 
+test("a list with nothing usable in it is malformed, not 'keep nothing'", () => {
+  const state = salesCall();
+  const { applied } = applyConsolidation(
+    state,
+    {
+      decisions: [{ keep: "D5" }],
+      actionItems: [{ keep: 1, same: [2] }], // numbers are not ids
+      topics: [], // a meeting with topics has main themes
+      openPoints: ["P1", "P5"], // bare ids are read as {"keep": …}
+    },
+    CONTEXT,
+  );
+  assert.equal(applied, true);
+  assert.equal(state.decisions.length, 1);
+  assert.deepEqual(state.actionItems, salesCall().actionItems);
+  assert.deepEqual(state.topics, salesCall().topics);
+  assert.deepEqual(state.unresolvedDiscussions, ["Forma de pagamento"]);
+  assert.deepEqual(state.questionsRaised, ["Quando começa a mentoria?"]);
+});
+
 test("an answer that would empty the record is refused and changes nothing", () => {
   const answers: Array<Record<string, unknown> | null> = [
     { decisions: [], actionItems: [], topics: [], openPoints: [] },
@@ -465,7 +491,8 @@ test("an answer that would empty the record is refused and changes nothing", () 
     assert.deepEqual(result.report.after, result.report.before);
   }
 
-  // With 3 items or fewer an empty answer can be right (nothing was a decision).
+  // With 3 items or fewer empty lists can be right (nothing was a decision);
+  // the topic stays: a meeting with a topic has a main theme.
   const small: ConsolidationState = {
     decisions: [{ text: "Leonardo apresenta a empresa" }],
     actionItems: [],
@@ -475,18 +502,18 @@ test("an answer that would empty the record is refused and changes nothing", () 
   };
   const result = applyConsolidation(small, { decisions: [], topics: [], openPoints: [] }, CONTEXT);
   assert.equal(result.applied, true);
-  assert.deepEqual(countRecord(small), { decisions: 0, actionItems: 0, topics: 0, openPoints: 0 });
+  assert.deepEqual(countRecord(small), { decisions: 0, actionItems: 0, topics: 1, openPoints: 0 });
 });
 
 test("items the model was not shown stay, and their ids are refused", () => {
   const state = salesCall();
   // As if the prompt had shown only D1, D2, A1 and P1 to P3 (two unresolved, one question).
   const prompted = {
-    decisions: 2,
-    actionItems: 1,
-    topics: 3,
-    unresolvedDiscussions: 2,
-    questionsRaised: 1,
+    decisions: state.decisions.slice(0, 2).map((d) => d.text),
+    actionItems: state.actionItems.slice(0, 1).map((a) => a.task),
+    topics: state.topics.map((t) => t.name),
+    unresolvedDiscussions: [...state.unresolvedDiscussions],
+    questionsRaised: state.questionsRaised.slice(0, 1),
   };
   applyConsolidation(
     state,
@@ -506,13 +533,8 @@ test("items the model was not shown stay, and their ids are refused", () => {
       "Gustavo não vai aderir ao programa por enquanto",
     ],
   );
-  // A2 was not shown: the answer keeps nothing it saw, the rest stays.
-  assert.deepEqual(
-    state.actionItems.map((a) => a.task),
-    salesCall()
-      .actionItems.slice(1)
-      .map((a) => a.task),
-  );
+  // A2 was not shown: nothing usable for that list, so it stays as it is.
+  assert.deepEqual(state.actionItems, salesCall().actionItems);
   assert.deepEqual(state.unresolvedDiscussions, []);
   assert.deepEqual(state.questionsRaised, [
     "Qual é o valor do serviço?",
@@ -543,6 +565,18 @@ test("ids keep pointing at the items shown even if the lists grew during the req
   assert.equal(result.applied, false);
   assert.equal(shrunk.decisions.length, 4);
   assert.equal(shrunk.topics.length, 3);
+
+  // A list that shifted (one gone at the start, one more at the end): same length, other items.
+  const shifted = salesCall();
+  const shown = promptedItems(shifted);
+  shifted.decisions.shift();
+  shifted.decisions.push({ text: "Gustavo volta a falar em janeiro" });
+  assert.equal(
+    applyConsolidation(shifted, { decisions: [{ keep: "D1" }] }, { ...CONTEXT, prompted: shown })
+      .applied,
+    false,
+  );
+  assert.equal(shifted.decisions.length, 5);
 });
 
 // ---------------------------------------------------------------------------
