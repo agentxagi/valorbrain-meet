@@ -22,7 +22,8 @@ memória do ValorBrain. Sem bot na chamada.
 - **Revisa os termos no fim**: nomes, marcas e termos em inglês que o reconhecimento errou são corrigidos na transcrição antes do resumo final (no painel, as trocas ficam em Detalhes; no ValorBrain vai só a grafia certa). As correções voltam para o ValorBrain, e a próxima reunião da empresa já sai certa.
 - **Avisa no chat que está gravando** (opcional): ao começar, publica no chat da reunião que ela está sendo gravada e transcrita pelo ValorBrain Meet, uma vez por reunião.
 - **Resume enquanto a reunião acontece**: resumo, decisões, próximos passos com responsável e prazo, assuntos, pontos em aberto e clima da reunião.
-- **Fecha sozinha**: ao encerrar (ou ao sair da chamada), transcreve o último trecho, gera o resumo final, salva a reunião neste navegador e envia para o ValorBrain. Uma notificação confirma.
+- **Revisa o registro no fim**: antes de salvar, o modelo de resumo revê as listas inteiras. Junta o que foi registrado duas vezes com outras palavras, tira das decisões o que não foi decidido (apresentações, opiniões, propostas sem resposta), fica com a versão final do que mudou durante a conversa, tira dos próximos passos o que já aconteceu na chamada e tira dos pontos em aberto as perguntas respondidas depois. O modelo só escolhe entre os itens que existem; a extensão confere cada escolha. No painel, o Resumo mostra quanto cada lista diminuiu.
+- **Fecha sozinha**: ao encerrar (ou ao sair da chamada), transcreve o último trecho, gera o resumo final, revisa o registro, salva a reunião neste navegador e envia para o ValorBrain. Uma notificação confirma.
 - **Histórico**: reabra reuniões salvas, reenvie ao ValorBrain e exporte em Markdown, texto ou JSON.
 - **Para quem chega atrasado**: mostra um resumo privado na sua tela quando alguém entra depois (e, se você ativar, envia no chat).
 
@@ -95,7 +96,7 @@ Os atalhos podem ser trocados em `chrome://extensions/shortcuts`. O rodapé do �
 
 ## O que vai para o ValorBrain
 
-Cada reunião vira uma memória do tipo `observation` na coleção `meetings`, com as seções Resumo, Decisões, Próximos passos, Assuntos, Pontos em aberto, Participantes, Detalhes e Transcrição. O envio é automático ao encerrar (pode ser desligado em **Configurações → ValorBrain**). Se falhar, a reunião continua salva no navegador: no **Histórico**, clique em **Enviar ao ValorBrain** nela.
+Cada reunião vira uma memória do tipo `observation` na coleção `meetings`, com as seções Resumo, Decisões, Próximos passos, Assuntos, Pontos em aberto, Participantes, Detalhes e Transcrição. Participantes são todos que estiveram na chamada durante a gravação, mesmo quem saiu antes do fim, e Detalhes diz qual versão da extensão registrou a reunião. O envio é automático ao encerrar (pode ser desligado em **Configurações → ValorBrain**). Se falhar, a reunião continua salva no navegador: no **Histórico**, clique em **Enviar ao ValorBrain** nela.
 
 Junto com a reunião, as correções que a revisão final aceitou ("Rapplet" → "Replit") viram apelidos no ValorBrain, e o vocabulário das próximas reuniões já traz a grafia certa. O ValorBrain nunca junta pessoas nem troca um nome que já conhece por causa de uma correção. As duas coisas podem ser desligadas em **Configurações → ValorBrain**.
 
