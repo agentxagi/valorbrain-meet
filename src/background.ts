@@ -105,7 +105,7 @@ import {
   ProviderPayloadError,
   quotaResetAt,
 } from "./providerErrors";
-import { requestChatCompletion, requestTranscription } from "./providerClient";
+import { anySignal, requestChatCompletion, requestTranscription } from "./providerClient";
 import { cleanTranscription, type CleanTranscription } from "./transcriptFilter";
 import { extractJsonObject, parseJsonObjectStrict } from "./llmJson";
 import {
@@ -197,6 +197,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined>
     timer = setTimeout(() => resolve(undefined), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Settles like `promise`, or with undefined as soon as `signal` aborts. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    const abort = () => resolve(undefined);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
 }
 
 /** This build's version ("2.4.0"); null where the runtime has no manifest (tests). */
@@ -315,6 +325,12 @@ let speakerEvents: SpeakerEvent[] = [];
 let meetMicMuted = false;
 let isStartingAudio = false;
 let isStoppingAudio = false;
+/**
+ * Owned by the stop flow while it saves a meeting: aborted when a new
+ * recording is asked for meanwhile, so the model's review of the record gives
+ * way to the local one and the save ends sooner.
+ */
+let stopHurry: AbortController | null = null;
 let isProcessingSession = false;
 let summaryInFlight: Promise<void> | null = null;
 /**
@@ -1645,16 +1661,26 @@ async function correctTranscriptTerms(): Promise<void> {
 // Review of the record at the end
 // ---------------------------------------------------------------------------
 
+/** What bounds the model's review of the record (see consolidateMeetingRecord). */
+interface ReviewBudget {
+  /** When the time for it ends (ms since the epoch). */
+  deadline: number;
+  /** Aborts at the deadline, or when a new recording hurries the stop flow. */
+  signal: AbortSignal;
+}
+
 /**
  * Asks the summary model which decisions, next steps, topics and open points
  * stay, by id, and applies the answer once meetingConsolidation.ts has checked
- * it. Returns the report, or null when the model did not answer in time,
- * failed, or gave an answer that was refused (the record is then untouched).
+ * it. Returns the report, or null when the model did not answer in time, was
+ * cut short, failed, or gave an answer that was refused (the record is then
+ * untouched).
  */
 async function reviewRecordWithModel(
   settings: PipelineSettings,
   config: ProviderConfig,
   apiKey: string | null,
+  budget: ReviewBudget,
 ): Promise<ConsolidationReport | null> {
   const startTimeAtCall = state.startTime;
   // Everyone who attended: the live list is often empty once the user hung up.
@@ -1674,26 +1700,32 @@ async function reviewRecordWithModel(
     outputLanguage: currentMeetingLanguage(settings),
   });
 
-  // One budget for the wait in the queue, the request and its retries: past
-  // the deadline nothing more is sent, and a request still running is cut, so
-  // no review keeps going (billed, untracked, holding the queue) after saving.
-  const deadline = Date.now() + CONSOLIDATION_MODEL_TIMEOUT_MS;
+  // One budget for the wait in the queue, the request and its retries: once
+  // it is over (or cut short) nothing more is sent, and a request still running
+  // is cut, so no review keeps going (billed, untracked, holding the queue)
+  // after saving. Plain errors, not provider ones: the queue does not retry them.
+  const { deadline, signal } = budget;
   let result;
   try {
-    result = await withTimeout(
-      llmQueue.enqueue("consolidation", () => {
+    result = await untilAborted(
+      llmQueue.enqueue("consolidation", async () => {
         const left = deadline - Date.now();
-        // A plain error, not a provider one: the queue does not retry it.
-        if (left < 5_000) throw new Error("No time left for the record review");
-        return requestChatCompletion(config, apiKey, {
-          messages,
-          maxTokens: CONSOLIDATION_MAX_TOKENS,
-          temperature: 0,
-          json: true,
-          timeoutMs: left,
-        });
+        if (signal.aborted || left < 5_000) throw new Error("No time left for the record review");
+        try {
+          return await requestChatCompletion(config, apiKey, {
+            messages,
+            maxTokens: CONSOLIDATION_MAX_TOKENS,
+            temperature: 0,
+            json: true,
+            timeoutMs: left,
+            signal,
+          });
+        } catch (err) {
+          if (signal.aborted) throw new Error("The record review was cut short", { cause: err });
+          throw err;
+        }
       }),
-      CONSOLIDATION_MODEL_TIMEOUT_MS,
+      signal,
     );
   } catch (err) {
     pauseSummaryOnQuota(err, config, apiKey);
@@ -1723,11 +1755,18 @@ async function reviewRecordWithModel(
  * Reviews the record once the final summary is written, before it is saved:
  * the summary model picks what stays (reviewRecordWithModel), then repeats
  * are merged locally. Only the local merge runs when the setting is off, the
- * record is small, the provider has no key or its quota is paused, or the
- * model's review did not work. Best effort: saving never waits on it.
+ * record is small, the provider has no key or its quota is paused, the
+ * model's review did not work, or `hurry` aborted (a new recording was asked
+ * for). Best effort: saving never waits on it.
  */
-async function consolidateMeetingRecord(): Promise<void> {
+async function consolidateMeetingRecord(hurry: AbortSignal): Promise<void> {
   const startTimeAtCall = state.startTime;
+  // The model's time counts from here: reading the settings and waiting in
+  // the queue are part of it.
+  const budget: ReviewBudget = {
+    deadline: Date.now() + CONSOLIDATION_MODEL_TIMEOUT_MS,
+    signal: anySignal([AbortSignal.timeout(CONSOLIDATION_MODEL_TIMEOUT_MS), hurry]),
+  };
   let reviewed: ConsolidationReport | null = null;
   try {
     const settings = (await getSettings()) as PipelineSettings;
@@ -1740,8 +1779,9 @@ async function consolidateMeetingRecord(): Promise<void> {
       settings.recordConsolidation !== false &&
       items > 4 &&
       !(requiresApiKey(config) && !apiKey) &&
-      !summaryQuotaExhausted(config, apiKey);
-    if (useModel) reviewed = await reviewRecordWithModel(settings, config, apiKey);
+      !summaryQuotaExhausted(config, apiKey) &&
+      !budget.signal.aborted;
+    if (useModel) reviewed = await reviewRecordWithModel(settings, config, apiKey, budget);
   } catch (err) {
     // Settings or provider could not be read: the local review still runs.
     console.warn(`${LOG_PREFIX} Record review by the model skipped:`, err);
@@ -2284,7 +2324,13 @@ async function startAudioCapture(
   if (!tabId) throw new Error("Não encontrei a aba da reunião.");
   if (state.audioActive) return { micActive: state.micActive !== false, alreadyActive: true };
   if (isStoppingAudio) {
-    throw new Error("Aguarde alguns segundos: a gravação anterior ainda está sendo salva.");
+    // Saving it may be waiting on the model's review of its record: the local
+    // review is enough now, so the save ends sooner (the spelling review and
+    // the final summary are not cut).
+    stopHurry?.abort();
+    throw new Error(
+      "A reunião anterior está terminando de ser salva. Tente de novo em alguns segundos.",
+    );
   }
   if (isStartingAudio) return { micActive: state.micActive !== false, alreadyActive: true };
   isStartingAudio = true;
@@ -2437,6 +2483,8 @@ async function sendStopSignalToOffscreen(): Promise<void> {
 async function stopAudioCapture(reason = "Gravação encerrada") {
   if (isStoppingAudio) return;
   isStoppingAudio = true;
+  const hurry = new AbortController();
+  stopHurry = hurry;
   const stopKeepAlive = startKeepAlive();
   const wasRecording = state.audioActive;
 
@@ -2467,7 +2515,7 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
         );
         // Then the whole record at once: repeats, non-decisions, questions answered later.
         await withTimeout(
-          consolidateMeetingRecord().catch((err) =>
+          consolidateMeetingRecord(hurry.signal).catch((err) =>
             console.warn(`${LOG_PREFIX} Record review skipped:`, err),
           ),
           STOP_CONSOLIDATION_TIMEOUT_MS,
@@ -2548,6 +2596,7 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
     if (savedSession) await autoSendSavedSessionToValorBrain(savedSession);
   } finally {
     isStoppingAudio = false;
+    stopHurry = null;
     stopKeepAlive();
     updateActionBadge();
   }

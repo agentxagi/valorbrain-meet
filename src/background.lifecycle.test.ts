@@ -96,6 +96,8 @@ let consolidationContent = "{}";
 let consolidationError: { status: number; body: unknown } | null = null;
 /** When set, ValorBrain answers a delivery only once this settles. */
 let storeGate: Promise<void> | null = null;
+/** When true, the review of the record never answers: only its signal ends the request. */
+let consolidationHangs = false;
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -130,6 +132,14 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
     /revisa o registro/.test(chatSystemPrompt(init))
   ) {
     if (consolidationError) return jsonResponse(consolidationError.status, consolidationError.body);
+    if (consolidationHangs) {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal;
+        const stop = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        if (signal?.aborted) stop();
+        else signal?.addEventListener("abort", stop, { once: true });
+      });
+    }
     return jsonResponse(200, {
       choices: [{ finish_reason: "stop", message: { content: consolidationContent } }],
       usage: { prompt_tokens: 1500, completion_tokens: 200, total_tokens: 1700 },
@@ -748,8 +758,8 @@ function isReviewCall(c: { url: string; init: RequestInit }): boolean {
   return c.url.endsWith("/chat/completions") && /revisa o registro/.test(chatSystemPrompt(c.init));
 }
 
-/** One short recording, stopped and saved; returns the saved session. */
-async function recordAndSave(streamId: string): Promise<AnyRecord> {
+/** One short recording, stopped; returns how many meetings were saved before it. */
+async function recordAndStop(streamId: string): Promise<number> {
   const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
   const start = await sendMessage({
     type: "MANUAL_START_AUDIO",
@@ -777,6 +787,11 @@ async function recordAndSave(streamId: string): Promise<AnyRecord> {
     return s.stats?.chunksTranscribed === 1 ? s : null;
   }, "chunk transcribed");
   await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  return savedBefore;
+}
+
+/** The meeting saved after the `savedBefore` ones. */
+async function savedAfter(savedBefore: number): Promise<AnyRecord> {
   const index = await waitFor(
     () =>
       (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
@@ -785,6 +800,11 @@ async function recordAndSave(streamId: string): Promise<AnyRecord> {
     "session saved",
   );
   return localStore[`savedSession:${index[0].id}`];
+}
+
+/** One short recording, stopped and saved; returns the saved session. */
+async function recordAndSave(streamId: string): Promise<AnyRecord> {
+  return savedAfter(await recordAndStop(streamId));
 }
 
 test("the record is reviewed by the model, checked and merged before it is saved", async () => {
@@ -941,6 +961,46 @@ test("without the model's review, repeats are still merged before saving", async
     summaryResponse = DEFAULT_SUMMARY;
     consolidationContent = "{}";
     delete localStore.settings.recordConsolidation;
+  }
+});
+
+test("asking for a new recording while the last one is saved cuts its record review short", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationHangs = true;
+  try {
+    fetchCalls.length = 0;
+    const savedBefore = await recordAndStop("stream-11");
+    const review = await waitFor(() => fetchCalls.find(isReviewCall), "review request sent");
+
+    const start = await sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: TAB_ID,
+      meetingId: "abc-defg-hij",
+      meetingUrl: MEET_URL,
+      streamId: "stream-12",
+    });
+    assert.equal(start.success, false);
+    assert.equal(
+      start.error,
+      "A reunião anterior está terminando de ser salva. Tente de novo em alguns segundos.",
+    );
+
+    // The model's review gives way: its request is cut and the local review runs.
+    const saved = await savedAfter(savedBefore);
+    assert.equal((review.init.signal as AbortSignal).aborted, true);
+    assert.equal(saved.consolidation.mode, "local");
+    assert.equal(saved.consolidation.after.openPoints, 2, "the repeat was merged locally");
+    assert.equal(saved.decisions.length, 3);
+    assert.equal(fetchCalls.filter(isReviewCall).length, 1, "nothing sent again");
+    await waitFor(
+      () =>
+        localStore.lastSessionResult?.sessionId === saved.id &&
+        localStore.lastSessionResult.vb?.status === "sent",
+      "the stop flow finished",
+    );
+  } finally {
+    consolidationHangs = false;
+    summaryResponse = DEFAULT_SUMMARY;
   }
 });
 
