@@ -28,6 +28,7 @@ import {
   decisionRule,
   isPlaceholderName,
   normalizeItemText,
+  sharesContent,
   topicRule,
 } from "./nearDuplicates";
 import type { ChatMessage } from "./providerClient";
@@ -63,6 +64,8 @@ export interface PromptedItems {
 /** Per kind, at most this many items or characters go to the model; the rest stay as they are. */
 const MAX_PROMPT_ITEMS = 150;
 const MAX_PROMPT_CHARS = 12_000;
+/** The model may empty a list of decisions, next steps or open points up to this long. */
+const EMPTIED_LIST_MAX = 3;
 
 const TOPIC_STATUSES = new Set(["active", "completed", "unresolved"]);
 
@@ -475,6 +478,23 @@ function rebuild<T>(items: T[], groups: Group[], shown: number, merge: (group: G
 }
 
 /**
+ * A "same" item that shares no word or number with the item kept is no
+ * repeat: it stays as an item of its own, so a wrong id never deletes one.
+ * (Not for topics: those are merged into broader themes in other words.)
+ */
+function splitUnrelated(groups: Group[] | null, text: (index: number) => string): Group[] | null {
+  if (!groups) return null;
+  return groups.flatMap((group) => {
+    const unrelated = group.same.filter((index) => !sharesContent(text(group.keep), text(index)));
+    if (unrelated.length === 0) return [group];
+    return [
+      { ...group, same: group.same.filter((index) => !unrelated.includes(index)) },
+      ...unrelated.map((index) => ({ keep: index, same: [], answer: {} })),
+    ];
+  });
+}
+
+/**
  * True when a group carries a value only the prompt's example has
  * ("finalized|tentative", a name "(opcional)"): the answer copied the example.
  */
@@ -534,14 +554,16 @@ function stillShown(prompted: PromptedItems, state: ConsolidationState): boolean
  *   malformed; each id is used once;
  * - the item kept keeps its own text and source; it takes the owner, deadline
  *   or author it lacks from its repeats, the highest confidence, and stays an
- *   idea only if all of them are (unless "isSpeculative" says otherwise);
+ *   idea only if all of them are (unless "isSpeculative" says otherwise); a
+ *   "repeat" of a decision, next step or open point that shares no word or
+ *   number with it stays as an item of its own;
  * - "classification" and "status" must be valid values; a "by"/"owner" must
  *   already appear in the meeting (see groundedName);
  * - the order is the meeting's, not the model's; open points go back to the
  *   list they came from; items not shown stay as they are;
  * - a kind missing from the answer stays as it is, and so does a malformed
- *   one (it is not "keep nothing") or, for topics, an empty one (a meeting
- *   with topics has main themes);
+ *   one (it is not "keep nothing") or an empty one, unless at most 3 of its
+ *   items were shown (for topics, none: a meeting with topics has main themes);
  * - an answer whose lists all come back empty is refused when there were
  *   more than 3 items, and so is any answer once a list no longer starts with
  *   the items it showed, or that carries a value of the prompt's example.
@@ -567,15 +589,30 @@ export function applyConsolidation(
     unresolved: prompted.unresolvedDiscussions.length,
     questions: prompted.questionsRaised.length,
   };
-  const groupsOf = (key: string, prefix: string, count: number) => {
+  // "Keep nothing" is believable only for a short list: a longer one that
+  // comes back empty stays as it is (a list of topics, whenever it has any).
+  const groupsOf = (key: string, prefix: string, count: number, emptiedUpTo: number) => {
     const raw = parsed[key];
-    return Array.isArray(raw) ? parseGroups(raw, prefix, count) : null;
+    const groups = Array.isArray(raw) ? parseGroups(raw, prefix, count) : null;
+    return groups?.length === 0 && count > emptiedUpTo ? null : groups;
   };
-  const decisions = groupsOf("decisions", "D", shown.decisions);
-  const actionItems = groupsOf("actionItems", "A", shown.actionItems);
-  let topics = groupsOf("topics", "T", shown.topics);
-  if (topics && topics.length === 0 && shown.topics > 0) topics = null;
-  const openPoints = groupsOf("openPoints", "P", shown.unresolved + shown.questions);
+  const openPointText = (index: number) =>
+    index < shown.unresolved
+      ? state.unresolvedDiscussions[index]
+      : state.questionsRaised[index - shown.unresolved];
+  const decisions = splitUnrelated(
+    groupsOf("decisions", "D", shown.decisions, EMPTIED_LIST_MAX),
+    (index) => state.decisions[index].text,
+  );
+  const actionItems = splitUnrelated(
+    groupsOf("actionItems", "A", shown.actionItems, EMPTIED_LIST_MAX),
+    (index) => state.actionItems[index].task,
+  );
+  const topics = groupsOf("topics", "T", shown.topics, 0);
+  const openPoints = splitUnrelated(
+    groupsOf("openPoints", "P", shown.unresolved + shown.questions, EMPTIED_LIST_MAX),
+    openPointText,
+  );
 
   const present = [decisions, actionItems, topics, openPoints].filter(
     (groups): groups is Group[] => groups !== null,

@@ -8,6 +8,7 @@ import {
   isNearDuplicate,
   isPlaceholderName,
   normalizeItemText,
+  sharesContent,
   textRule,
   topicRule,
 } from "./nearDuplicates.ts";
@@ -218,6 +219,16 @@ test("scripts written without spaces have words too", () => {
     false,
     "a word more is another item",
   );
+});
+
+test("sharesContent looks for a number or a word of content in common", () => {
+  assert.equal(sharesContent("Enviar o contrato à Ana", "Revisar o CONTRATO"), true);
+  assert.equal(sharesContent("Qual é o preço do serviço?", "qual o preco"), true, "accents apart");
+  assert.equal(sharesContent("Fechar em 12 parcelas", "Opção de 12x"), true, "a number");
+  assert.equal(sharesContent("我们决定下周发布新版本", "下周开会"), true, "two characters suffice");
+  assert.equal(sharesContent("Enviar o link da reunião", "Ligar para a Ana"), false);
+  assert.equal(sharesContent("O de a", "a de o"), false, "articles and short words do not count");
+  assert.equal(sharesContent("我们决定下周发布新版本", "价格方案"), false);
 });
 
 test("appendDistinct keeps the earliest item, completed and with its latest classification", () => {

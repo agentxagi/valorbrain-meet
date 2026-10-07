@@ -611,6 +611,77 @@ test("an answer that would empty the record is refused and changes nothing", () 
   assert.deepEqual(countRecord(small), { decisions: 0, actionItems: 0, topics: 1, openPoints: 0 });
 });
 
+test("a list of more than 3 items never comes back empty, even next to a valid one", () => {
+  // One topic kept used to let the same answer empty everything else.
+  const state = salesCall();
+  const { applied, report } = applyConsolidation(
+    state,
+    { decisions: [], actionItems: [], topics: ["T1"], openPoints: [] },
+    CONTEXT,
+  );
+  assert.equal(applied, true);
+  assert.deepEqual(report.after, { decisions: 5, actionItems: 4, topics: 1, openPoints: 5 });
+  assert.deepEqual(state.decisions, salesCall().decisions);
+
+  // Up to 3 items "keep nothing" can be right: nothing in them was a decision.
+  const short = salesCall();
+  short.decisions = short.decisions.slice(0, 3);
+  applyConsolidation(short, { decisions: [], actionItems: [], topics: ["T1"] }, CONTEXT);
+  assert.deepEqual(countRecord(short), { decisions: 0, actionItems: 4, topics: 1, openPoints: 5 });
+});
+
+test("a repeat that shares no word or number with the item kept stays on its own", () => {
+  const state = salesCall();
+  applyConsolidation(
+    state,
+    {
+      // D2 repeats D3 (the same package); D1, a presentation, shares nothing with it.
+      decisions: [{ keep: "D3", same: ["D2", "D1"] }, "D5"],
+      actionItems: [{ keep: "A4", same: ["A2"] }],
+      openPoints: [{ keep: "P5", same: ["P2", "P4"] }],
+      // Topics are merged into broader themes, in other words: they are not checked.
+      topics: [{ keep: "T1", same: ["T3"] }],
+    },
+    CONTEXT,
+  );
+  assert.deepEqual(
+    state.decisions.map((d) => [d.text, d.by]),
+    [
+      ["Leonardo apresenta a metodologia do programa", undefined],
+      ["Pacote completo por 15.900", "Bruno"],
+      ["Gustavo não vai aderir ao programa por enquanto", "Gustavo"],
+    ],
+  );
+  assert.deepEqual(
+    state.actionItems.map((a) => a.task),
+    [
+      "Enviar o link da reunião para o Gustavo entrar",
+      "Carlos Levy vai mandar o contrato revisado agora",
+    ],
+  );
+  assert.deepEqual(state.unresolvedDiscussions, []);
+  assert.deepEqual(state.questionsRaised, ["Tudo bem com vocês?", "Quando começa a mentoria?"]);
+  assert.deepEqual(state.topics, [{ name: "Programa de mentoria", status: "active" }]);
+
+  // A number in common is enough ("12" in "12 parcelas" and "12x").
+  const numbers: ConsolidationState = {
+    decisions: [
+      { text: "Fechar em 12 parcelas no boleto" },
+      { text: "Opção de 12x no cartão" },
+      { text: "Começar em janeiro" },
+    ],
+    actionItems: [],
+    topics: [],
+    unresolvedDiscussions: [],
+    questionsRaised: [],
+  };
+  applyConsolidation(numbers, { decisions: [{ keep: "D1", same: ["D2", "D3"] }] }, CONTEXT);
+  assert.deepEqual(
+    numbers.decisions.map((d) => d.text),
+    ["Fechar em 12 parcelas no boleto", "Começar em janeiro"],
+  );
+});
+
 test("items the model was not shown stay, and their ids are refused", () => {
   const state = salesCall();
   // As if the prompt had shown only D1, D2, A1 and P1 to P3 (two unresolved, one question).

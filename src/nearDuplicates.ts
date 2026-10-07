@@ -325,6 +325,36 @@ export function isNearDuplicate(a: string, b: string): boolean {
   return sameItem(itemKey(a), itemKey(b));
 }
 
+/** Scripts written without spaces, where a word of 2 characters already says something. */
+const UNSPACED_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+/**
+ * What a text says beyond its articles, case and accents apart: its numbers
+ * (by their digits) and its words of at least 3 letters (2 in scripts written
+ * without spaces).
+ */
+function contentWords(text: string): Set<string> {
+  const content = new Set<string>();
+  for (const word of similarityWords(itemTokens(withoutMarks(text)))) {
+    for (const digits of word.match(/\p{N}+/gu) ?? []) content.add(withoutLeadingZeros(digits));
+    const letters = word.replace(/[^\p{L}]/gu, "").length;
+    if (!ARTICLES.has(word) && letters >= (UNSPACED_SCRIPT.test(word) ? 2 : 3)) content.add(word);
+  }
+  return content;
+}
+
+/**
+ * True when two texts have a number or a word of content in common. The
+ * review uses it to keep apart two items it was told are the same but that
+ * share nothing (meetingConsolidation.ts).
+ */
+export function sharesContent(a: string, b: string): boolean {
+  const content = contentWords(b);
+  for (const word of contentWords(a)) if (content.has(word)) return true;
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Merging
 // ---------------------------------------------------------------------------
