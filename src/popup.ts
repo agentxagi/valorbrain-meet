@@ -36,7 +36,7 @@ interface LastSessionResult {
   transcriptEntries: number;
   empty: boolean;
   vb?: {
-    status: "pending" | "sent" | "failed" | "skipped";
+    status: "pending" | "sent" | "failed" | "skipped" | "stale";
     at: number;
     docRef?: string | null;
     error?: string;
@@ -201,6 +201,14 @@ function renderLastSession() {
     statusClass = "success";
     statusIcon = "checkCircle";
     statusText = "Salva na memória do ValorBrain.";
+  } else if (s.vb?.status === "stale") {
+    statusClass = "warning";
+    statusIcon = "alertTriangle";
+    statusText =
+      "Revisão do registro desfeita. O ValorBrain ainda tem a versão revisada: reenvie para atualizar.";
+    actions.push(
+      `<button class="vb-btn vb-btn--primary vb-btn--sm" data-act="retry" type="button">${icon("cloudUpload")}Reenviar</button>`,
+    );
   } else if (s.vb?.status === "failed") {
     statusClass = "error";
     statusIcon = "alertCircle";

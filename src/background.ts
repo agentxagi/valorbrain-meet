@@ -3130,9 +3130,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           : { status: "failed", at: Date.now(), error: result.error };
         // Read it again: during the request it may have been deleted or had its review undone.
         const latest = await getSavedMeetingSession(chrome.storage.local, session.id);
-        if (latest)
-          await saveSessionRecord({ ...latest, vb: deliveredStatus(vb, session, latest) });
-        await patchLastSession(session.id, { vb });
+        const delivered = latest ? deliveredStatus(vb, session, latest) : vb;
+        if (latest) await saveSessionRecord({ ...latest, vb: delivered });
+        await patchLastSession(session.id, { vb: delivered });
         if (result.ok) void teachCorrectionsToValorBrain(session, vbSettings);
         sendResponse(result);
         return;
@@ -3161,8 +3161,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             ? { vb: { ...session.vb, status: "stale" as const, at: Date.now() } }
             : {}),
         });
-        // The title comes from the first topic, which the review may have dropped.
-        await patchLastSession(restored.id, { title: sessionTitle(restored) });
+        // The title comes from the first topic, which the review may have dropped;
+        // the popup's card also says when ValorBrain holds the reviewed copy.
+        await patchLastSession(restored.id, {
+          title: sessionTitle(restored),
+          ...(restored.vb ? { vb: restored.vb } : {}),
+        });
         sendResponse({ success: true, session: restored });
         return;
       }

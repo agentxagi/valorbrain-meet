@@ -1020,6 +1020,7 @@ test("the record is reviewed by the model, checked and merged before it is saved
     assert.equal(undo.success, true, JSON.stringify(undo));
     // It was sent: the memory now has an outdated copy, which nothing sends again by itself.
     assert.equal(undo.session.vb.status, "stale");
+    assert.equal(localStore.lastSessionResult.vb.status, "stale", "the popup's card says so");
     assert.equal(undo.session.vb.docRef, "meetings/reuniao.md");
     storeGate = null;
     release();
@@ -1039,6 +1040,7 @@ test("the record is reviewed by the model, checked and merged before it is saved
     assert.deepEqual(restored.consolidation.after, saved.consolidation.after);
     // The resend under way carried the reviewed record: still out of date.
     assert.equal(restored.vb.status, "stale");
+    assert.equal(localStore.lastSessionResult.vb.status, "stale", "also on the popup's card");
     const listed = (localStore.savedSessionIndex as AnyRecord[]).find((s) => s.id === saved.id)!;
     assert.equal(listed.decisions.length, 3, "the history shows the lists put back");
     assert.equal(listed.vb.status, "stale");
@@ -1048,6 +1050,7 @@ test("the record is reviewed by the model, checked and merged before it is saved
     const sentAgain = await sendMessage({ type: "VB_SEND_SESSION", sessionId: saved.id });
     assert.equal(sentAgain.ok, true);
     assert.equal(localStore[key].vb.status, "sent");
+    assert.equal(localStore.lastSessionResult.vb.status, "sent");
     assert.match(JSON.parse(String(deliveries().at(-1)!.init.body)).content, /metodologia/);
     // Nothing is left to undo.
     const again = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
