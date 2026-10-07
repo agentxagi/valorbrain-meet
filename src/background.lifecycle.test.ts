@@ -92,6 +92,8 @@ const DEFAULT_SUMMARY: AnyRecord = {
 let summaryResponse: AnyRecord = DEFAULT_SUMMARY;
 /** What the model answers to the review of the record at the end (raw content). */
 let consolidationContent = "{}";
+/** An HTTP error the provider answers to the review instead (none by default). */
+let consolidationError: { status: number; body: unknown } | null = null;
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -125,6 +127,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
     url === "https://api.z.ai/api/coding/paas/v4/chat/completions" &&
     /revisa o registro/.test(chatSystemPrompt(init))
   ) {
+    if (consolidationError) return jsonResponse(consolidationError.status, consolidationError.body);
     return jsonResponse(200, {
       choices: [{ finish_reason: "stop", message: { content: consolidationContent } }],
       usage: { prompt_tokens: 1500, completion_tokens: 200, total_tokens: 1700 },
@@ -812,5 +815,36 @@ test("without the model's review, repeats are still merged before saving", async
     summaryResponse = DEFAULT_SUMMARY;
     consolidationContent = "{}";
     delete localStore.settings.recordConsolidation;
+  }
+});
+
+// Keep last: the quota pause lasts for the rest of this process.
+test("a quota error on the review pauses the provider and the record is reviewed locally", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationError = {
+    status: 429,
+    body: {
+      error: {
+        code: "1308",
+        message: "Usage limit reached for 5 hour. Your limit will reset at 2099-01-01 00:00:00",
+      },
+    },
+  };
+  try {
+    fetchCalls.length = 0;
+    const first = await recordAndSave("stream-9");
+    assert.equal(fetchCalls.filter(isReviewCall).length, 1, "a quota error is not retried");
+    assert.equal(first.consolidation.mode, "local");
+    assert.equal(first.decisions.length, 3);
+    assert.equal(first.consolidation.after.openPoints, 2);
+
+    // Until the quota renews nothing more goes to the summary provider.
+    fetchCalls.length = 0;
+    const second = await recordAndSave("stream-10");
+    assert.equal(fetchCalls.filter((c) => c.url.endsWith("/chat/completions")).length, 0);
+    assert.equal(second.consolidation.mode, "local");
+  } finally {
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationError = null;
   }
 });

@@ -1627,18 +1627,25 @@ async function reviewRecordWithModel(
     outputLanguage: currentMeetingLanguage(settings),
   });
 
+  // One budget for the wait in the queue, the request and its retries: past
+  // the deadline nothing more is sent, and a request still running is cut, so
+  // no review keeps going (billed, untracked, holding the queue) after saving.
+  const deadline = Date.now() + CONSOLIDATION_MODEL_TIMEOUT_MS;
   let result;
   try {
     result = await withTimeout(
-      llmQueue.enqueue("consolidation", () =>
-        requestChatCompletion(config, apiKey, {
+      llmQueue.enqueue("consolidation", () => {
+        const left = deadline - Date.now();
+        // A plain error, not a provider one: the queue does not retry it.
+        if (left < 5_000) throw new Error("No time left for the record review");
+        return requestChatCompletion(config, apiKey, {
           messages,
           maxTokens: CONSOLIDATION_MAX_TOKENS,
           temperature: 0,
           json: true,
-          timeoutMs: 90_000,
-        }),
-      ),
+          timeoutMs: Math.min(90_000, left),
+        });
+      }),
       CONSOLIDATION_MODEL_TIMEOUT_MS,
     );
   } catch (err) {
@@ -1673,18 +1680,24 @@ async function reviewRecordWithModel(
  */
 async function consolidateMeetingRecord(): Promise<void> {
   const startTimeAtCall = state.startTime;
-  const settings = (await getSettings()) as PipelineSettings;
-  const { config, apiKey } = await getSummaryProvider();
-  if (state.startTime !== startTimeAtCall) return;
+  let reviewed: ConsolidationReport | null = null;
+  try {
+    const settings = (await getSettings()) as PipelineSettings;
+    const { config, apiKey } = await getSummaryProvider();
+    if (state.startTime !== startTimeAtCall) return;
 
-  const counts = countRecord(state);
-  const items = counts.decisions + counts.actionItems + counts.topics + counts.openPoints;
-  const useModel =
-    settings.recordConsolidation !== false &&
-    items > 4 &&
-    !(requiresApiKey(config) && !apiKey) &&
-    !summaryQuotaExhausted(config, apiKey);
-  const reviewed = useModel ? await reviewRecordWithModel(settings, config, apiKey) : null;
+    const counts = countRecord(state);
+    const items = counts.decisions + counts.actionItems + counts.topics + counts.openPoints;
+    const useModel =
+      settings.recordConsolidation !== false &&
+      items > 4 &&
+      !(requiresApiKey(config) && !apiKey) &&
+      !summaryQuotaExhausted(config, apiKey);
+    if (useModel) reviewed = await reviewRecordWithModel(settings, config, apiKey);
+  } catch (err) {
+    // Settings or provider could not be read: the local review still runs.
+    console.warn(`${LOG_PREFIX} Record review by the model skipped:`, err);
+  }
   if (state.startTime !== startTimeAtCall) return;
 
   const local = dedupeRecord(state);
