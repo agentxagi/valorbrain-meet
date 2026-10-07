@@ -6,6 +6,14 @@
  */
 
 import { outputLanguageRule } from "./meetingLanguage";
+import {
+  actionRule,
+  appendDistinct,
+  decisionRule,
+  insightRule,
+  textRule,
+  topicRule,
+} from "./nearDuplicates";
 import type { ChatMessage } from "./providerClient";
 import type {
   ActionItem,
@@ -316,7 +324,10 @@ const SENTIMENTS = new Set(["positive", "neutral", "negative", "mixed"]);
 
 /**
  * Merges one parsed model answer into `state` (mutates and returns it).
- * Unknown/invalid fields are ignored; lists are deduplicated by text.
+ * Unknown/invalid fields are ignored. An incoming decision, task, topic, open
+ * point or insight that repeats one already registered, even in other words
+ * (nearDuplicates.ts), is not added again: the earlier item stays and takes
+ * what the repeat adds (an owner, a deadline, a topic's new status).
  */
 export function mergeSummaryResult(
   state: SummaryState,
@@ -346,15 +357,15 @@ export function mergeSummaryResult(
           : "active") as Topic["status"],
       }))
       .filter((item) => item.name);
-    state.topics = mergeUnique(state.topics, topics, (topic) => dedupeKey(topic.name));
+    state.topics = appendDistinct(state.topics, topics, topicRule);
     const currentTopic = asText(parsed.currentTopic, 160);
     if (currentTopic) state.currentTopic = currentTopic;
-    state.unresolvedDiscussions = mergeUnique(
+    state.unresolvedDiscussions = appendDistinct(
       state.unresolvedDiscussions,
       arrayOf(parsed.unresolvedDiscussions)
         .map((item) => asText(item, 300))
         .filter(Boolean),
-      dedupeKey,
+      textRule,
     );
   }
 
@@ -371,7 +382,7 @@ export function mergeSummaryResult(
         } as Decision;
       })
       .filter((item) => item.text);
-    state.decisions = mergeUnique(state.decisions, decisions, (d) => dedupeKey(d.text));
+    state.decisions = appendDistinct(state.decisions, decisions, decisionRule);
   }
 
   if (features.actions) {
@@ -392,7 +403,7 @@ export function mergeSummaryResult(
         } as ActionItem;
       })
       .filter((item) => item.task);
-    state.actionItems = mergeUnique(state.actionItems, actions, (a) => dedupeKey(a.task));
+    state.actionItems = appendDistinct(state.actionItems, actions, actionRule);
   }
 
   if (features.sentiment) {
@@ -414,7 +425,7 @@ export function mergeSummaryResult(
       };
     })
     .filter((item): item is KeyInsight => !!item && !!item.text);
-  state.keyInsights = mergeUnique(state.keyInsights, insights, (k) => dedupeKey(k.text));
+  state.keyInsights = appendDistinct(state.keyInsights, insights, insightRule);
 
   const contradictions = arrayOf(parsed.contradictions)
     .map((item) => {
@@ -428,12 +439,12 @@ export function mergeSummaryResult(
     dedupeKey(c.issue),
   );
 
-  state.questionsRaised = mergeUnique(
+  state.questionsRaised = appendDistinct(
     state.questionsRaised,
     arrayOf(parsed.questionsRaised)
       .map((item) => asText(item, 300))
       .filter(Boolean),
-    dedupeKey,
+    textRule,
   );
 
   return state;

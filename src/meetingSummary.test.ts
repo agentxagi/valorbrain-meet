@@ -124,14 +124,91 @@ test("mergeSummaryResult validates, deduplicates and keeps source references", (
   assert.equal(state.summaryItems[0].chunkId, "chunk_1");
   assert.equal(state.topics[0].status, "active");
   assert.equal(state.currentTopic, "Lançamento");
-  assert.equal(state.decisions.length, 1, "case-insensitive duplicate replaces, empty is dropped");
-  assert.equal(state.decisions[0].classification, "tentative");
+  assert.equal(state.decisions.length, 1, "a repeat is not added again, empty is dropped");
+  assert.equal(state.decisions[0].text, "Lançar na sexta", "the earlier item stays");
+  assert.equal(state.decisions[0].classification, "finalized");
   assert.equal(state.actionItems.length, 1);
   assert.equal(state.actionItems[0].owner, "Bruno");
   assert.equal(state.sentiment, "positive");
   assert.equal(state.keyInsights[0].confidenceScore, 100);
   assert.equal(state.keyInsights[1].text, "Risco de atraso");
   assert.deepEqual(state.questionsRaised, ["Qual o preço?"]);
+});
+
+test("mergeSummaryResult does not register again what was said in other words", () => {
+  const state = emptyState();
+  state.decisions = [
+    {
+      text: "Gustavo decide fazer o diagnóstico de inglês antes de escolher o plano",
+      chunkId: "chunk_4",
+      timestampLabel: "05:10",
+      classification: "finalized",
+    },
+  ];
+  state.actionItems = [
+    {
+      task: "Perfilar Gustavo da melhor forma para indicar o programa certo de mentoria",
+      chunkId: "chunk_7",
+      timestampLabel: "08:00",
+      confidence: "medium",
+      isSpeculative: false,
+    },
+  ];
+  state.topics = [{ name: "Preço do programa", status: "active" }];
+  state.questionsRaised = ["Qual é o valor do serviço?"];
+
+  mergeSummaryResult(
+    state,
+    {
+      decisions: [
+        {
+          text: "Gustavo decide fazer o diagnóstico de inglês antes de escolher o plano.",
+          by: "Gustavo",
+          chunkId: "chunk_31",
+        },
+        // A negation among the words that differ: another decision.
+        {
+          text: "Gustavo decide não fazer o diagnóstico de inglês antes de escolher o plano",
+          chunkId: "chunk_40",
+        },
+      ],
+      actionItems: [
+        {
+          task: "Perfilhar Gustavo da melhor forma para indicar o programa certo de mentoria",
+          owner: "Leonardo",
+          deadline: "sexta",
+          chunkId: "chunk_33",
+          confidence: "high",
+        },
+      ],
+      topics: [{ name: "preço do programa", status: "completed" }],
+      questionsRaised: ["Qual é o valor do serviço"],
+    },
+    ALL,
+  );
+
+  assert.equal(state.decisions.length, 2);
+  assert.deepEqual(state.decisions[0], {
+    text: "Gustavo decide fazer o diagnóstico de inglês antes de escolher o plano",
+    chunkId: "chunk_4",
+    timestampLabel: "05:10",
+    classification: "finalized",
+    by: "Gustavo",
+  });
+  assert.match(state.decisions[1].text, /decide não fazer/);
+  assert.deepEqual(state.actionItems, [
+    {
+      task: "Perfilar Gustavo da melhor forma para indicar o programa certo de mentoria",
+      chunkId: "chunk_7",
+      timestampLabel: "08:00",
+      confidence: "high",
+      isSpeculative: false,
+      owner: "Leonardo",
+      deadline: "sexta",
+    },
+  ]);
+  assert.deepEqual(state.topics, [{ name: "Preço do programa", status: "completed" }]);
+  assert.deepEqual(state.questionsRaised, ["Qual é o valor do serviço?"]);
 });
 
 test("mergeSummaryResult ignores disabled features and garbage payloads", () => {
