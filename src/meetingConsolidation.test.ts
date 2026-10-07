@@ -522,6 +522,44 @@ test("names are accepted only when they appear in the meeting", () => {
   assert.equal(punctuated.actionItems[1].owner, "EVOUS");
 });
 
+test("a capital at the start, a deadline or a particle do not make a name", () => {
+  const cases: Array<[string, string | undefined]> = [
+    ["Enviar", undefined], // the text's first word, capitalized because it starts it
+    ["Sexta", undefined], // only in the deadline
+    ["de", undefined],
+    ["Ana de", undefined], // a part of a known name that ends with a lower-case word
+    ["de Souza", undefined],
+    ["Souza", "Souza"], // a part of a known name
+    ["ana de souza", "Ana de Souza"],
+    ["Equipe Comercial", "Equipe Comercial"], // capitalized in the middle of the text
+  ];
+  for (const [owner, expected] of cases) {
+    const state = salesCall();
+    state.actionItems[1] = {
+      task: "Enviar o documento para a Equipe Comercial",
+      deadline: "Sexta-feira",
+    };
+    applyConsolidation(
+      state,
+      { actionItems: [{ keep: "A2", owner }] },
+      { participants: ["Ana de Souza"], selfName: "Gustavo" },
+    );
+    assert.equal(state.actionItems[0].owner, expected, `owner ${owner}`);
+  }
+
+  // The first word is a name when the next one is capitalized too.
+  const author = (text: string, by: string) => {
+    const state = salesCall();
+    state.decisions[0] = { text };
+    applyConsolidation(state, { decisions: [{ keep: "D1", by }] }, CONTEXT);
+    return state.decisions[0].by;
+  };
+  assert.equal(author("Marina aprovou o orçamento", "Marina"), undefined);
+  assert.equal(author("Marina Prado aprovou o orçamento", "Marina"), "Marina");
+  assert.equal(author("Marina Prado aprovou o orçamento", "Marina Prado"), "Marina Prado");
+  assert.equal(author("O orçamento foi aprovado pela Marina", "Marina"), "Marina");
+});
+
 test("classification and status must be valid values", () => {
   const state = salesCall();
   applyConsolidation(

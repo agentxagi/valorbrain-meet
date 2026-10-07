@@ -333,11 +333,23 @@ function parseGroups(raw: unknown[], prefix: string, shown: number): Group[] | n
   return groups;
 }
 
+/** The word's first letter is a capital: "Levy", "(Cod3rs)"; not "de" or "iPhone". */
+function capitalized(word: string): boolean {
+  return /^[^\p{L}]*[\p{Lu}\p{Lt}]/u.test(word);
+}
+
+/** The word's first letter is a lower-case one: "de", "da", "van". */
+function startsLowerCase(word: string): boolean {
+  return /^[^\p{L}]*\p{Ll}/u.test(word);
+}
+
 /**
  * Names known in the meeting: participants, who recorded, and every
  * "by"/"owner" already on an item, with each run of their words ("Leonardo",
  * "Castro", "Leonardo Castro"), keyed ignoring case and accents and mapped to
- * how the meeting writes them.
+ * how the meeting writes them. In a name with capitals, a run that starts or
+ * ends with a lower-case word is no name by itself: "Ana de Souza" knows "Ana",
+ * "Souza" and itself, not "de", "Ana de" or "de Souza".
  */
 function knownNames(state: ConsolidationState, context: ConsolidationContext): Map<string, string> {
   const known = new Map<string, string>();
@@ -351,8 +363,11 @@ function knownNames(state: ConsolidationState, context: ConsolidationContext): M
     const name = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, 100) : "";
     if (!normalizeItemText(name) || isPlaceholderName(name)) continue;
     const words = name.split(" ");
+    const particle = words.some(capitalized) ? words.map(startsLowerCase) : [];
     for (let i = 0; i < words.length; i += 1) {
       for (let j = i + 1; j <= words.length; j += 1) {
+        const whole = i === 0 && j === words.length;
+        if (!whole && (particle[i] || particle[j - 1])) continue;
         // Edges without punctuation: "Entrevistador (Cod3rs)" knows "Cod3rs", not "(Cod3rs)".
         const part = words
           .slice(i, j)
@@ -384,31 +399,40 @@ function escapeRegExp(value: string): string {
 
 /**
  * True when `name` is written in `text` as a name: capitalized as the model
- * wrote it, whole words, accents aside ("Carlos Levy" in "…ao Carlos Levy"; not
- * "agora" or "Proposta" from "a proposta agora"). Scripts without letter case
- * only need to contain it.
+ * wrote it, whole words, accents aside, its first and last words capitalized
+ * ("Carlos Levy" in "…ao Carlos Levy"; not "agora" or "Proposta" from "a
+ * proposta agora", nor "Ana de"). The first word of a text is capitalized
+ * anyway: there it counts only next to another capitalized word ("Carlos Levy
+ * vai mandar…" names "Carlos"; "Enviar o link…" names nobody). Scripts without
+ * letter case only need to contain it.
  */
 function namedIn(text: string | undefined, name: string): boolean {
   if (!text) return false;
   const haystack = withoutAccents(text);
   const needle = withoutAccents(name);
   if (!/[\p{Lu}\p{Ll}]/u.test(needle)) return haystack.includes(needle);
-  if (!/^\p{Lu}/u.test(needle)) return false;
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(needle)}(?![\\p{L}\\p{N}])`, "u").test(
-    haystack,
-  );
+  const words = needle.split(" ");
+  if (!capitalized(words[0]) || !capitalized(words[words.length - 1])) return false;
+  const [first, second] = haystack.trim().split(/\s+/);
+  const opensWithName = capitalized(first) && second !== undefined && capitalized(second);
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(needle)}(?![\\p{L}\\p{N}])`, "gu");
+  for (const match of haystack.matchAll(pattern)) {
+    if (opensWithName || /[\p{L}\p{N}]/u.test(haystack.slice(0, match.index))) return true;
+  }
+  return false;
 }
 
 /**
  * A name the model wrote for "by" or "owner", accepted only when it is
  * grounded in the meeting: a known name or part of one (ignoring case and
  * accents; it comes back as the meeting writes it), or a name written in the
- * group's own items. Anything else, placeholders included, is ignored.
+ * text of the group's own items (never in a deadline: "Sexta-feira").
+ * Anything else, placeholders included, is ignored.
  */
 function groundedName(
   value: unknown,
   names: Map<string, string>,
-  groupTexts: Array<string | undefined>,
+  groupTexts: string[],
 ): string | undefined {
   if (typeof value !== "string") return undefined;
   const name = value.replace(/\s+/g, " ").trim();
@@ -433,7 +457,7 @@ function mergeDecisionGroup(items: Decision[], group: Group, names: Map<string, 
   if (classification === "finalized" || classification === "tentative") {
     merged.classification = classification;
   }
-  const texts = [group.keep, ...group.same].flatMap((i) => [items[i].text, items[i].by]);
+  const texts = [group.keep, ...group.same].map((i) => items[i].text);
   const by = groundedName(group.answer.by, names, texts);
   if (by) merged.by = by;
   return merged;
@@ -449,11 +473,7 @@ function mergeActionGroup(
   if (typeof group.answer.isSpeculative === "boolean") {
     merged.isSpeculative = group.answer.isSpeculative;
   }
-  const texts = [group.keep, ...group.same].flatMap((i) => [
-    items[i].task,
-    items[i].owner,
-    items[i].deadline,
-  ]);
+  const texts = [group.keep, ...group.same].map((i) => items[i].task);
   const owner = groundedName(group.answer.owner, names, texts);
   if (owner) merged.owner = owner;
   return merged;
