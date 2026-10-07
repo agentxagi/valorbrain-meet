@@ -2224,7 +2224,11 @@ function deliveredStatus(
     : vb;
 }
 
-/** Sends a saved session to ValorBrain and records the outcome everywhere. */
+/**
+ * Sends a saved session to ValorBrain and records the outcome everywhere: on
+ * the meeting, on the popup's card, and in what it returns ("sent", "failed",
+ * or "stale" when the review was undone during the upload).
+ */
 async function deliverSessionToValorBrain(
   session: StoredSession,
   vbSettings: VbSettings,
@@ -2238,15 +2242,14 @@ async function deliverSessionToValorBrain(
 
   // Re-persist only if the session still exists (the user may have deleted it).
   const stillSaved = await getSavedMeetingSession(chrome.storage.local, session.id);
-  if (stillSaved) {
-    await saveSessionRecord({ ...stillSaved, vb: deliveredStatus(vb, session, stillSaved) });
-  }
-  await patchLastSession(session.id, { vb });
+  const delivered = stillSaved ? deliveredStatus(vb, session, stillSaved) : vb;
+  if (stillSaved) await saveSessionRecord({ ...stillSaved, vb: delivered });
+  await patchLastSession(session.id, { vb: delivered });
 
   if (!result.ok) {
     console.warn(`${LOG_PREFIX} ValorBrain delivery failed:`, result.error);
   }
-  return vb;
+  return delivered;
 }
 
 async function autoSendSavedSessionToValorBrain(session: StoredSession) {
@@ -2272,12 +2275,19 @@ async function autoSendSavedSessionToValorBrain(session: StoredSession) {
     }
     await patchLastSession(session.id, { vb: { status: "pending", at: Date.now() } });
     const vb = await deliverSessionToValorBrain(session, vbSettings);
-    if (vb.status === "sent") void teachCorrectionsToValorBrain(session, vbSettings);
+    // It reached ValorBrain, even when the review was undone meanwhile ("stale").
+    if (vb.status !== "failed") void teachCorrectionsToValorBrain(session, vbSettings);
     if (vb.status === "sent") {
       notify(
         "saved",
         "Reunião salva no ValorBrain",
         `${sessionTitle(session)} já está na memória da sua empresa.`,
+      );
+    } else if (vb.status === "stale") {
+      notify(
+        "saved",
+        "Reunião enviada ao ValorBrain",
+        "A revisão do registro foi desfeita durante o envio. Use Reenviar no Histórico para atualizar a memória.",
       );
     } else {
       notify(

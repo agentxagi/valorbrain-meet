@@ -1104,6 +1104,47 @@ test("without the model's review, repeats are still merged before saving", async
   }
 });
 
+test("a review undone during the automatic upload leaves the meeting out of date", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationContent = JSON.stringify({
+    decisions: [{ keep: "D3" }],
+    topics: [{ keep: "T1", same: ["T2"] }],
+  });
+  let release = () => {};
+  storeGate = new Promise((resolve) => (release = resolve));
+  try {
+    fetchCalls.length = 0;
+    const saved = await savedAfter(await recordAndStop("stream-13"));
+    assert.equal(saved.consolidation.mode, "model");
+    await waitFor(
+      () => fetchCalls.some((c) => c.url.endsWith("/api/v1/memory/store")),
+      "upload under way",
+    );
+    assert.equal(localStore.lastSessionResult.vb.status, "pending");
+    const undo = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
+    assert.equal(undo.success, true, JSON.stringify(undo));
+    storeGate = null;
+    release();
+
+    // The memory got the reviewed record: the meeting, the card and the notice say so.
+    const card = await waitFor(
+      () =>
+        localStore.lastSessionResult?.vb?.status !== "pending"
+          ? localStore.lastSessionResult
+          : null,
+      "upload recorded",
+    );
+    assert.equal(card.vb.status, "stale");
+    assert.equal(localStore[`savedSession:${saved.id}`].vb.status, "stale");
+    assert.equal(notifications.at(-1)?.title, "Reunião enviada ao ValorBrain");
+  } finally {
+    storeGate = null;
+    release();
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationContent = "{}";
+  }
+});
+
 test("asking for a new recording while the last one is saved cuts its record review short", async () => {
   summaryResponse = SALES_CALL_SUMMARY;
   consolidationHangs = true;
