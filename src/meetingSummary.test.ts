@@ -175,6 +175,14 @@ test("the summary rules say what a decision, an action, a topic and an open ques
   assert.match(system.content, /proposta que ainda não teve resposta/);
   assert.match(system.content, /só vira decisão quando é aceita, recusada ou combinada/);
   assert.match(system.content, /combinado sobre a própria reunião/);
+  assert.match(
+    system.content,
+    /como a conversa ou a resposta vai ser, por exemplo "responder só sim ou não"\)/,
+  );
+  assert.match(
+    system.content,
+    /Numa negociação, ofertas e condições \(preço, desconto, parcelas, juros\) não são decisões: decisão é só o resultado \(o que foi aceito, recusado ou deixado para depois\)\./,
+  );
   assert.match(system.content, /compromisso de fazer algo depois da reunião/);
   assert.match(system.content, /o que um produto ou serviço oferece/);
   assert.match(

@@ -210,6 +210,16 @@ test("the review prompt states the rules, the security fence and the meeting lan
   assert.match(system.content, /Uma recusa também é decisão/);
   assert.match(system.content, /Não é decisão: apresentação ou descrição/);
   assert.match(system.content, /combinado sobre a própria reunião/);
+  // How the conversation or the answer will go is about the meeting itself too.
+  assert.match(
+    system.content,
+    /como a conversa ou a resposta vai ser, por exemplo "responder só sim ou não"\)/,
+  );
+  // A negotiation's offers and conditions are not decisions: only its outcome is.
+  assert.match(
+    system.content,
+    /Numa negociação, ofertas e condições \(preço, desconto, parcelas, juros\) não são decisões: decisão é só o resultado \(o que foi aceito, recusado ou deixado para depois\)\./,
+  );
   assert.match(system.content, /oferta ou proposta que ninguém respondeu/);
   assert.match(system.content, /fique só com a versão final/);
   assert.match(system.content, /Uma proposta recusada ou substituída por outra também sai/);
