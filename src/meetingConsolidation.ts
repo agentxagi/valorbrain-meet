@@ -284,14 +284,16 @@ function parseId(value: unknown, prefix: string, shown: number): number | null {
 }
 
 /**
- * The model's groups for one kind: ids of that kind that were shown, each
- * used once (first use wins). A group whose "keep" is invalid or already
- * used is dropped whole: its "same" ids are not promoted. A bare id ("P5")
- * reads as {"keep": "P5"}.
+ * The model's groups for one kind, or null when the list is malformed: one
+ * entry that is neither an id nor a group, or a "keep" or "same" that is not
+ * an id of that kind shown to the model, and the whole list is unusable. A
+ * bare id ("P5") reads as {"keep": "P5"}, a single "same" id as a list. Each
+ * id is used once (first use wins): a group whose "keep" is already used is
+ * dropped whole (its "same" ids are not promoted), and a "same" id already
+ * used is ignored.
  */
-function parseGroups(raw: unknown[], prefix: string, shown: number): Group[] {
-  const used = new Set<number>();
-  const groups: Group[] = [];
+function parseGroups(raw: unknown[], prefix: string, shown: number): Group[] | null {
+  const answered: Group[] = [];
   for (const entry of raw) {
     const answer =
       typeof entry === "string"
@@ -299,19 +301,31 @@ function parseGroups(raw: unknown[], prefix: string, shown: number): Group[] {
         : entry && typeof entry === "object" && !Array.isArray(entry)
           ? (entry as Record<string, unknown>)
           : null;
-    if (!answer) continue;
+    if (!answer) return null;
     const keep = parseId(answer.keep, prefix, shown);
-    if (keep === null || used.has(keep)) continue;
-    used.add(keep);
+    if (keep === null) return null;
+    const ids = answer.same == null ? [] : Array.isArray(answer.same) ? answer.same : [answer.same];
     const same: number[] = [];
-    const ids = Array.isArray(answer.same) ? answer.same : [answer.same];
     for (const id of ids) {
       const index = parseId(id, prefix, shown);
-      if (index === null || used.has(index)) continue;
+      if (index === null) return null;
+      same.push(index);
+    }
+    answered.push({ keep, same, answer });
+  }
+
+  const used = new Set<number>();
+  const groups: Group[] = [];
+  for (const group of answered) {
+    if (used.has(group.keep)) continue;
+    used.add(group.keep);
+    const same: number[] = [];
+    for (const index of group.same) {
+      if (used.has(index)) continue;
       used.add(index);
       same.push(index);
     }
-    groups.push({ keep, same, answer });
+    groups.push({ ...group, same });
   }
   return groups;
 }
@@ -491,8 +505,9 @@ function stillShown(prompted: PromptedItems, state: ConsolidationState): boolean
 /**
  * Checks the model's answer and, when it holds, applies it to `state`.
  *
- * - ids are case-insensitive, must be of that kind and shown to the model,
- *   and each is used once; a group with a bad "keep" is skipped whole;
+ * - ids are case-insensitive and must be of that kind and shown to the model:
+ *   one entry that is not such an id or a group makes that kind's list
+ *   malformed; each id is used once;
  * - the item kept keeps its own text and source; it takes the owner, deadline
  *   or author it lacks from its repeats, the highest confidence, and stays an
  *   idea only if all of them are (unless "isSpeculative" says otherwise);
@@ -500,9 +515,9 @@ function stillShown(prompted: PromptedItems, state: ConsolidationState): boolean
  *   already appear in the meeting (see groundedName);
  * - the order is the meeting's, not the model's; open points go back to the
  *   list they came from; items not shown stay as they are;
- * - a kind missing from the answer stays as it is, and so does one whose
- *   entries are all unusable (a malformed list is not "keep nothing") or, for
- *   topics, an empty one (a meeting with topics has main themes);
+ * - a kind missing from the answer stays as it is, and so does a malformed
+ *   one (it is not "keep nothing") or, for topics, an empty one (a meeting
+ *   with topics has main themes);
  * - an answer whose lists all come back empty is refused when there were
  *   more than 3 items, and so is any answer once a list no longer starts with
  *   the items it showed.
@@ -530,9 +545,7 @@ export function applyConsolidation(
   };
   const groupsOf = (key: string, prefix: string, count: number) => {
     const raw = parsed[key];
-    if (!Array.isArray(raw)) return null;
-    const groups = parseGroups(raw, prefix, count);
-    return raw.length > 0 && groups.length === 0 ? null : groups;
+    return Array.isArray(raw) ? parseGroups(raw, prefix, count) : null;
   };
   const decisions = groupsOf("decisions", "D", shown.decisions);
   const actionItems = groupsOf("actionItems", "A", shown.actionItems);

@@ -788,7 +788,7 @@ test("the record is reviewed by the model, checked and merged before it is saved
   fetchCalls.length = 0;
   summaryResponse = SALES_CALL_SUMMARY;
   consolidationContent = JSON.stringify({
-    decisions: [{ keep: "D3", classification: "finalized" }, { keep: "D99" }],
+    decisions: [{ keep: "D3", classification: "finalized" }],
     actionItems: [{ keep: "a2", owner: "Ricardo" }],
     topics: [{ keep: "T1", same: ["T2"], status: "completed" }],
     openPoints: [],

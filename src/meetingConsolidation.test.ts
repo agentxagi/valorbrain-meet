@@ -349,21 +349,51 @@ test("a kept item takes the owner, deadline and author it lacks from its repeats
   assert.equal(confirmed.actionItems[0].isSpeculative, false);
 });
 
-test("ids must be of the right kind, exist and be used once", () => {
+test("one unusable entry leaves that whole list as it is", () => {
+  const unusable: unknown[] = [
+    "A1", // another kind
+    { keep: "D9" }, // does not exist
+    { keep: "D04" }, // not an id that was given
+    { keep: "D0" },
+    { keep: 2 },
+    { keep: "D 2" },
+    { id: "D4", same: ["D5"] }, // no "keep"
+    ["D1"], // not a group
+    null,
+    5,
+    { keep: "D2", same: ["D3", "X1"] }, // a bad id among the repeats
+    { keep: "D2", same: [4] },
+    { keep: "D2", same: "" },
+  ];
+  for (const entry of unusable) {
+    const state = salesCall();
+    const { applied } = applyConsolidation(
+      state,
+      { decisions: ["D1", entry, "D5"], actionItems: ["A3"] },
+      CONTEXT,
+    );
+    assert.equal(applied, true, JSON.stringify(entry));
+    assert.deepEqual(state.decisions, salesCall().decisions, JSON.stringify(entry));
+    assert.equal(state.actionItems.length, 1, "the other lists still apply");
+  }
+
+  // The review's case: one valid id among malformed ones used to delete the rest.
+  const state = salesCall();
+  applyConsolidation(
+    state,
+    { decisions: ["D1", "D 2", "D-3", { id: "D4", same: ["D9"] }, 5, "d6"] },
+    CONTEXT,
+  );
+  assert.deepEqual(state.decisions, salesCall().decisions);
+});
+
+test("each id is used once, the first use wins", () => {
   const state = salesCall();
   applyConsolidation(
     state,
     {
       decisions: [
-        { keep: "A1" }, // another kind
-        { keep: "D9" }, // does not exist
-        { keep: "D04" }, // not an id that was given
-        { keep: "D0" },
-        { keep: 2 },
-        { keep: "D 2" },
-        ["D1"], // not a group
-        null,
-        { keep: "D2", same: ["D2", "D3", "X1", "D3", 4] }, // D2 itself and D3 again are ignored
+        { keep: "D2", same: ["D2", "D3", "D3"] }, // D2 itself and D3 again are ignored
         { keep: "D3", same: ["D1"] }, // D3 is taken: the group is skipped, D1 is not promoted
         { keep: "D4", same: "D5" }, // a single id is read as a list
       ],
@@ -546,9 +576,9 @@ test("items the model was not shown stay, and their ids are refused", () => {
   applyConsolidation(
     state,
     {
-      decisions: [{ keep: "D2", same: ["D4"] }],
-      actionItems: [{ keep: "A2" }],
-      openPoints: [{ keep: "P3" }, { keep: "P4" }],
+      decisions: [{ keep: "D2" }],
+      actionItems: [{ keep: "A1" }, { keep: "A2" }],
+      openPoints: [{ keep: "P3" }],
     },
     { ...CONTEXT, prompted },
   );
@@ -561,7 +591,7 @@ test("items the model was not shown stay, and their ids are refused", () => {
       "Gustavo não vai aderir ao programa por enquanto",
     ],
   );
-  // A2 was not shown: nothing usable for that list, so it stays as it is.
+  // A2 was not shown: that list is malformed, so it stays as it is.
   assert.deepEqual(state.actionItems, salesCall().actionItems);
   assert.deepEqual(state.unresolvedDiscussions, []);
   assert.deepEqual(state.questionsRaised, [
@@ -569,6 +599,15 @@ test("items the model was not shown stay, and their ids are refused", () => {
     "Tudo bem com vocês?",
     "Quando começa a mentoria?",
   ]);
+
+  // An id that was not shown, even among the repeats.
+  const repeat = salesCall();
+  applyConsolidation(
+    repeat,
+    { decisions: [{ keep: "D2", same: ["D4"] }] },
+    { ...CONTEXT, prompted },
+  );
+  assert.deepEqual(repeat.decisions, salesCall().decisions);
 });
 
 test("ids keep pointing at the items shown even if the lists grew during the request", () => {
