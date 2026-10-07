@@ -39,7 +39,10 @@ const localStore: AnyRecord = {
 const sessionStore: AnyRecord = {};
 
 let messageListener: MessageListener | undefined;
+let tabActivatedListener: ((info: { tabId: number; windowId: number }) => unknown) | undefined;
 let offscreenOpen = false;
+/** The browser's tabs, as chrome.tabs.query and chrome.tabs.get see them (none by default). */
+let openTabs: AnyRecord[] = [];
 const runtimeMessages: AnyRecord[] = [];
 const badgeTexts: string[] = [];
 const notifications: AnyRecord[] = [];
@@ -222,10 +225,14 @@ function installChromeMock() {
     alarms: { onAlarm: ignored, create: () => {} },
     tabs: {
       onUpdated: ignored,
-      onActivated: ignored,
+      onActivated: {
+        addListener: (cb: typeof tabActivatedListener) => {
+          tabActivatedListener = cb;
+        },
+      },
       onRemoved: ignored,
-      get: async () => ({}),
-      query: async () => [],
+      get: async (tabId: number) => openTabs.find((tab) => tab.id === tabId) ?? {},
+      query: async () => openTabs,
       sendMessage: async () => {},
       create: async () => ({}),
     },
@@ -717,6 +724,124 @@ test("everyone who attended is saved, even after they left or the user hung up",
   assert.match(
     chatUser(/motor de inteligência/),
     /\n<participantes>\nParticipantes detectados na reunião: .*Ana, Bruno\./,
+  );
+});
+
+test("the people in the call before recording are kept, also across a tab switch", async () => {
+  const OTHER_TAB = 8;
+  const OTHER_URL = "https://meet.google.com/xyz-abcd-efg";
+  openTabs = [
+    { id: TAB_ID, url: MEET_URL },
+    { id: OTHER_TAB, url: OTHER_URL },
+  ];
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  try {
+    // The panel opens on the call, where Ana and Bruno already are.
+    const detected = await sendMessage({ type: "GET_STATE" });
+    assert.equal(detected.targetTabId, TAB_ID);
+    assert.equal(detected.audioActive, false);
+    const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+    await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: ["Ana", "Bruno"] }, sender);
+    assert.deepEqual((await sendMessage({ type: "GET_STATE" })).attendees, ["Ana", "Bruno"]);
+
+    // Another call in another tab, then back: each tab has its own people.
+    await tabActivatedListener!({ tabId: OTHER_TAB, windowId: 1 });
+    const other = await sendMessage({ type: "GET_STATE" });
+    assert.equal(other.targetTabId, OTHER_TAB);
+    assert.deepEqual(other.attendees, []);
+    await tabActivatedListener!({ tabId: TAB_ID, windowId: 1 });
+    const back = await sendMessage({ type: "GET_STATE" });
+    assert.equal(back.targetTabId, TAB_ID);
+    assert.deepEqual(back.attendees, ["Ana", "Bruno"], "restored with the tab's state");
+
+    // Recording starts in that call: they attend it without the page saying so again.
+    const start = await sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: TAB_ID,
+      meetingId: "abc-defg-hij",
+      meetingUrl: MEET_URL,
+      streamId: "stream-attendees",
+    });
+    assert.equal(start.success, true, JSON.stringify(start));
+    assert.deepEqual((await sendMessage({ type: "GET_STATE" })).attendees, ["Ana", "Bruno"]);
+    sttResponses.push({
+      text: "Vamos revisar o contrato amanhã.",
+      duration: 4,
+      segments: [
+        { text: " Vamos revisar o contrato amanhã.", no_speech_prob: 0.02, avg_logprob: -0.3 },
+      ],
+    });
+    await sendMessage({
+      type: "OFFSCREEN_AUDIO_CHUNK",
+      audioBase64: fakeChunk(),
+      mimeType: "audio/webm;codecs=opus",
+      source: "tab",
+      startedAt: Date.now() - 4000,
+      endedAt: Date.now(),
+    });
+    await waitFor(
+      async () => (await sendMessage({ type: "GET_STATE" })).stats?.chunksTranscribed === 1,
+      "line transcribed",
+    );
+    await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+    const index = await waitFor(
+      () =>
+        (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
+          ? (localStore.savedSessionIndex as AnyRecord[])
+          : null,
+      "session saved",
+    );
+    assert.deepEqual(localStore[`savedSession:${index[0].id}`].participants, ["Ana", "Bruno"]);
+  } finally {
+    openTabs = [];
+  }
+});
+
+test("in a call of two, a line from the tab is the other person's, by the live list", async () => {
+  localStore.settings = { ...localStore.settings, selfName: "Gustavo" };
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId: "stream-two",
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+  const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+  await sendMessage(
+    { type: "PARTICIPANTS_UPDATED", participants: ["Gustavo", "Ricardo", "Ana"] },
+    sender,
+  );
+  // Ana leaves: she still attended, but the call is now Gustavo and Ricardo.
+  await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: ["Gustavo", "Ricardo"] }, sender);
+  const live = await sendMessage({ type: "GET_STATE" });
+  assert.deepEqual(live.attendees, ["Gustavo", "Ricardo", "Ana"]);
+
+  sttResponses.push({
+    text: "Pode mandar a proposta.",
+    duration: 3,
+    segments: [{ text: " Pode mandar a proposta.", no_speech_prob: 0.02, avg_logprob: -0.3 }],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    source: "tab",
+    startedAt: Date.now() - 3000,
+    endedAt: Date.now(),
+  });
+  const said = await waitFor(async () => {
+    const s = await sendMessage({ type: "GET_STATE" });
+    return s.stats?.chunksTranscribed === 1 ? s : null;
+  }, "line transcribed");
+  // With the attendees there would be two others, and the line would be "Participante".
+  assert.equal(said.transcript[0].speaker, "Ricardo");
+
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  await waitFor(
+    () => (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1,
+    "session saved",
   );
 });
 

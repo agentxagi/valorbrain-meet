@@ -40,6 +40,8 @@ const SEEDED_STATE = {
   participants: ["Alice", "Bob"],
   initialParticipants: ["Alice"],
   lateJoiners: ["Bob"],
+  // Everyone seen during the recording: Carol already left the call.
+  attendees: ["Alice", "Carol", "Bob"],
   timeline: [{ event: "Meeting started", timestamp: 1_700_000_000_000, elapsed: 0 }],
   transcript: [{ speaker: "Alice", text: "Hello everyone", timestamp: 1 }],
   audioActive: true,
@@ -206,6 +208,7 @@ test("recovers transcript, timeline, and participant lists", async () => {
   assert.deepEqual(state.participants, ["Alice", "Bob"]);
   assert.deepEqual(state.initialParticipants, ["Alice"]);
   assert.deepEqual(state.lateJoiners, ["Bob"]);
+  assert.deepEqual(state.attendees, ["Alice", "Carol", "Bob"], "nobody who left is forgotten");
 });
 
 test("keeps audioActive when the offscreen document is still present", async () => {
