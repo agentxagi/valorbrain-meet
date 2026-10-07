@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ValorBrain Meet",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Grava reuniões do Google Meet (e do Zoom e do Teams pelo navegador), transcreve, resume em português e envia para a memória do ValorBrain.",
   "minimum_chrome_version": "116",
   "permissions": [
