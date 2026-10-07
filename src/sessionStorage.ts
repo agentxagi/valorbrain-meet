@@ -250,8 +250,10 @@ export async function persistPendingMeetingSession(storage: StorageArea): Promis
 
 /**
  * Persists a meeting session to the saved session index, migrating any legacy
- * session data and pruning old entries when storage is near capacity. No-ops if
- * the session is already present in the index.
+ * session data. A new session goes to the front, after pruning old entries
+ * when storage is near capacity. A session already in the index (its review
+ * undone, its delivery status recorded) is updated in place: same position,
+ * nothing pruned.
  * @param storage - The storage area to read from and write to.
  * @param pendingSession - The session to persist.
  * @returns A promise resolving to the persisted `StoredSession`.
@@ -271,17 +273,24 @@ export async function persistMeetingSession(
     indexedSessions.length > 0 ? indexedSessions : legacySessions.map(createSessionListItem);
 
   const sessionKey = getSavedSessionKey(pendingSession.id);
-  const incomingBytes = estimateStorageBytes({
-    [sessionKey]: pendingSession,
-    [SAVED_SESSION_INDEX_KEY]: upsertSessionIndex(currentIndex, pendingSession),
-  });
-  let prunedIndex = currentIndex;
-  try {
-    prunedIndex = await pruneSessionsForQuota(storage, currentIndex, incomingBytes);
-  } catch (err) {
-    console.error("[SessionStorage] Failed to prune sessions for quota:", err);
+  const position = currentIndex.findIndex((item) => item.id === pendingSession.id);
+  let nextIndex: StoredSession[];
+  if (position !== -1) {
+    nextIndex = [...currentIndex];
+    nextIndex[position] = createSessionListItem(pendingSession);
+  } else {
+    const incomingBytes = estimateStorageBytes({
+      [sessionKey]: pendingSession,
+      [SAVED_SESSION_INDEX_KEY]: upsertSessionIndex(currentIndex, pendingSession),
+    });
+    let prunedIndex = currentIndex;
+    try {
+      prunedIndex = await pruneSessionsForQuota(storage, currentIndex, incomingBytes);
+    } catch (err) {
+      console.error("[SessionStorage] Failed to prune sessions for quota:", err);
+    }
+    nextIndex = upsertSessionIndex(prunedIndex, pendingSession);
   }
-  const nextIndex = upsertSessionIndex(prunedIndex, pendingSession);
 
   await storage.set({
     [sessionKey]: pendingSession,

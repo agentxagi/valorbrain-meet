@@ -10,6 +10,8 @@ import {
   getSavedMeetingSession,
   getSavedSessionKey,
   isStorageQuotaError,
+  MAX_SAVED_SESSIONS,
+  persistMeetingSession,
   SAVED_SESSION_INDEX_KEY,
   SAVED_SESSIONS_LEGACY_KEY,
   StoredSession,
@@ -112,6 +114,31 @@ test("session list items leave out the lists from before the record review", () 
   assert.equal(listItem.consolidation?.original, undefined);
   assert.deepEqual(listItem.consolidation?.after, { ...counts, decisions: 1 });
   assert.deepEqual(session.consolidation?.original, lists, "the session itself keeps them");
+});
+
+test("re-saving a saved meeting updates it in place and deletes no other", async () => {
+  const storage = makeMemoryStorage();
+  for (let i = 1; i <= MAX_SAVED_SESSIONS; i += 1) {
+    await persistMeetingSession(storage, makeSession(`m${i}`, i));
+  }
+  const ids = () => (storage.store[SAVED_SESSION_INDEX_KEY] as StoredSession[]).map((s) => s.id);
+  const order = ids();
+  assert.equal(order.length, MAX_SAVED_SESSIONS);
+  assert.equal(order[0], `m${MAX_SAVED_SESSIONS}`);
+
+  // What undoing a review or recording a delivery does: the same id saved again.
+  const tenth = await getSavedMeetingSession(storage, "m10");
+  await persistMeetingSession(storage, { ...tenth!, summary: "Revisão desfeita" });
+  assert.deepEqual(ids(), order, "same place, nobody pruned");
+  assert.equal((await getSavedMeetingSession(storage, "m10"))?.summary, "Revisão desfeita");
+  const listed = (storage.store[SAVED_SESSION_INDEX_KEY] as StoredSession[])[order.indexOf("m10")];
+  assert.equal(listed.summary, "Revisão desfeita");
+  assert.ok(getSavedSessionKey("m1") in storage.store, "the oldest meeting is still saved");
+
+  // A new meeting still goes to the front, and the oldest one makes room.
+  await persistMeetingSession(storage, makeSession("m21", 21));
+  assert.deepEqual(ids(), ["m21", ...order.slice(0, -1)]);
+  assert.equal(getSavedSessionKey("m1") in storage.store, false);
 });
 
 test("upsertSessionIndex places newest sessions first and deduplicates ids", () => {
