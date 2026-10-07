@@ -40,6 +40,15 @@ export interface RecordCounts {
   openPoints: number;
 }
 
+/** The lists of a meeting record the end-of-meeting review works on. */
+export interface RecordLists {
+  decisions: Decision[];
+  actionItems: ActionItem[];
+  topics: Topic[];
+  unresolvedDiscussions: string[];
+  questionsRaised: string[];
+}
+
 /** End-of-meeting review of the record: repeats merged, what does not belong removed. */
 export interface ConsolidationReport {
   /**
@@ -50,6 +59,13 @@ export interface ConsolidationReport {
   before: RecordCounts;
   after: RecordCounts;
   at: number;
+  /**
+   * The lists as they were before the model's review, so the side panel can
+   * undo it. Kept on the saved session only: never in the ValorBrain document.
+   */
+  original?: RecordLists;
+  /** The review was undone: the lists are back to how they were before it. */
+  undone?: boolean;
 }
 
 /** Vocabulary the ValorBrain graph suggested for the current recording. */

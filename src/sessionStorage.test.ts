@@ -89,6 +89,31 @@ test("session list items omit large transcript and timeline payloads", () => {
   assert.deepEqual(listItem.timeline, []);
 });
 
+test("session list items leave out the lists from before the record review", () => {
+  const counts = { decisions: 2, actionItems: 0, topics: 0, openPoints: 0 };
+  const lists = {
+    decisions: [{ text: "Fechar o plano anual" }, { text: "Fechar o plano anual!" }],
+    actionItems: [],
+    topics: [],
+    unresolvedDiscussions: [],
+    questionsRaised: [],
+  };
+  const session: StoredSession = {
+    ...makeSession("reviewed", 100),
+    consolidation: {
+      mode: "model",
+      before: counts,
+      after: { ...counts, decisions: 1 },
+      at: 1,
+      original: lists,
+    },
+  };
+  const listItem = createSessionListItem(session);
+  assert.equal(listItem.consolidation?.original, undefined);
+  assert.deepEqual(listItem.consolidation?.after, { ...counts, decisions: 1 });
+  assert.deepEqual(session.consolidation?.original, lists, "the session itself keeps them");
+});
+
 test("upsertSessionIndex places newest sessions first and deduplicates ids", () => {
   const first = makeSession("first", 100);
   const second = makeSession("second", 200);

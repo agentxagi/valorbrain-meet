@@ -32,7 +32,14 @@ import {
   topicRule,
 } from "./nearDuplicates";
 import type { ChatMessage } from "./providerClient";
-import type { ActionItem, ConsolidationReport, Decision, RecordCounts, Topic } from "./types";
+import type {
+  ActionItem,
+  ConsolidationReport,
+  Decision,
+  RecordCounts,
+  RecordLists,
+  Topic,
+} from "./types";
 
 export { isNearDuplicate } from "./nearDuplicates";
 
@@ -271,6 +278,17 @@ export function countRecord(state: ConsolidationState): RecordCounts {
     actionItems: state.actionItems.length,
     topics: state.topics.length,
     openPoints: state.unresolvedDiscussions.length + state.questionsRaised.length,
+  };
+}
+
+/** A copy of the record's lists, their items copied too. */
+export function copyRecordLists(state: ConsolidationState): RecordLists {
+  return {
+    decisions: state.decisions.map((decision) => ({ ...decision })),
+    actionItems: state.actionItems.map((action) => ({ ...action })),
+    topics: state.topics.map((topic) => ({ ...topic })),
+    unresolvedDiscussions: [...state.unresolvedDiscussions],
+    questionsRaised: [...state.questionsRaised],
   };
 }
 
@@ -590,6 +608,9 @@ function stillShown(prompted: PromptedItems, state: ConsolidationState): boolean
  * - an answer whose lists all come back empty is refused when there were
  *   more than 3 items, and so is any answer once a list no longer starts with
  *   the items it showed, or that carries a value of the prompt's example.
+ *
+ * An applied answer's report keeps a copy of the lists from before it
+ * (`original`), so the review can be undone.
  */
 export function applyConsolidation(
   state: ConsolidationState,
@@ -647,6 +668,7 @@ export function applyConsolidation(
   // without content: it must never wipe the record.
   if (shownTotal > 3 && present.every((groups) => groups.length === 0)) return refused;
 
+  const original = copyRecordLists(state);
   const names = knownNames(state, context);
   if (decisions) {
     const items = state.decisions;
@@ -685,7 +707,7 @@ export function applyConsolidation(
 
   return {
     applied: true,
-    report: { mode: "model", before, after: countRecord(state), at: Date.now() },
+    report: { mode: "model", before, after: countRecord(state), at: Date.now(), original },
   };
 }
 
@@ -718,6 +740,32 @@ export function dedupeRecord(state: ConsolidationState): ConsolidationReport {
   return { mode: "local", before, after: countRecord(state), at: Date.now() };
 }
 
+/** Stored lists from before the review, kept only when every list has its shape. */
+function readRecordLists(raw: unknown): RecordLists | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const items = (input: unknown, field: string) =>
+    Array.isArray(input) &&
+    input.every(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        typeof (item as Record<string, unknown>)[field] === "string",
+    );
+  const texts = (input: unknown) =>
+    Array.isArray(input) && input.every((item) => typeof item === "string");
+  if (
+    !items(value.decisions, "text") ||
+    !items(value.actionItems, "task") ||
+    !items(value.topics, "name") ||
+    !texts(value.unresolvedDiscussions) ||
+    !texts(value.questionsRaised)
+  ) {
+    return null;
+  }
+  return copyRecordLists(value as unknown as RecordLists);
+}
+
 /** A stored report, checked field by field (null when it is not one). */
 export function readConsolidationReport(raw: unknown): ConsolidationReport | null {
   if (!raw || typeof raw !== "object") return null;
@@ -738,5 +786,13 @@ export function readConsolidationReport(raw: unknown): ConsolidationReport | nul
   const after = counts(value.after);
   if (!before || !after) return null;
   const at = Number(value.at);
-  return { mode: value.mode, before, after, at: Number.isFinite(at) ? at : 0 };
+  const original = readRecordLists(value.original);
+  return {
+    mode: value.mode,
+    before,
+    after,
+    at: Number.isFinite(at) ? at : 0,
+    ...(original ? { original } : {}),
+    ...(value.undone === true ? { undone: true } : {}),
+  };
 }

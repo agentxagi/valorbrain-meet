@@ -358,9 +358,12 @@ function renderSummaryTab(s: State | null) {
   $("db-sentiment-label").textContent = sentimentLabel(sentiment);
 
   // What the review at the end changed (the document sent to ValorBrain never says it).
-  const review = $("db-consolidation");
-  review.textContent = consolidationLabel(s?.consolidation);
-  review.hidden = !review.textContent;
+  const reviewLabel = consolidationLabel(s?.consolidation);
+  $("db-consolidation-text").textContent = reviewLabel;
+  $("db-consolidation").hidden = !reviewLabel;
+  // A saved meeting reviewed by the model can get its lists from before back.
+  $("db-undo-review").hidden =
+    !viewed || !s?.consolidation?.original || s.consolidation.undone === true;
 
   const tokens = s?.tokensUsed ?? 0;
   const cost = s?.estimatedCost ?? 0;
@@ -723,6 +726,31 @@ async function handleHistoryAction(button: HTMLButtonElement) {
   }
 }
 
+/** Puts back the lists the review changed in the saved meeting being viewed. */
+async function undoRecordReview(button: HTMLButtonElement) {
+  const sessionId = viewed?.id;
+  if (!sessionId) return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId });
+    if (!result?.success || !result.session) {
+      throw new Error(result?.error || "erro desconhecido");
+    }
+    if (viewed?.id === sessionId) viewed = result.session as State;
+    renderAll();
+    // The memory has the reviewed record until the meeting is sent again.
+    toast(
+      `Use ${result.session.vb?.status === "sent" ? "Reenviar" : "Enviar ao ValorBrain"} no Histórico para atualizar a memória.`,
+    );
+  } catch (err) {
+    toast(`Não consegui desfazer a revisão: ${(err as Error)?.message || err}`, "error");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
 // ——— Export ———
 
 function download(content: string, filename: string, mime: string) {
@@ -950,6 +978,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     viewed = null;
     renderAll();
   });
+  $<HTMLButtonElement>("db-undo-review").addEventListener(
+    "click",
+    (event) => void undoRecordReview(event.currentTarget as HTMLButtonElement),
+  );
   $("db-copy-summary").addEventListener("click", () => {
     const summary = current()?.summary?.trim();
     if (summary) void copyText(summary);

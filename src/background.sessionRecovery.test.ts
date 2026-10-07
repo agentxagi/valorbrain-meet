@@ -47,9 +47,17 @@ const SEEDED_STATE = {
   participantCount: 2,
   consolidation: {
     mode: "model",
-    before: { decisions: 42, actionItems: 55, topics: 84, openPoints: 93 },
-    after: { decisions: 6, actionItems: 14, topics: 9, openPoints: 7 },
+    before: { decisions: 2, actionItems: 1, topics: 1, openPoints: 2 },
+    after: { decisions: 1, actionItems: 1, topics: 1, openPoints: 2 },
     at: 1_700_000_100_000,
+    // The lists from before the review, kept so it can be undone.
+    original: {
+      decisions: [{ text: "Ship the beta" }, { text: "Alice presents the roadmap" }],
+      actionItems: [{ task: "Email the team" }],
+      topics: [{ name: "Roadmap", status: "active" }],
+      unresolvedDiscussions: ["Pricing tiers"],
+      questionsRaised: ["When do we launch?"],
+    },
   },
 };
 

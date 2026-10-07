@@ -130,6 +130,7 @@ const RECORD_KINDS: Array<[keyof RecordCounts, string]> = [
  * only the kinds that changed; empty when nothing did.
  */
 export function consolidationLabel(report: ConsolidationReport | null | undefined): string {
+  if (report?.undone) return "Revisão do registro desfeita.";
   if (!report?.before || !report.after) return "";
   const changes = RECORD_KINDS.flatMap(([key, label]) => {
     const before = Number(report.before[key]) || 0;

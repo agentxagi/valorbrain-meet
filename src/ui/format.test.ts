@@ -74,6 +74,16 @@ test("the review of the record is told in one line, only what changed", () => {
     "Registro revisado ao encerrar (revisão local): pontos em aberto 93 → 90",
   );
   assert.equal(consolidationLabel({ mode: "model", before, after: { ...before }, at: 1 }), "");
+  assert.equal(
+    consolidationLabel({
+      mode: "model",
+      before,
+      after: { ...before, decisions: 6 },
+      at: 1,
+      undone: true,
+    }),
+    "Revisão do registro desfeita.",
+  );
   assert.equal(consolidationLabel(undefined), "");
   assert.equal(consolidationLabel(null), "");
 });

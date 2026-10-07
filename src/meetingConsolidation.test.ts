@@ -96,6 +96,12 @@ function salesCall(): ConsolidationState & { summary: string } {
   };
 }
 
+/** The lists of the sales call, without its summary. */
+function salesCallLists(): ConsolidationState {
+  const { decisions, actionItems, topics, unresolvedDiscussions, questionsRaised } = salesCall();
+  return { decisions, actionItems, topics, unresolvedDiscussions, questionsRaised };
+}
+
 const CONTEXT = { participants: ["You", "Leonardo Castro", "Gustavo"], selfName: "Gustavo" };
 
 // ---------------------------------------------------------------------------
@@ -376,6 +382,9 @@ test("the record keeps only the chosen items, merged, in the meeting's order", (
   assert.deepEqual(report.before, { decisions: 5, actionItems: 4, topics: 3, openPoints: 5 });
   assert.deepEqual(report.after, { decisions: 1, actionItems: 2, topics: 2, openPoints: 2 });
   assert.ok(Math.abs(report.at - Date.now()) < 5000);
+  // What the review removed is kept, so it can be undone: copies of the lists from before.
+  assert.deepEqual(report.original, salesCallLists());
+  assert.notEqual(report.original?.decisions[4], d5);
 
   // The items of the record were copied, never changed in place.
   assert.deepEqual(a1, salesCall().actionItems[0]);
@@ -896,4 +905,21 @@ test("readConsolidationReport accepts only a well-formed report", () => {
   assert.equal(readConsolidationReport("model"), null);
   assert.equal(readConsolidationReport(null), null);
   assert.equal(readConsolidationReport({ ...report, at: "x" })?.at, 0);
+
+  // The lists from before the review, and the mark of an undone review.
+  const original = salesCallLists();
+  assert.deepEqual(readConsolidationReport({ ...report, original }), { ...report, original });
+  assert.deepEqual(readConsolidationReport({ ...report, undone: true }), {
+    ...report,
+    undone: true,
+  });
+  for (const broken of [
+    { ...original, decisions: [{ by: "Bruno" }] },
+    { ...original, questionsRaised: [42] },
+    { ...original, topics: undefined },
+    "lists",
+  ]) {
+    assert.deepEqual(readConsolidationReport({ ...report, original: broken }), report);
+  }
+  assert.deepEqual(readConsolidationReport({ ...report, undone: "yes" }), report);
 });

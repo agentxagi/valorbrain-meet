@@ -99,15 +99,22 @@ export function isStorageQuotaError(err: unknown): boolean {
 /**
  * Creates a lightweight session list item by stripping the transcript and
  * timeline arrays from a full session object, suitable for the session index.
+ * The lists from before the record review (`consolidation.original`) stay
+ * out too: only the full session needs them, to undo the review.
  * @param session - The full `StoredSession` to summarize.
  * @returns A copy of `session` with empty `transcript` and `timeline` arrays.
  */
 export function createSessionListItem(session: StoredSession): StoredSession {
-  return {
+  const item: StoredSession = {
     ...session,
     transcript: [],
     timeline: [],
   };
+  if (session.consolidation?.original) {
+    item.consolidation = { ...session.consolidation };
+    delete item.consolidation.original;
+  }
+  return item;
 }
 
 /**

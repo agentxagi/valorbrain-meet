@@ -94,6 +94,8 @@ let summaryResponse: AnyRecord = DEFAULT_SUMMARY;
 let consolidationContent = "{}";
 /** An HTTP error the provider answers to the review instead (none by default). */
 let consolidationError: { status: number; body: unknown } | null = null;
+/** When set, ValorBrain answers a delivery only once this settles. */
+let storeGate: Promise<void> | null = null;
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -140,6 +142,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
     });
   }
   if (url === "https://valorbrain-api.valor.digital/api/v1/memory/store") {
+    if (storeGate) await storeGate;
     return jsonResponse(200, { ok: true, docid: "#abc123", path: "meetings/reuniao.md" });
   }
   return jsonResponse(404, { error: "unexpected url " + url });
@@ -851,6 +854,47 @@ test("the record is reviewed by the model, checked and merged before it is saved
     assert.match(payload.content, /## Decisões\n- Gustavo decide não aderir agora — Gustavo\n\n/);
     assert.doesNotMatch(payload.content, /metodologia|22\.990|Tudo bem com vocês/);
     assert.doesNotMatch(payload.content, /Registro revisado|revisão local/);
+
+    // What the review removed stays on the saved meeting, where the side panel can put it back.
+    const original = saved.consolidation.original;
+    assert.deepEqual(
+      original.decisions.map((d: AnyRecord) => d.text),
+      SALES_CALL_SUMMARY.decisions.map((d: AnyRecord) => d.text),
+    );
+    assert.deepEqual(original.questionsRaised, SALES_CALL_SUMMARY.questionsRaised);
+    const key = `savedSession:${saved.id}`;
+    await waitFor(() => localStore[key]?.vb?.status === "sent", "delivery recorded");
+    // Undone while the meeting is being sent again: the resend does not bring the review back.
+    let release = () => {};
+    storeGate = new Promise((resolve) => (release = resolve));
+    const deliveries = () => fetchCalls.filter((c) => c.url.endsWith("/api/v1/memory/store"));
+    const sentBefore = deliveries().length;
+    const resend = sendMessage({ type: "VB_SEND_SESSION", sessionId: saved.id });
+    await waitFor(() => deliveries().length > sentBefore, "resend under way");
+    const undo = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
+    assert.equal(undo.success, true, JSON.stringify(undo));
+    storeGate = null;
+    release();
+    assert.equal((await resend).ok, true);
+    const restored = localStore[key];
+    for (const list of [
+      "decisions",
+      "actionItems",
+      "topics",
+      "unresolvedDiscussions",
+      "questionsRaised",
+    ]) {
+      assert.deepEqual(restored[list], original[list], list);
+    }
+    assert.equal(restored.consolidation.undone, true);
+    assert.equal(restored.consolidation.original, undefined);
+    assert.deepEqual(restored.consolidation.after, saved.consolidation.after);
+    assert.equal(restored.vb.status, "sent");
+    const listed = (localStore.savedSessionIndex as AnyRecord[]).find((s) => s.id === saved.id)!;
+    assert.equal(listed.decisions.length, 3, "the history shows the lists put back");
+    // Nothing is left to undo.
+    const again = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
+    assert.equal(again.success, false);
   } finally {
     summaryResponse = DEFAULT_SUMMARY;
     consolidationContent = "{}";

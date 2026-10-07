@@ -141,6 +141,7 @@ import {
 import {
   applyConsolidation,
   buildConsolidationMessages,
+  copyRecordLists,
   countRecord,
   dedupeRecord,
   promptedItems,
@@ -703,6 +704,9 @@ function snapshot(): State {
             ...state.consolidation,
             before: { ...state.consolidation.before },
             after: { ...state.consolidation.after },
+            ...(state.consolidation.original
+              ? { original: copyRecordLists(state.consolidation.original) }
+              : {}),
           },
         }
       : {}),
@@ -3058,10 +3062,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const vb: VbDeliveryStatus = result.ok
           ? { status: "sent", at: Date.now(), docRef: result.docRef }
           : { status: "failed", at: Date.now(), error: result.error };
-        await saveSessionRecord({ ...session, vb });
+        // Read it again: during the request it may have been deleted or had its review undone.
+        const latest = await getSavedMeetingSession(chrome.storage.local, session.id);
+        if (latest) await saveSessionRecord({ ...latest, vb });
         await patchLastSession(session.id, { vb });
         if (result.ok) void teachCorrectionsToValorBrain(session, vbSettings);
         sendResponse(result);
+        return;
+      }
+
+      case "UNDO_RECORD_REVIEW": {
+        // The side panel puts back the lists the model's review changed in a
+        // saved meeting. ValorBrain gets them when the user sends it again.
+        const session =
+          typeof message.sessionId === "string"
+            ? await getSavedMeetingSession(chrome.storage.local, message.sessionId)
+            : null;
+        const report = readConsolidationReport(session?.consolidation);
+        if (!session || !report?.original) {
+          sendResponse({ success: false, error: "Esta reunião não tem revisão para desfazer." });
+          return;
+        }
+        const { original, ...review } = report;
+        const restored = await saveSessionRecord({
+          ...session,
+          ...original,
+          consolidation: { ...review, undone: true },
+        });
+        // The title comes from the first topic, which the review may have dropped.
+        await patchLastSession(restored.id, { title: sessionTitle(restored) });
+        sendResponse({ success: true, session: restored });
         return;
       }
 
