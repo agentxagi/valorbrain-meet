@@ -23,13 +23,7 @@ test("normalizeItemText drops case, accents, punctuation and full-width forms", 
   assert.equal(normalizeItemText(undefined), "");
 });
 
-test("rewordings from a real meeting are the same item", () => {
-  assert.ok(
-    isNearDuplicate(
-      "Perfilhar Gustavo da melhor forma para indicar o programa certo de mentoria",
-      "Perfilar Gustavo da melhor forma para indicar o programa certo de mentoria",
-    ),
-  );
+test("the same item said again is found despite case, accents, punctuation and articles", () => {
   assert.ok(
     isNearDuplicate(
       "Desenhar a carta de apresentação do Gustavo para os recrutadores.",
@@ -37,13 +31,76 @@ test("rewordings from a real meeting are the same item", () => {
     ),
   );
   assert.ok(isNearDuplicate("Qual é o valor do serviço?", "qual é o valor do serviço"));
-  // Same numbers, written alike: "05/10" and "5/10" are the same date.
+  assert.ok(
+    isNearDuplicate("Explicar o follow-up ao Carlos Levy", "Explicar o follow up ao Carlos Levy."),
+  );
+  // Articles apart, the same words in the same order ("05/10" and "5/10" are one date).
   assert.ok(
     isNearDuplicate(
-      "Parcelar o programa em 21x de 520 reais pelo cartão até 05/10",
-      "Parcelar o programa em 21x de 520 reais via cartão até 5/10",
+      "Enviar a proposta revisada para o Carlos até 05/10",
+      "Enviar proposta revisada para Carlos até 5/10",
     ),
   );
+});
+
+test("one word changed, moved or spelled differently keeps two items apart", () => {
+  const pairs: Array<[string, string]> = [
+    // Each of these shares at least 80% of its words.
+    [
+      "Gustavo aceita a proposta de 21x de 520 reais no cartão de crédito",
+      "Gustavo recusa a proposta de 21x de 520 reais no cartão de crédito",
+    ],
+    [
+      "Aprovar o orçamento de marketing digital para o próximo trimestre da empresa",
+      "Rejeitar o orçamento de marketing digital para o próximo trimestre da empresa",
+    ],
+    [
+      "Gustavo fecha o plano anual de mentoria com pagamento pelo cartão de crédito",
+      "Gustavo fecha o plano mensal de mentoria com pagamento pelo cartão de crédito",
+    ],
+    [
+      "Gustavo não aceita o plano anual mas aceita o plano mensal",
+      "Gustavo aceita o plano anual mas não aceita o plano mensal",
+    ],
+    [
+      "Leonardo envia o contrato assinado para o Gustavo amanhã cedo",
+      "Gustavo envia o contrato assinado para o Leonardo amanhã cedo",
+    ],
+    [
+      "Enviar o desconto combinado para o Gustavo por e-mail ainda hoje",
+      "Enviar o desconto combinado para o Carlos por e-mail ainda hoje",
+    ],
+    [
+      "Fazer a primeira reunião de alinhamento com o time comercial da empresa",
+      "Fazer a segunda reunião de alinhamento com o time comercial da empresa",
+    ],
+    [
+      "Revisar o contrato de prestação de serviços antes da assinatura do cliente",
+      "Revisar o contrato de prestação de serviços depois da assinatura do cliente",
+    ],
+    [
+      "Incluir o módulo de oratória no pacote completo do programa de mentoria",
+      "Excluir o módulo de oratória no pacote completo do programa de mentoria",
+    ],
+    [
+      "Cobrar mais pelo módulo de oratória no pacote completo do programa",
+      "Cobrar menos pelo módulo de oratória no pacote completo do programa",
+    ],
+    [
+      "Concluir a matrícula do Gustavo no programa completo é possível este mês",
+      "Concluir a matrícula do Gustavo no programa completo é impossível este mês",
+    ],
+    // A reworded word is left to the review at the end, where the model decides.
+    [
+      "Perfilhar Gustavo da melhor forma para indicar o programa certo de mentoria",
+      "Perfilar Gustavo da melhor forma para indicar o programa certo de mentoria",
+    ],
+    [
+      "Ligar para o Paulo amanhã cedo para confirmar a matrícula no programa",
+      "Ligar para a Paula amanhã cedo para confirmar a matrícula no programa",
+    ],
+  ];
+  for (const [a, b] of pairs) assert.equal(isNearDuplicate(a, b), false, `${a} / ${b}`);
 });
 
 test("short items are the same only when they read the same", () => {
@@ -93,7 +150,7 @@ test("a negation among the words that differ keeps two items apart", () => {
     ["ส่งข้อเสนอให้ลูกค้าภายในสัปดาห์หน้า", "ไม่ส่งข้อเสนอให้ลูกค้าภายในสัปดาห์หน้า"],
     ["다음 주에 고객에게 새 제안서를 보낸다", "다음 주에 고객에게 새 제안서를 안 보낸다"],
   ];
-  // Each pair shares at least 80% of its words: only the negation keeps it apart.
+  // Each pair shares at least 80% of its words.
   for (const [a, b] of pairs) assert.equal(isNearDuplicate(a, b), false, `${a} / ${b}`);
 });
 
@@ -117,18 +174,24 @@ test("different numbers, number words or dates keep two items apart", () => {
     ],
     ["我们计划在三个月内完成新版本的开发和发布", "我们计划在六个月内完成新版本的开发和发布"],
   ];
-  // Each pair shares at least 80% of its words: only the numbers keep it apart.
+  // Each pair shares at least 80% of its words.
   for (const [a, b] of pairs) assert.equal(isNearDuplicate(a, b), false, `${a} / ${b}`);
 });
 
-test("near-duplicates are found in scripts written without spaces", () => {
-  assert.ok(isNearDuplicate("我们决定下周发布新版本给所有客户", "我们决定下周发布新版本给客户"));
+test("scripts written without spaces have words too", () => {
+  // Punctuation changes where the words fall: the words themselves are the same.
+  assert.ok(isNearDuplicate("我们决定，下周发布新版本。", "我们决定下周发布新版本"));
   assert.ok(
     isNearDuplicate("来週、新しいバージョンを公開します。", "来週新しいバージョンを公開します"),
   );
+  assert.equal(
+    isNearDuplicate("我们决定下周发布新版本给所有客户", "我们决定下周发布新版本给客户"),
+    false,
+    "a word more is another item",
+  );
 });
 
-test("appendDistinct keeps the earliest item and completes it from its repeats", () => {
+test("appendDistinct keeps the earliest item, completed and with its latest classification", () => {
   const decisions: Decision[] = [
     {
       text: "Lançar a versão 2 na sexta-feira",
@@ -153,15 +216,36 @@ test("appendDistinct keeps the earliest item and completes it from its repeats",
   );
   assert.deepEqual(merged, [
     {
+      // The earliest text and source; confirmed later, so no longer "a confirmar".
       text: "Lançar a versão 2 na sexta-feira",
       chunkId: "chunk_3",
       timestampLabel: "00:30",
-      classification: "tentative",
+      classification: "finalized",
       by: "Ana",
     },
     { text: "Contratar mais um desenvolvedor", by: "Bruno" },
   ]);
   assert.equal(decisions[0].by, undefined, "the inputs are not changed");
+  assert.equal(decisions[0].classification, "tentative");
+});
+
+test("a real name said later replaces a placeholder, never the other way round", () => {
+  const actions = appendDistinct<ActionItem>(
+    [{ task: "Mandar o contrato revisado", owner: "Participante" }],
+    [
+      { task: "Mandar o contrato revisado", owner: "Você" },
+      { task: "mandar o contrato revisado", owner: "Leonardo" },
+      { task: "Mandar o contrato revisado.", owner: "Participante" },
+    ],
+    actionRule,
+  );
+  assert.deepEqual(actions, [{ task: "Mandar o contrato revisado", owner: "Leonardo" }]);
+  const decisions = appendDistinct<Decision>(
+    [{ text: "Fechar o plano mensal", by: "Participante" }],
+    [{ text: "Fechar o plano mensal", by: "Gustavo" }],
+    decisionRule,
+  );
+  assert.equal(decisions[0].by, "Gustavo");
 });
 
 test("appendDistinct keeps the same task apart for two people or two dates", () => {

@@ -185,7 +185,7 @@ test("mergeSummaryResult validates, deduplicates and keeps source references", (
   assert.equal(state.currentTopic, "Lançamento");
   assert.equal(state.decisions.length, 1, "a repeat is not added again, empty is dropped");
   assert.equal(state.decisions[0].text, "Lançar na sexta", "the earlier item stays");
-  assert.equal(state.decisions[0].classification, "finalized");
+  assert.equal(state.decisions[0].classification, "tentative", "with its latest classification");
   assert.equal(state.actionItems.length, 1);
   assert.equal(state.actionItems[0].owner, "Bruno");
   assert.equal(state.sentiment, "positive");
@@ -194,7 +194,7 @@ test("mergeSummaryResult validates, deduplicates and keeps source references", (
   assert.deepEqual(state.questionsRaised, ["Qual o preço?"]);
 });
 
-test("mergeSummaryResult does not register again what was said in other words", () => {
+test("mergeSummaryResult does not register the same item twice", () => {
   const state = emptyState();
   state.decisions = [
     {
@@ -233,11 +233,16 @@ test("mergeSummaryResult does not register again what was said in other words", 
       ],
       actionItems: [
         {
-          task: "Perfilhar Gustavo da melhor forma para indicar o programa certo de mentoria",
+          task: "Perfilar o Gustavo da melhor forma para indicar o programa certo de mentoria.",
           owner: "Leonardo",
           deadline: "sexta",
           chunkId: "chunk_33",
           confidence: "high",
+        },
+        // Another word: left for the review at the end, not merged here.
+        {
+          task: "Perfilhar Gustavo da melhor forma para indicar o programa certo de mentoria",
+          chunkId: "chunk_35",
         },
       ],
       topics: [{ name: "preço do programa", status: "completed" }],
@@ -255,19 +260,48 @@ test("mergeSummaryResult does not register again what was said in other words", 
     by: "Gustavo",
   });
   assert.match(state.decisions[1].text, /decide não fazer/);
-  assert.deepEqual(state.actionItems, [
-    {
-      task: "Perfilar Gustavo da melhor forma para indicar o programa certo de mentoria",
-      chunkId: "chunk_7",
-      timestampLabel: "08:00",
-      confidence: "high",
-      isSpeculative: false,
-      owner: "Leonardo",
-      deadline: "sexta",
-    },
-  ]);
+  assert.deepEqual(state.actionItems[0], {
+    task: "Perfilar Gustavo da melhor forma para indicar o programa certo de mentoria",
+    chunkId: "chunk_7",
+    timestampLabel: "08:00",
+    confidence: "high",
+    isSpeculative: false,
+    owner: "Leonardo",
+    deadline: "sexta",
+  });
+  assert.equal(state.actionItems.length, 2);
+  assert.match(state.actionItems[1].task, /^Perfilhar/);
   assert.deepEqual(state.topics, [{ name: "Preço do programa", status: "completed" }]);
   assert.deepEqual(state.questionsRaised, ["Qual é o valor do serviço?"]);
+});
+
+test("mergeSummaryResult keeps a decision that says the opposite in almost the same words", () => {
+  const state = emptyState();
+  state.decisions = [
+    {
+      text: "Gustavo aceita a proposta de 21x de 520 reais no cartão de crédito",
+      classification: "tentative",
+    },
+  ];
+  mergeSummaryResult(
+    state,
+    {
+      decisions: [
+        {
+          text: "Gustavo recusa a proposta de 21x de 520 reais no cartão de crédito",
+          classification: "finalized",
+        },
+      ],
+    },
+    ALL,
+  );
+  assert.deepEqual(
+    state.decisions.map((d) => [d.text.split(" ")[1], d.classification]),
+    [
+      ["aceita", "tentative"],
+      ["recusa", "finalized"],
+    ],
+  );
 });
 
 test("mergeSummaryResult ignores disabled features and garbage payloads", () => {

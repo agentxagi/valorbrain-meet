@@ -337,9 +337,10 @@ const SENTIMENTS = new Set(["positive", "neutral", "negative", "mixed"]);
 /**
  * Merges one parsed model answer into `state` (mutates and returns it).
  * Unknown/invalid fields are ignored. An incoming decision, task, topic, open
- * point or insight that repeats one already registered, even in other words
- * (nearDuplicates.ts), is not added again: the earlier item stays and takes
- * what the repeat adds (an owner, a deadline, a topic's new status).
+ * point or insight that repeats one already registered (nearDuplicates.ts:
+ * the same words, case, accents, punctuation and articles apart) is not added
+ * again: the earlier item stays and takes what the repeat adds (an owner, a
+ * deadline, a decision's or topic's latest classification or status).
  */
 export function mergeSummaryResult(
   state: SummaryState,

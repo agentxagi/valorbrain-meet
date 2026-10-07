@@ -2,14 +2,20 @@
  * @fileoverview Near-duplicate items of a meeting record.
  *
  * The live summarizer reads the meeting excerpt by excerpt, so the same
- * decision, task or question comes back in other words ("Perfilhar Gustavo da
- * melhor forma" / "Perfilar Gustavo da melhor forma"). Two items are the same
- * when their normalized texts are equal, or when both have at least 4 words
- * and share at least 80% of them (word-set Jaccard) — but never when the words
- * that differ include a negation, and never when they carry different numbers
- * or dates ("21x de 500" / "21x de 520" stay apart). Words come from
- * Intl.Segmenter, so Chinese, Japanese and Thai, written without spaces, have
- * words too.
+ * decision, task or question is registered again. Two items are the same when
+ * their normalized texts are equal (case, accents, punctuation), or when both
+ * have at least 4 words and share at least 80% of them (word-set Jaccard) —
+ * but never when the words that differ include a negation, never when they
+ * carry different numbers or dates ("21x de 500" / "21x de 520"), and only
+ * when, articles apart, they say the same words in the same order.
+ *
+ * That last guard is deliberate: one changed word is enough to say the
+ * opposite ("aceita" / "recusa", "anual" / "mensal", another person, sender
+ * and recipient swapped), and close spellings are not safe either
+ * ("possível" / "impossível", "Paulo" / "Paula"). Rewordings are left to the
+ * end-of-meeting review, where the model decides and the extension checks.
+ * Words come from Intl.Segmenter, so Chinese, Japanese and Thai, written
+ * without spaces, have words too.
  *
  * Used by the live merge (meetingSummary.ts) and by the end-of-meeting review
  * (meetingConsolidation.ts, which re-exports isNearDuplicate). It lives in a
@@ -111,6 +117,16 @@ const NUMBER_WORDS = wordSet([
   "maggio giugno luglio settembre ottobre dicembre",
 ]);
 
+/**
+ * Articles (pt, en, es, fr, de, it): the only words two items may differ by.
+ * Prepositions are not here: "para o Gustavo" and "do Gustavo" are not the
+ * same task.
+ */
+const ARTICLES = wordSet([
+  "o a os as um uma uns umas the an el la los las unos unas le les l un une",
+  "der die das den dem des ein eine einen einem einer eines il lo i gli uno",
+]);
+
 /** Chinese and Japanese numerals inside a word (三个月, 两周); 一 is left out, it is also "a". */
 const HAN_NUMERAL = /[〇二三四五六七八九十百千万萬亿億两兩]/u;
 
@@ -168,12 +184,20 @@ interface ItemKey {
   text: string;
   words: Set<string>;
   numbers: Set<string>;
+  /** The words in order, articles left out. */
+  sequence: string[];
 }
 
 function itemKey(value: unknown): ItemKey {
   const text = typeof value === "string" ? value : "";
-  const words = new Set(itemWords(text));
-  return { text: normalizeItemText(text), words, numbers: numbersIn(words) };
+  const sequence = itemWords(text);
+  const words = new Set(sequence);
+  return {
+    text: normalizeItemText(text),
+    words,
+    numbers: numbersIn(words),
+    sequence: sequence.filter((word) => !ARTICLES.has(word)),
+  };
 }
 
 function sameSet(a: Set<string>, b: Set<string>): boolean {
@@ -194,13 +218,18 @@ function sameItem(a: ItemKey, b: ItemKey): boolean {
   if (shared / (a.words.size + b.words.size - shared) < NEAR_DUPLICATE_JACCARD) return false;
   for (const word of a.words) if (!b.words.has(word) && isNegation(word)) return false;
   for (const word of b.words) if (!a.words.has(word) && isNegation(word)) return false;
-  return true;
+  // Articles apart, the same words in the same order: no other word swapped
+  // ("aceita" / "recusa"), moved (who sends to whom) or added.
+  return (
+    a.sequence.length === b.sequence.length && a.sequence.every((word, i) => word === b.sequence[i])
+  );
 }
 
 /**
  * True when two item texts say the same thing: equal once normalized, or at
  * least 4 words each with 80% of the words in common, no negation among the
- * words that differ and the same numbers and dates.
+ * words that differ, the same numbers and dates, and, articles apart, the same
+ * words in the same order.
  */
 export function isNearDuplicate(a: string, b: string): boolean {
   return sameItem(itemKey(a), itemKey(b));
@@ -259,18 +288,24 @@ export function higherConfidence(
   return (CONFIDENCE_RANK[b ?? ""] ?? 0) > (CONFIDENCE_RANK[a ?? ""] ?? 0) ? b : a;
 }
 
-/** Fills the decision's missing author from its repeat. */
+/** A name the repeat can give: the kept one is missing or a placeholder, the repeat's is real. */
+function betterName(kept: string | undefined, repeat: string | undefined): boolean {
+  return (!kept || isPlaceholderName(kept)) && !!repeat && !isPlaceholderName(repeat);
+}
+
+/** Fills the decision's missing (or "Participante") author from its repeat. */
 export function absorbDecision(kept: Decision, repeat: Decision): Decision {
-  return !kept.by && repeat.by ? { ...kept, by: repeat.by } : kept;
+  return betterName(kept.by, repeat.by) ? { ...kept, by: repeat.by } : kept;
 }
 
 /**
- * Fills the task's missing owner and deadline from its repeat, keeps the
- * higher confidence, and stays an idea only if the repeat is one too.
+ * Fills the task's missing (or "Participante") owner and its missing deadline
+ * from its repeat, keeps the higher confidence, and stays an idea only if the
+ * repeat is one too.
  */
 export function absorbAction(kept: ActionItem, repeat: ActionItem): ActionItem {
   const merged: ActionItem = { ...kept };
-  if (!merged.owner && repeat.owner) merged.owner = repeat.owner;
+  if (betterName(merged.owner, repeat.owner)) merged.owner = repeat.owner;
   if (!merged.deadline && repeat.deadline) merged.deadline = repeat.deadline;
   const confidence = higherConfidence(kept.confidence, repeat.confidence);
   if (confidence) merged.confidence = confidence;
@@ -294,9 +329,15 @@ function deadlinesConflict(a: string | undefined, b: string | undefined): boolea
 
 const TOPIC_STATUSES = new Set(["active", "completed", "unresolved"]);
 
+/** A decision said again carries its latest classification ("tentative" that became "finalized"). */
 export const decisionRule: MergeRule<Decision> = {
   text: (decision) => decision.text,
-  absorb: absorbDecision,
+  absorb: (kept, repeat) => {
+    const merged = absorbDecision(kept, repeat);
+    return repeat.classification && repeat.classification !== merged.classification
+      ? { ...merged, classification: repeat.classification }
+      : merged;
+  },
 };
 
 /** The same words for two people, or for two dates, are two commitments. */
