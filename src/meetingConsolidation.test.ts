@@ -207,8 +207,17 @@ test("the review prompt states the rules, the security fence and the meeting lan
   assert.match(system.content, /oferta ou proposta que ninguém respondeu/);
   assert.match(system.content, /fique só com a versão final/);
   assert.match(system.content, /Uma proposta recusada ou substituída por outra também sai/);
-  // A promise that hangs on something that did not happen (a sale not closed) is neither.
-  assert.match(system.content, /Promessa que depende de algo que não aconteceu na reunião/);
+  // What a service would do if it were bought, with no sale closed, is neither…
+  assert.match(
+    system.content,
+    /O que um produto ou serviço faria se fosse contratado, quando a contratação não foi fechada, não é decisão nem próximo passo/,
+  );
+  // …but a commitment that hangs on a condition that can still happen stays.
+  assert.match(
+    system.content,
+    /Um compromisso que depende de uma condição que ainda pode acontecer fica \(por exemplo: "Se o cliente aprovar o orçamento até sexta, Bruno manda o contrato na segunda"\)/,
+  );
+  assert.doesNotMatch(system.content, /Promessa que depende de algo que não aconteceu/);
   assert.match(system.content, /no máximo 12 temas/);
   assert.match(system.content, /escreva só o código \("D2"\)/);
   assert.match(system.content, /compromisso de fazer algo depois da reunião/);

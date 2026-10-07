@@ -177,7 +177,16 @@ test("the summary rules say what a decision, an action, a topic and an open ques
   assert.match(system.content, /combinado sobre a própria reunião/);
   assert.match(system.content, /compromisso de fazer algo depois da reunião/);
   assert.match(system.content, /o que um produto ou serviço oferece/);
-  assert.match(system.content, /nem o que alguém faria se algo ainda não fechado acontecer/);
+  assert.match(
+    system.content,
+    /nem o que um produto ou serviço faria se fosse contratado, quando a contratação não foi fechada\./,
+  );
+  // A commitment that hangs on a condition is kept, with the condition in its text.
+  assert.match(
+    system.content,
+    /Um compromisso que depende de uma condição é registrado com a condição no texto da tarefa \(isSpeculative: true se for incerto\), por exemplo: "Se o cliente aprovar o orçamento até sexta, Bruno manda o contrato na segunda"/,
+  );
+  assert.doesNotMatch(system.content, /nem o que alguém faria se algo ainda não fechado acontecer/);
   assert.match(system.content, /use exatamente o mesmo nome/);
   assert.match(system.content, /deixe de fora perguntas de cortesia/);
   assert.match(system.content, /nem com outras palavras/);
