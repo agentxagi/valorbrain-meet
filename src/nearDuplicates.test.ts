@@ -208,6 +208,24 @@ test("accents, signs and a number's separators keep two items apart", () => {
   );
 });
 
+test("typed without accents, a word only an accent tells apart keeps two items apart", () => {
+  const pairs: Array<[string, string]> = [
+    ["Sí, el cliente firmará el contrato anual", "Si el cliente firmara el contrato anual"],
+    ["O cliente pôde pagar a entrada à vista", "O cliente pode pagar a entrada a vista"],
+  ];
+  for (const [a, b] of pairs) {
+    assert.equal(isNearDuplicate(a, b), false, `${a} / ${b}`);
+    assert.equal(isNearDuplicate(b, a), false, `${b} / ${a}`);
+  }
+  // Without such a word, a text typed without accents is still the same item.
+  assert.ok(
+    isNearDuplicate(
+      "Enviar a apresentação do serviço até sexta",
+      "Enviar a apresentacao do servico ate sexta",
+    ),
+  );
+});
+
 test("scripts written without spaces have words too", () => {
   // Punctuation changes where the words fall: the words themselves are the same.
   assert.ok(isNearDuplicate("我们决定，下周发布新版本。", "我们决定下周发布新版本"));

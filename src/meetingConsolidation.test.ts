@@ -894,7 +894,7 @@ test("dedupeRecord merges repeats locally and keeps the earliest item", () => {
 });
 
 test("isNearDuplicate is available from the review module", () => {
-  assert.equal(isNearDuplicate("Qual é o valor do serviço?", "qual e o valor do servico"), true);
+  assert.equal(isNearDuplicate("Qual o preço do serviço?", "qual o preco do servico"), true);
   assert.equal(isNearDuplicate("21x de 500", "21x de 520"), false);
 });
 

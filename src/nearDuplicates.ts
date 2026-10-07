@@ -158,6 +158,20 @@ const ARTICLES = wordSet([
 /** Chinese and Japanese numerals inside a word (三个月, 两周); 一 is left out, it is also "a". */
 const HAN_NUMERAL = /[〇二三四五六七八九十百千万萬亿億两兩]/u;
 
+/**
+ * Words that only their accent tells apart from another word (es, pt):
+ * "sí" (yes) / "si" (if), "pôde" (could) / "pode" (can), "é" (is) / "e"
+ * (and), "firmará" / "firmara". Typed without accents, the two are the same
+ * letters, so the comparison without accents keeps such a pair apart. ("à"
+ * and "a" are both articles, ignored anyway.)
+ */
+const ACCENT_MINIMAL_PAIRS = new Set(
+  [
+    "sí él más tú sé dé té mí sólo qué aún está será firmará", // es
+    "pôde pôr avó avô é nós dá", // pt
+  ].flatMap((list) => list.split(" ")),
+);
+
 /** Labels the pipeline uses when it does not know who spoke: never a real name. */
 const PLACEHOLDER_NAMES = new Set(["participante", "you", "voce", "audio"]);
 
@@ -304,14 +318,31 @@ function sameReading(a: Reading, b: Reading): boolean {
   );
 }
 
+/** Two words in the same place that only the accent of a known minimal pair tells apart. */
+function accentMinimalPair(a: string[], b: string[]): boolean {
+  return (
+    a.length === b.length &&
+    a.some(
+      (word, i) =>
+        word !== b[i] &&
+        withoutMarks(word) === withoutMarks(b[i]) &&
+        (ACCENT_MINIMAL_PAIRS.has(word) || ACCENT_MINIMAL_PAIRS.has(b[i])),
+    )
+  );
+}
+
 /**
  * Accents count: one accent apart is another word ("pode" / "pôde", "si" /
  * "sí"). Only a text without a single accent next to one with several is read
  * without them: it was typed without accents ("apresentacao", "servico").
+ * Even then, a word that only an accent tells apart from another (see
+ * ACCENT_MINIMAL_PAIRS) keeps the two items apart.
  */
 function sameItem(a: ItemKey, b: ItemKey): boolean {
   const typedWithout = Math.min(a.accents, b.accents) === 0 && Math.max(a.accents, b.accents) >= 2;
-  return typedWithout ? sameReading(a.unaccented, b.unaccented) : sameReading(a.written, b.written);
+  if (!typedWithout) return sameReading(a.written, b.written);
+  if (accentMinimalPair(a.written.sequence, b.written.sequence)) return false;
+  return sameReading(a.unaccented, b.unaccented);
 }
 
 /**
