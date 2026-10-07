@@ -39,7 +39,10 @@ const localStore: AnyRecord = {
 const sessionStore: AnyRecord = {};
 
 let messageListener: MessageListener | undefined;
+let tabActivatedListener: ((info: { tabId: number; windowId: number }) => unknown) | undefined;
 let offscreenOpen = false;
+/** The browser's tabs, as chrome.tabs.query and chrome.tabs.get see them (none by default). */
+let openTabs: AnyRecord[] = [];
 const runtimeMessages: AnyRecord[] = [];
 const badgeTexts: string[] = [];
 const notifications: AnyRecord[] = [];
@@ -51,12 +54,25 @@ function toKeyList(keys: string | string[] | AnyRecord | null | undefined, store
   return Object.keys(keys ?? store);
 }
 
+/**
+ * While set, a read of a saved meeting takes its copy at once and returns it
+ * only when this settles, as when two changes overlap.
+ */
+let savedReadGate: Promise<void> | null = null;
+let heldSavedReads = 0;
+
 function createStorageArea(store: AnyRecord) {
   return {
     async get(keys?: string | string[] | AnyRecord | null) {
       const out: AnyRecord = {};
-      for (const key of toKeyList(keys, store)) {
+      const list = toKeyList(keys, store);
+      for (const key of list) {
         if (key in store) out[key] = structuredClone(store[key]);
+      }
+      if (savedReadGate && list.some((key) => key.startsWith("savedSession:"))) {
+        heldSavedReads += 1;
+        await savedReadGate;
+        heldSavedReads -= 1;
       }
       return out;
     },
@@ -75,6 +91,29 @@ function createStorageArea(store: AnyRecord) {
 const sttResponses: AnyRecord[] = [];
 /** What the model answers to the final spelling pass (no corrections by default). */
 let correctionResponse: AnyRecord = { correcoes: [] };
+
+const DEFAULT_SUMMARY: AnyRecord = {
+  summary: "A equipe decidiu lançar a versão 2 na sexta-feira.",
+  summaryItems: [{ text: "Lançamento na sexta", chunkId: "chunk_1", timestampLabel: "00:00" }],
+  topics: [{ name: "Lançamento da versão 2", status: "completed" }],
+  currentTopic: "Lançamento da versão 2",
+  decisions: [{ text: "Lançar na sexta-feira", chunkId: "chunk_1", classification: "finalized" }],
+  actionItems: [{ task: "Preparar o changelog", owner: "Bruno", deadline: "quinta-feira" }],
+  sentiment: "positive",
+  keyInsights: [],
+  contradictions: [],
+  questionsRaised: ["Qual o preço do plano empresarial?"],
+};
+/** What the model answers to a summary pass. */
+let summaryResponse: AnyRecord = DEFAULT_SUMMARY;
+/** What the model answers to the review of the record at the end (raw content). */
+let consolidationContent = "{}";
+/** An HTTP error the provider answers to the review instead (none by default). */
+let consolidationError: { status: number; body: unknown } | null = null;
+/** When set, ValorBrain answers a delivery only once this settles. */
+let storeGate: Promise<void> | null = null;
+/** When true, the review of the record never answers: only its signal ends the request. */
+let consolidationHangs = false;
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -104,37 +143,32 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
       usage: { prompt_tokens: 400, completion_tokens: 40, total_tokens: 440 },
     });
   }
+  if (
+    url === "https://api.z.ai/api/coding/paas/v4/chat/completions" &&
+    /revisa o registro/.test(chatSystemPrompt(init))
+  ) {
+    if (consolidationError) return jsonResponse(consolidationError.status, consolidationError.body);
+    if (consolidationHangs) {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal;
+        const stop = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        if (signal?.aborted) stop();
+        else signal?.addEventListener("abort", stop, { once: true });
+      });
+    }
+    return jsonResponse(200, {
+      choices: [{ finish_reason: "stop", message: { content: consolidationContent } }],
+      usage: { prompt_tokens: 1500, completion_tokens: 200, total_tokens: 1700 },
+    });
+  }
   if (url === "https://api.z.ai/api/coding/paas/v4/chat/completions") {
     return jsonResponse(200, {
-      choices: [
-        {
-          finish_reason: "stop",
-          message: {
-            content: JSON.stringify({
-              summary: "A equipe decidiu lançar a versão 2 na sexta-feira.",
-              summaryItems: [
-                { text: "Lançamento na sexta", chunkId: "chunk_1", timestampLabel: "00:00" },
-              ],
-              topics: [{ name: "Lançamento da versão 2", status: "completed" }],
-              currentTopic: "Lançamento da versão 2",
-              decisions: [
-                { text: "Lançar na sexta-feira", chunkId: "chunk_1", classification: "finalized" },
-              ],
-              actionItems: [
-                { task: "Preparar o changelog", owner: "Bruno", deadline: "quinta-feira" },
-              ],
-              sentiment: "positive",
-              keyInsights: [],
-              contradictions: [],
-              questionsRaised: ["Qual o preço do plano empresarial?"],
-            }),
-          },
-        },
-      ],
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(summaryResponse) } }],
       usage: { prompt_tokens: 900, completion_tokens: 120, total_tokens: 1020 },
     });
   }
   if (url === "https://valorbrain-api.valor.digital/api/v1/memory/store") {
+    if (storeGate) await storeGate;
     return jsonResponse(200, { ok: true, docid: "#abc123", path: "meetings/reuniao.md" });
   }
   return jsonResponse(404, { error: "unexpected url " + url });
@@ -154,6 +188,7 @@ function installChromeMock() {
       getURL: (path: string) => `chrome-extension://vbmeet/${path}`,
       getContexts: async () => (offscreenOpen ? [{ contextType: "OFFSCREEN_DOCUMENT" }] : []),
       getPlatformInfo: (cb: () => void) => cb?.(),
+      getManifest: () => ({ version: "2.4.0" }),
       sendMessage: async (message: AnyRecord) => {
         runtimeMessages.push(message);
         switch (message.type) {
@@ -203,10 +238,14 @@ function installChromeMock() {
     alarms: { onAlarm: ignored, create: () => {} },
     tabs: {
       onUpdated: ignored,
-      onActivated: ignored,
+      onActivated: {
+        addListener: (cb: typeof tabActivatedListener) => {
+          tabActivatedListener = cb;
+        },
+      },
       onRemoved: ignored,
-      get: async () => ({}),
-      query: async () => [],
+      get: async (tabId: number) => openTabs.find((tab) => tab.id === tabId) ?? {},
+      query: async () => openTabs,
       sendMessage: async () => {},
       create: async () => ({}),
     },
@@ -227,6 +266,7 @@ function installChromeMock() {
 
 installChromeMock();
 await import("./background.ts");
+const { buildValorBrainContent } = await import("./vbClient.ts");
 
 function sendMessage(message: AnyRecord, sender: AnyRecord = {}): Promise<AnyRecord> {
   return new Promise((resolve) => {
@@ -380,6 +420,21 @@ test("a recording is transcribed, its language detected, summarized in it, saved
   assert.equal(saved.transcript.length, 2);
   assert.equal(saved.vb.status, "sent");
   assert.equal(saved.isActive, false);
+  // Four items are too few for the model's review of the record: only the local one ran.
+  assert.ok(
+    !fetchCalls.some(
+      (c) =>
+        c.url.endsWith("/chat/completions") && /revisa o registro/.test(chatSystemPrompt(c.init)),
+    ),
+  );
+  assert.equal(saved.consolidation.mode, "local");
+  assert.deepEqual(saved.consolidation.after, {
+    decisions: 1,
+    actionItems: 1,
+    topics: 1,
+    openPoints: 1,
+  });
+  assert.equal(saved.appVersion, "2.4.0", "the record says which version wrote it");
 
   // Delivered to the tenant with the OAuth token and PT-BR sections.
   const storeCall = fetchCalls.find((c) => c.url.endsWith("/api/v1/memory/store"))!;
@@ -391,6 +446,7 @@ test("a recording is transcribed, its language detected, summarized in it, saved
   assert.match(payload.content, /## Próximos passos\n- \[ \] Preparar o changelog — Bruno/);
   assert.match(payload.content, /## Pontos em aberto\n- Qual o preço do plano empresarial\?/);
   assert.match(payload.content, /## Transcrição\n\[00:00\] Participante: Bom dia, pessoal\./);
+  assert.match(payload.content, /\n- Registrado pelo ValorBrain Meet 2\.4\.0 \(transcrição/);
 
   // UI side effects: session-ended event, badge cleared, offscreen closed, notification.
   assert.ok(runtimeMessages.some((m) => m.type === "SESSION_ENDED" && m.saved === true));
@@ -574,7 +630,7 @@ test("the microphone is the user, echoes are dropped and misheard terms are fixe
       c.url.endsWith("/chat/completions") && /motor de inteligência/.test(chatSystemPrompt(c.init)),
   )!;
   const summaryUser = JSON.parse(String(summaryCall.init.body)).messages[1].content;
-  assert.match(summaryUser, /Quem gravou a reunião: Gustavo\./);
+  assert.match(summaryUser, /Quem gravou a reunião: Gustavo\.\n<\/participantes>/);
   assert.match(summaryUser, /Gustavo: Olha, o gbrain já resolve/);
 
   const store = await waitFor(
@@ -612,4 +668,612 @@ test("muting the microphone in Meet reaches the recorder", async () => {
     async () => ((await sendMessage({ type: "GET_STATE" })).audioActive === false ? true : null),
     "stop",
   );
+});
+
+test("everyone who attended is saved, even after they left or the user hung up", async () => {
+  const savedSessions = () => (localStore.savedSessionIndex as AnyRecord[] | undefined) ?? [];
+  const savedBefore = savedSessions().length;
+  fetchCalls.length = 0;
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId: "stream-6",
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+
+  const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+  await sendMessage(
+    { type: "PARTICIPANTS_UPDATED", participants: ["Ana", "Bruno", "Você", "You"] },
+    sender,
+  );
+  sttResponses.push({
+    text: "Fechamos o escopo da integração.",
+    duration: 4,
+    segments: [
+      { text: " Fechamos o escopo da integração.", no_speech_prob: 0.02, avg_logprob: -0.3 },
+    ],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    source: "tab",
+    startedAt: Date.now() - 4000,
+    endedAt: Date.now(),
+  });
+  await waitFor(
+    async () => (await sendMessage({ type: "GET_STATE" })).stats?.chunksTranscribed === 1,
+    "line transcribed",
+  );
+
+  // Bruno leaves, then the user hangs up: Meet shows nobody while the meeting is saved.
+  await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: ["Ana"] }, sender);
+  await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: [] }, sender);
+  const live = await sendMessage({ type: "GET_STATE" });
+  assert.deepEqual(live.participants, [], "the live list is who is in the call now");
+  assert.deepEqual(live.attendees, ["Ana", "Bruno"], "no placeholders, nobody dropped");
+
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  const index = await waitFor(
+    () => (savedSessions().length === savedBefore + 1 ? savedSessions() : null),
+    "session saved",
+  );
+  const saved = localStore[`savedSession:${index[0].id}`];
+  assert.deepEqual(saved.participants, ["Ana", "Bruno"]);
+  assert.match(buildValorBrainContent(saved), /\n## Participantes\nAna, Bruno\n/);
+
+  // The final review and summary still know who was there.
+  const chatUser = (pattern: RegExp) =>
+    JSON.parse(
+      String(
+        fetchCalls.find(
+          (c) => c.url.endsWith("/chat/completions") && pattern.test(chatSystemPrompt(c.init)),
+        )!.init.body,
+      ),
+    ).messages[1].content as string;
+  assert.match(chatUser(/revisa a grafia/), /\n<participantes>\n.*Ana, Bruno\n<\/participantes>/);
+  assert.match(
+    chatUser(/motor de inteligência/),
+    /\n<participantes>\nParticipantes detectados na reunião: .*Ana, Bruno\./,
+  );
+});
+
+test("the people in the call before recording are kept, also across a tab switch", async () => {
+  const OTHER_TAB = 8;
+  const OTHER_URL = "https://meet.google.com/xyz-abcd-efg";
+  openTabs = [
+    { id: TAB_ID, url: MEET_URL },
+    { id: OTHER_TAB, url: OTHER_URL },
+  ];
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  try {
+    // The panel opens on the call, where Ana and Bruno already are.
+    const detected = await sendMessage({ type: "GET_STATE" });
+    assert.equal(detected.targetTabId, TAB_ID);
+    assert.equal(detected.audioActive, false);
+    const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+    await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: ["Ana", "Bruno"] }, sender);
+    assert.deepEqual((await sendMessage({ type: "GET_STATE" })).attendees, ["Ana", "Bruno"]);
+
+    // Another call in another tab, then back: each tab has its own people.
+    await tabActivatedListener!({ tabId: OTHER_TAB, windowId: 1 });
+    const other = await sendMessage({ type: "GET_STATE" });
+    assert.equal(other.targetTabId, OTHER_TAB);
+    assert.deepEqual(other.attendees, []);
+    await tabActivatedListener!({ tabId: TAB_ID, windowId: 1 });
+    const back = await sendMessage({ type: "GET_STATE" });
+    assert.equal(back.targetTabId, TAB_ID);
+    assert.deepEqual(back.attendees, ["Ana", "Bruno"], "restored with the tab's state");
+
+    // Recording starts in that call: they attend it without the page saying so again.
+    const start = await sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: TAB_ID,
+      meetingId: "abc-defg-hij",
+      meetingUrl: MEET_URL,
+      streamId: "stream-attendees",
+    });
+    assert.equal(start.success, true, JSON.stringify(start));
+    assert.deepEqual((await sendMessage({ type: "GET_STATE" })).attendees, ["Ana", "Bruno"]);
+    sttResponses.push({
+      text: "Vamos revisar o contrato amanhã.",
+      duration: 4,
+      segments: [
+        { text: " Vamos revisar o contrato amanhã.", no_speech_prob: 0.02, avg_logprob: -0.3 },
+      ],
+    });
+    await sendMessage({
+      type: "OFFSCREEN_AUDIO_CHUNK",
+      audioBase64: fakeChunk(),
+      mimeType: "audio/webm;codecs=opus",
+      source: "tab",
+      startedAt: Date.now() - 4000,
+      endedAt: Date.now(),
+    });
+    await waitFor(
+      async () => (await sendMessage({ type: "GET_STATE" })).stats?.chunksTranscribed === 1,
+      "line transcribed",
+    );
+    await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+    const index = await waitFor(
+      () =>
+        (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
+          ? (localStore.savedSessionIndex as AnyRecord[])
+          : null,
+      "session saved",
+    );
+    assert.deepEqual(localStore[`savedSession:${index[0].id}`].participants, ["Ana", "Bruno"]);
+  } finally {
+    openTabs = [];
+  }
+});
+
+test("in a call of two, a line from the tab is the other person's, by the live list", async () => {
+  localStore.settings = { ...localStore.settings, selfName: "Gustavo" };
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId: "stream-two",
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+  const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+  await sendMessage(
+    { type: "PARTICIPANTS_UPDATED", participants: ["Gustavo", "Ricardo", "Ana"] },
+    sender,
+  );
+  // Ana leaves: she still attended, but the call is now Gustavo and Ricardo.
+  await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: ["Gustavo", "Ricardo"] }, sender);
+  const live = await sendMessage({ type: "GET_STATE" });
+  assert.deepEqual(live.attendees, ["Gustavo", "Ricardo", "Ana"]);
+
+  sttResponses.push({
+    text: "Pode mandar a proposta.",
+    duration: 3,
+    segments: [{ text: " Pode mandar a proposta.", no_speech_prob: 0.02, avg_logprob: -0.3 }],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    source: "tab",
+    startedAt: Date.now() - 3000,
+    endedAt: Date.now(),
+  });
+  const said = await waitFor(async () => {
+    const s = await sendMessage({ type: "GET_STATE" });
+    return s.stats?.chunksTranscribed === 1 ? s : null;
+  }, "line transcribed");
+  // With the attendees there would be two others, and the line would be "Participante".
+  assert.equal(said.transcript[0].speaker, "Ricardo");
+
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  await waitFor(
+    () => (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1,
+    "session saved",
+  );
+});
+
+/** The record of a sales call as the live summary leaves it: 10 items, most of them noise. */
+const SALES_CALL_SUMMARY: AnyRecord = {
+  summary: "Leonardo apresentou o programa de mentoria; Gustavo decidiu não aderir agora.",
+  summaryItems: [],
+  topics: [
+    { name: "Programa de mentoria", status: "active" },
+    { name: "Preço do programa", status: "active" },
+  ],
+  currentTopic: "Preço do programa",
+  decisions: [
+    {
+      text: "Leonardo apresenta a metodologia do programa",
+      chunkId: "chunk_1",
+      classification: "finalized",
+    },
+    { text: "Pacote completo por 22.990", chunkId: "chunk_1", classification: "tentative" },
+    {
+      text: "Gustavo decide não aderir agora",
+      by: "Gustavo",
+      chunkId: "chunk_1",
+      classification: "tentative",
+    },
+  ],
+  actionItems: [
+    { task: "Enviar o link da reunião para o Gustavo entrar", confidence: "high" },
+    { task: "Desenhar a carta de apresentação do Gustavo", owner: "Leonardo", deadline: "sexta" },
+  ],
+  sentiment: "neutral",
+  keyInsights: [],
+  contradictions: [],
+  unresolvedDiscussions: ["Qual é o valor do serviço"],
+  questionsRaised: ["Qual é o valor do serviço?", "Tudo bem com vocês?"],
+};
+
+function isReviewCall(c: { url: string; init: RequestInit }): boolean {
+  return c.url.endsWith("/chat/completions") && /revisa o registro/.test(chatSystemPrompt(c.init));
+}
+
+/** One short recording, stopped; returns how many meetings were saved before it. */
+async function recordAndStop(streamId: string): Promise<number> {
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId,
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+  const text = "Eu não vou aderir agora, mas mande a carta de apresentação.";
+  sttResponses.push({
+    text,
+    duration: 5,
+    segments: [{ text: ` ${text}`, no_speech_prob: 0.02, avg_logprob: -0.2 }],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    startedAt: Date.now() - 5000,
+    endedAt: Date.now(),
+  });
+  await waitFor(async () => {
+    const s = await sendMessage({ type: "GET_STATE" });
+    return s.stats?.chunksTranscribed === 1 ? s : null;
+  }, "chunk transcribed");
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  return savedBefore;
+}
+
+/** The meeting saved after the `savedBefore` ones. */
+async function savedAfter(savedBefore: number): Promise<AnyRecord> {
+  const index = await waitFor(
+    () =>
+      (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
+        ? (localStore.savedSessionIndex as AnyRecord[])
+        : null,
+    "session saved",
+  );
+  return localStore[`savedSession:${index[0].id}`];
+}
+
+/** One short recording, stopped and saved; returns the saved session. */
+async function recordAndSave(streamId: string): Promise<AnyRecord> {
+  return savedAfter(await recordAndStop(streamId));
+}
+
+test("the record is reviewed by the model, checked and merged before it is saved", async () => {
+  fetchCalls.length = 0;
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationContent = JSON.stringify({
+    decisions: [{ keep: "D3", classification: "finalized" }],
+    actionItems: [{ keep: "a2", owner: "Ricardo" }],
+    topics: [{ keep: "T1", same: ["T2"], status: "completed" }],
+    openPoints: [],
+  });
+  try {
+    const saved = await recordAndSave("stream-6");
+
+    assert.deepEqual(saved.decisions, [
+      {
+        text: "Gustavo decide não aderir agora",
+        by: "Gustavo",
+        chunkId: "chunk_1",
+        classification: "finalized",
+      },
+    ]);
+    // "Ricardo" is not in this meeting: the owner the summary found stays.
+    assert.deepEqual(
+      saved.actionItems.map((a: AnyRecord) => [a.task, a.owner]),
+      [["Desenhar a carta de apresentação do Gustavo", "Leonardo"]],
+    );
+    assert.deepEqual(saved.topics, [{ name: "Programa de mentoria", status: "completed" }]);
+    assert.deepEqual(saved.unresolvedDiscussions, []);
+    assert.deepEqual(saved.questionsRaised, []);
+    assert.equal(saved.consolidation.mode, "model");
+    assert.deepEqual(saved.consolidation.before, {
+      decisions: 3,
+      actionItems: 2,
+      topics: 2,
+      openPoints: 3,
+    });
+    assert.deepEqual(saved.consolidation.after, {
+      decisions: 1,
+      actionItems: 1,
+      topics: 1,
+      openPoints: 0,
+    });
+
+    // One request after the final summary: deterministic, JSON, room for GLM to reason.
+    const summaryIndex = fetchCalls.findIndex(
+      (c) =>
+        c.url.endsWith("/chat/completions") &&
+        /motor de inteligência/.test(chatSystemPrompt(c.init)),
+    );
+    const reviewCalls = fetchCalls.filter(isReviewCall);
+    assert.equal(reviewCalls.length, 1);
+    assert.ok(summaryIndex >= 0 && fetchCalls.indexOf(reviewCalls[0]) > summaryIndex);
+    const body = JSON.parse(String(reviewCalls[0].init.body));
+    assert.equal(body.temperature, 0);
+    assert.equal(body.max_tokens, 6000);
+    assert.deepEqual(body.response_format, { type: "json_object" });
+    assert.match(body.messages[1].content, /\nD3 Gustavo decide não aderir agora — por: Gustavo/);
+    assert.match(body.messages[1].content, /Quem gravou a reunião: Gustavo\.\n<\/participantes>/);
+
+    // The document sent to ValorBrain carries the reviewed record and nothing about the review.
+    const store = await waitFor(
+      () => fetchCalls.find((c) => c.url.endsWith("/api/v1/memory/store")),
+      "ValorBrain delivery",
+    );
+    const payload = JSON.parse(String(store.init.body));
+    assert.match(payload.content, /## Decisões\n- Gustavo decide não aderir agora — Gustavo\n\n/);
+    assert.doesNotMatch(payload.content, /metodologia|22\.990|Tudo bem com vocês/);
+    assert.doesNotMatch(payload.content, /Registro revisado|Itens repetidos juntados/);
+
+    // What the review removed stays on the saved meeting, where the side panel can put it back.
+    const original = saved.consolidation.original;
+    assert.deepEqual(
+      original.decisions.map((d: AnyRecord) => d.text),
+      SALES_CALL_SUMMARY.decisions.map((d: AnyRecord) => d.text),
+    );
+    assert.deepEqual(original.questionsRaised, SALES_CALL_SUMMARY.questionsRaised);
+    const key = `savedSession:${saved.id}`;
+    await waitFor(() => localStore[key]?.vb?.status === "sent", "delivery recorded");
+    // Undone while the meeting is being sent again: the resend does not bring the review back.
+    let release = () => {};
+    storeGate = new Promise((resolve) => (release = resolve));
+    const deliveries = () => fetchCalls.filter((c) => c.url.endsWith("/api/v1/memory/store"));
+    const sentBefore = deliveries().length;
+    const resend = sendMessage({ type: "VB_SEND_SESSION", sessionId: saved.id });
+    await waitFor(() => deliveries().length > sentBefore, "resend under way");
+    const undo = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
+    assert.equal(undo.success, true, JSON.stringify(undo));
+    // It was sent: the memory now has an outdated copy, which nothing sends again by itself.
+    assert.equal(undo.session.vb.status, "stale");
+    assert.equal(localStore.lastSessionResult.vb.status, "stale", "the popup's card says so");
+    assert.equal(undo.session.vb.docRef, "meetings/reuniao.md");
+    storeGate = null;
+    release();
+    assert.equal((await resend).ok, true);
+    const restored = localStore[key];
+    for (const list of [
+      "decisions",
+      "actionItems",
+      "topics",
+      "unresolvedDiscussions",
+      "questionsRaised",
+    ]) {
+      assert.deepEqual(restored[list], original[list], list);
+    }
+    assert.equal(restored.consolidation.undone, true);
+    assert.equal(restored.consolidation.original, undefined);
+    assert.deepEqual(restored.consolidation.after, saved.consolidation.after);
+    // The resend under way carried the reviewed record: still out of date.
+    assert.equal(restored.vb.status, "stale");
+    assert.equal(localStore.lastSessionResult.vb.status, "stale", "also on the popup's card");
+    const listed = (localStore.savedSessionIndex as AnyRecord[]).find((s) => s.id === saved.id)!;
+    assert.equal(listed.decisions.length, 3, "the history shows the lists put back");
+    assert.equal(listed.vb.status, "stale");
+    assert.equal(deliveries().length, sentBefore + 1, "nothing was sent by itself");
+
+    // Sent again by the user: the memory gets the lists put back and is up to date.
+    const sentAgain = await sendMessage({ type: "VB_SEND_SESSION", sessionId: saved.id });
+    assert.equal(sentAgain.ok, true);
+    assert.equal(localStore[key].vb.status, "sent");
+    assert.equal(localStore.lastSessionResult.vb.status, "sent");
+    assert.match(JSON.parse(String(deliveries().at(-1)!.init.body)).content, /metodologia/);
+    // Nothing is left to undo.
+    const again = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
+    assert.equal(again.success, false);
+  } finally {
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationContent = "{}";
+  }
+});
+
+test("without the model's review, repeats are still merged before saving", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  try {
+    // A refused answer (it would empty the record): the local review runs instead.
+    fetchCalls.length = 0;
+    consolidationContent = JSON.stringify({
+      decisions: [],
+      actionItems: [],
+      topics: [],
+      openPoints: [],
+    });
+    const refused = await recordAndSave("stream-7");
+    assert.equal(fetchCalls.filter(isReviewCall).length, 1);
+    assert.equal(refused.consolidation.mode, "local");
+    assert.equal(refused.decisions.length, 3);
+    assert.deepEqual(refused.unresolvedDiscussions, ["Qual é o valor do serviço"]);
+    assert.deepEqual(refused.questionsRaised, ["Tudo bem com vocês?"], "the repeat was merged");
+    assert.equal(refused.consolidation.before.openPoints, 3);
+    assert.equal(refused.consolidation.after.openPoints, 2);
+
+    // Text around the object: it may be the prompt's example, so the answer is refused.
+    fetchCalls.length = 0;
+    consolidationContent = `Segue a revisão:\n${JSON.stringify({ decisions: ["D3"] })}`;
+    const wrapped = await recordAndSave("stream-7b");
+    assert.equal(fetchCalls.filter(isReviewCall).length, 1);
+    assert.equal(wrapped.consolidation.mode, "local");
+    assert.equal(wrapped.decisions.length, 3);
+
+    // The setting off: no request at all, the local review still runs.
+    fetchCalls.length = 0;
+    localStore.settings = { ...localStore.settings, recordConsolidation: false };
+    const off = await recordAndSave("stream-8");
+    assert.equal(fetchCalls.filter(isReviewCall).length, 0);
+    assert.equal(off.consolidation.mode, "local");
+    assert.equal(off.decisions.length, 3);
+    assert.equal(off.consolidation.after.openPoints, 2);
+  } finally {
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationContent = "{}";
+    delete localStore.settings.recordConsolidation;
+  }
+});
+
+test("a review undone during the automatic upload leaves the meeting out of date", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationContent = JSON.stringify({
+    decisions: [{ keep: "D3" }],
+    topics: [{ keep: "T1", same: ["T2"] }],
+  });
+  let release = () => {};
+  storeGate = new Promise((resolve) => (release = resolve));
+  try {
+    fetchCalls.length = 0;
+    const saved = await savedAfter(await recordAndStop("stream-13"));
+    assert.equal(saved.consolidation.mode, "model");
+    await waitFor(
+      () => fetchCalls.some((c) => c.url.endsWith("/api/v1/memory/store")),
+      "upload under way",
+    );
+    assert.equal(localStore.lastSessionResult.vb.status, "pending");
+    const undo = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
+    assert.equal(undo.success, true, JSON.stringify(undo));
+    storeGate = null;
+    release();
+
+    // The memory got the reviewed record: the meeting, the card and the notice say so.
+    const card = await waitFor(
+      () =>
+        localStore.lastSessionResult?.vb?.status !== "pending"
+          ? localStore.lastSessionResult
+          : null,
+      "upload recorded",
+    );
+    assert.equal(card.vb.status, "stale");
+    assert.equal(localStore[`savedSession:${saved.id}`].vb.status, "stale");
+    assert.equal(notifications.at(-1)?.title, "Reunião enviada ao ValorBrain");
+  } finally {
+    storeGate = null;
+    release();
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationContent = "{}";
+  }
+});
+
+test("an undo and a delivery's save that overlap both stay on the meeting", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationContent = JSON.stringify({
+    decisions: [{ keep: "D3" }],
+    topics: [{ keep: "T1", same: ["T2"] }],
+  });
+  let releaseUpload = () => {};
+  let releaseReads = () => {};
+  storeGate = new Promise((resolve) => (releaseUpload = resolve));
+  try {
+    const saved = await savedAfter(await recordAndStop("stream-14"));
+    await waitFor(
+      () => fetchCalls.some((c) => c.url.endsWith("/api/v1/memory/store")),
+      "upload under way",
+    );
+    // The upload ends: the delivery reads the meeting again to save its result…
+    savedReadGate = new Promise((resolve) => (releaseReads = resolve));
+    storeGate = null;
+    releaseUpload();
+    await waitFor(() => heldSavedReads === 1, "the delivery reading the meeting");
+    // …while the side panel undoes the review of the same meeting.
+    const undo = sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    savedReadGate = null;
+    releaseReads();
+    assert.equal((await undo).success, true);
+    await waitFor(
+      () => localStore.lastSessionResult?.vb?.status === "stale",
+      "both changes recorded",
+    );
+
+    // Neither change lost the other: the lists are back and the delivery is recorded.
+    const stored = localStore[`savedSession:${saved.id}`];
+    assert.equal(stored.consolidation.undone, true);
+    assert.equal(stored.decisions.length, 3);
+    assert.equal(stored.vb.status, "stale");
+    const listed = (localStore.savedSessionIndex as AnyRecord[]).find((s) => s.id === saved.id)!;
+    assert.equal(listed.decisions.length, 3);
+    assert.equal(listed.vb.status, "stale");
+  } finally {
+    savedReadGate = null;
+    releaseReads();
+    storeGate = null;
+    releaseUpload();
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationContent = "{}";
+  }
+});
+
+test("asking for a new recording while the last one is saved cuts its record review short", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationHangs = true;
+  try {
+    fetchCalls.length = 0;
+    const savedBefore = await recordAndStop("stream-11");
+    const review = await waitFor(() => fetchCalls.find(isReviewCall), "review request sent");
+
+    const start = await sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: TAB_ID,
+      meetingId: "abc-defg-hij",
+      meetingUrl: MEET_URL,
+      streamId: "stream-12",
+    });
+    assert.equal(start.success, false);
+    assert.equal(
+      start.error,
+      "A reunião anterior está terminando de ser salva. Tente de novo em alguns segundos.",
+    );
+
+    // The model's review gives way: its request is cut and the local review runs.
+    const saved = await savedAfter(savedBefore);
+    assert.equal((review.init.signal as AbortSignal).aborted, true);
+    assert.equal(saved.consolidation.mode, "local");
+    assert.equal(saved.consolidation.after.openPoints, 2, "the repeat was merged locally");
+    assert.equal(saved.decisions.length, 3);
+    assert.equal(fetchCalls.filter(isReviewCall).length, 1, "nothing sent again");
+    await waitFor(
+      () =>
+        localStore.lastSessionResult?.sessionId === saved.id &&
+        localStore.lastSessionResult.vb?.status === "sent",
+      "the stop flow finished",
+    );
+  } finally {
+    consolidationHangs = false;
+    summaryResponse = DEFAULT_SUMMARY;
+  }
+});
+
+// Keep last: the quota pause lasts for the rest of this process.
+test("a quota error on the review pauses the provider and the record is reviewed locally", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationError = {
+    status: 429,
+    body: {
+      error: {
+        code: "1308",
+        message: "Usage limit reached for 5 hour. Your limit will reset at 2099-01-01 00:00:00",
+      },
+    },
+  };
+  try {
+    fetchCalls.length = 0;
+    const first = await recordAndSave("stream-9");
+    assert.equal(fetchCalls.filter(isReviewCall).length, 1, "a quota error is not retried");
+    assert.equal(first.consolidation.mode, "local");
+    assert.equal(first.decisions.length, 3);
+    assert.equal(first.consolidation.after.openPoints, 2);
+
+    // Until the quota renews nothing more goes to the summary provider.
+    fetchCalls.length = 0;
+    const second = await recordAndSave("stream-10");
+    assert.equal(fetchCalls.filter((c) => c.url.endsWith("/chat/completions")).length, 0);
+    assert.equal(second.consolidation.mode, "local");
+  } finally {
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationError = null;
+  }
 });

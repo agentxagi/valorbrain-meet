@@ -1,5 +1,6 @@
 // Theme of meet.valorbra.in: the saved choice, otherwise the system preference
 // (Paper is the brand default). Loaded in <head> so the page never flashes.
+// Also opens the update steps for the extension's #atualizar link.
 (() => {
   const KEY = "vbmeet-site-theme";
   const THEMES = ["paper", "light", "dark"];
@@ -17,6 +18,18 @@
       ? "dark"
       : "paper";
   root.dataset.theme = initial;
+
+  // meet.valorbra.in/#atualizar (the extension's "Como atualizar" link) opens
+  // the update steps, which sit in a closed <details>.
+  const openUpdateSteps = () => {
+    if (location.hash !== "#atualizar") return;
+    const details = document.getElementById("atualizar");
+    if (!details) return;
+    details.open = true;
+    details.scrollIntoView();
+  };
+  document.addEventListener("DOMContentLoaded", openUpdateSteps);
+  window.addEventListener("hashchange", openUpdateSteps);
 
   document.addEventListener("DOMContentLoaded", () => {
     const select = document.getElementById("theme");

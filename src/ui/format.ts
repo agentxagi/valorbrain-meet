@@ -3,6 +3,8 @@
  * options. Pure functions (no Chrome APIs), unit-tested in node.
  */
 
+import type { ConsolidationReport, RecordCounts } from "../types";
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /** `75` → `01:15`; `3725` → `1:02:05`. */
@@ -114,6 +116,34 @@ export function initials(name: string | null | undefined): string {
 /** `1 trecho` / `3 trechos`. */
 export function plural(count: number, singular: string, pluralForm: string): string {
   return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+const RECORD_KINDS: Array<[keyof RecordCounts, string]> = [
+  ["decisions", "decisões"],
+  ["actionItems", "próximos passos"],
+  ["topics", "assuntos"],
+  ["openPoints", "pontos em aberto"],
+];
+
+/**
+ * `Registro revisado ao encerrar: decisões 42 → 6 · próximos passos 55 → 14`
+ * (the model's review) or `Itens repetidos juntados ao encerrar: …` (only the
+ * local one), with only the kinds that changed; empty when nothing did.
+ */
+export function consolidationLabel(report: ConsolidationReport | null | undefined): string {
+  if (report?.undone) return "Revisão do registro desfeita.";
+  if (!report?.before || !report.after) return "";
+  const changes = RECORD_KINDS.flatMap(([key, label]) => {
+    const before = Number(report.before[key]) || 0;
+    const after = Number(report.after[key]) || 0;
+    return before === after ? [] : [`${label} ${before} → ${after}`];
+  });
+  if (changes.length === 0) return "";
+  const what =
+    report.mode === "local"
+      ? "Itens repetidos juntados ao encerrar"
+      : "Registro revisado ao encerrar";
+  return `${what}: ${changes.join(" · ")}`;
 }
 
 /** Hides the middle of a secret: `vbm_ab…9f3c`. */

@@ -179,6 +179,12 @@
           <div class="db-sentiment-scale vb-hint"><span>Negativo</span><span>Positivo</span></div>
         </div>
 
+        <div id="db-consolidation" class="db-review" hidden>
+          <p id="db-consolidation-text" class="vb-hint"></p>
+          <button id="db-undo-review" class="vb-btn vb-btn--sm" type="button" hidden>
+            Desfazer revisão
+          </button>
+        </div>
         <p id="db-usage" class="db-usage vb-hint"></p>
       </section>
 
@@ -311,6 +317,19 @@
         <div class="db-dialog-actions">
           <button class="vb-btn" value="cancel" type="submit">Cancelar</button>
           <button class="vb-btn vb-btn--danger" value="confirm" type="submit">Excluir</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="db-undo-dialog" class="db-dialog" aria-labelledby="db-undo-title">
+      <form method="dialog">
+        <h2 id="db-undo-title" class="db-dialog-title">Desfazer a revisão do registro?</h2>
+        <p class="vb-muted">As listas voltam a ter os itens de antes da revisão.</p>
+        <div class="db-dialog-actions">
+          <button class="vb-btn" value="cancel" type="submit">Cancelar</button>
+          <button class="vb-btn vb-btn--primary" value="confirm" type="submit">
+            Desfazer revisão
+          </button>
         </div>
       </form>
     </dialog>

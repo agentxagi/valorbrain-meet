@@ -7,6 +7,7 @@
 
 import {
   ActionItem,
+  ConsolidationReport,
   Decision,
   MeetingNotice,
   MeetingStats,
@@ -104,9 +105,9 @@ import {
   ProviderPayloadError,
   quotaResetAt,
 } from "./providerErrors";
-import { requestChatCompletion, requestTranscription } from "./providerClient";
+import { anySignal, requestChatCompletion, requestTranscription } from "./providerClient";
 import { cleanTranscription, type CleanTranscription } from "./transcriptFilter";
-import { extractJsonObject } from "./llmJson";
+import { extractJsonObject, parseJsonObjectStrict } from "./llmJson";
 import {
   buildSummaryMessages,
   formatTimestampLabel,
@@ -137,6 +138,22 @@ import {
   squashTerm,
   type TermCorrection,
 } from "./termCorrection";
+import {
+  applyConsolidation,
+  buildConsolidationMessages,
+  copyRecordLists,
+  countRecord,
+  dedupeRecord,
+  promptedItems,
+  readConsolidationReport,
+} from "./meetingConsolidation";
+import {
+  checkForUpdate,
+  compareVersions,
+  isCheckDue,
+  UPDATE_STATUS_KEY,
+  type UpdateStatus,
+} from "./updateCheck";
 
 const OFFSCREEN_DOCUMENT_PATH = "src/offscreen.html";
 const OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
@@ -151,6 +168,16 @@ const STOP_TRANSCRIPTION_TIMEOUT_MS = 150_000;
 const STOP_CORRECTION_TIMEOUT_MS = 75_000;
 /** Upper bound for the final summary pass after "stop". */
 const STOP_SUMMARY_TIMEOUT_MS = 90_000;
+/**
+ * Upper bound for the review of the record (decisions, next steps…) after
+ * "stop". GLM took 50–75 s on the records of two real meetings (55 min and
+ * 1h49, up to 270 items), reasoning included.
+ */
+const STOP_CONSOLIDATION_TIMEOUT_MS = 125_000;
+/** The model's share of it: past this the local review runs instead, still in time. */
+const CONSOLIDATION_MODEL_TIMEOUT_MS = 120_000;
+/** The answer is short (ids), but GLM may reason inside the same budget. */
+const CONSOLIDATION_MAX_TOKENS = 6000;
 /** Active-speaker changes kept for attributing tab segments (well above any segment). */
 const SPEAKER_EVENT_WINDOW_MS = 10 * 60_000;
 /** Echo checks look this many lines back. */
@@ -170,6 +197,25 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined>
     timer = setTimeout(() => resolve(undefined), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Settles like `promise`, or with undefined as soon as `signal` aborts. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  return new Promise<T | undefined>((resolve, reject) => {
+    const abort = () => resolve(undefined);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+/** This build's version ("2.4.0"); null where the runtime has no manifest (tests). */
+function extensionVersion(): string | null {
+  try {
+    return chrome.runtime.getManifest().version || null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +282,7 @@ function emptyStats(): MeetingStats {
   return { chunksReceived: 0, chunksTranscribed: 0, chunksFiltered: 0, chunksFailed: 0 };
 }
 
-const state: State = {
+const state: State & { attendees: string[] } = {
   isActive: false,
   meetingId: null,
   meetingUrl: null,
@@ -254,6 +300,7 @@ const state: State = {
   participants: [],
   initialParticipants: [],
   lateJoiners: [],
+  attendees: [],
   timeline: [],
   transcript: [],
   summaryItems: [],
@@ -278,6 +325,12 @@ let speakerEvents: SpeakerEvent[] = [];
 let meetMicMuted = false;
 let isStartingAudio = false;
 let isStoppingAudio = false;
+/**
+ * Owned by the stop flow while it saves a meeting: aborted when a new
+ * recording is asked for meanwhile, so the model's review of the record gives
+ * way to the local one and the save ends sooner.
+ */
+let stopHurry: AbortController | null = null;
 let isProcessingSession = false;
 let summaryInFlight: Promise<void> | null = null;
 /**
@@ -402,6 +455,7 @@ async function hydrateState() {
             "participants",
             "initialParticipants",
             "lateJoiners",
+            "attendees",
             "summaryItems",
           ] as const;
           for (const key of arrayKeys) {
@@ -442,6 +496,8 @@ async function hydrateState() {
                 ...(c.source === "graph" ? { source: "graph" as const } : {}),
               }));
           }
+          const consolidation = readConsolidationReport(stored.consolidation);
+          if (consolidation) state.consolidation = consolidation;
           const graph = stored.graphVocabulary as Partial<GraphVocabulary> | null | undefined;
           if (graph && typeof graph === "object" && Array.isArray(graph.terms)) {
             state.graphVocabulary = {
@@ -513,6 +569,7 @@ interface PerTabParticipantState {
   participants: string[];
   initialParticipants: string[];
   lateJoiners: string[];
+  attendees: string[];
   participantCount: number;
 }
 
@@ -544,6 +601,19 @@ function sanitizeParticipantName(value: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Adds to `attendees` the names it does not have yet, in order of arrival.
+ * Meet's "You"/"Você" placeholders are not names and never enter.
+ */
+function addAttendees(attendees: string[], names: string[]) {
+  for (const raw of names) {
+    const name = sanitizeParticipantName(raw);
+    if (name && !SELF_PLACEHOLDER.test(name) && !findParticipant(name, attendees)) {
+      attendees.push(name);
+    }
+  }
+}
+
 function resetState() {
   languageLock = EMPTY_LANGUAGE_LOCK;
   state.isActive = false;
@@ -564,6 +634,7 @@ function resetState() {
   state.participants = [];
   state.initialParticipants = [];
   state.lateJoiners = [];
+  state.attendees = [];
   state.timeline = [];
   state.transcript = [];
   state.audioActive = false;
@@ -579,6 +650,7 @@ function resetState() {
   state.finalizing = false;
   state.stats = emptyStats();
   state.termCorrections = [];
+  delete state.consolidation;
   state.graphVocabulary = null;
   if (vocabularyRetryTimer) clearTimeout(vocabularyRetryTimer);
   vocabularyRetryTimer = null;
@@ -623,6 +695,7 @@ function snapshot(): State {
     participants: state.participants,
     initialParticipants: state.initialParticipants,
     lateJoiners: state.lateJoiners,
+    attendees: state.attendees,
     timeline: state.timeline,
     transcript: state.transcript,
     audioActive: state.audioActive,
@@ -640,6 +713,18 @@ function snapshot(): State {
     stats: { ...(state.stats ?? emptyStats()) },
     ...(state.termCorrections && state.termCorrections.length > 0
       ? { termCorrections: state.termCorrections.map((c) => ({ ...c })) }
+      : {}),
+    ...(state.consolidation
+      ? {
+          consolidation: {
+            ...state.consolidation,
+            before: { ...state.consolidation.before },
+            after: { ...state.consolidation.after },
+            ...(state.consolidation.original
+              ? { original: copyRecordLists(state.consolidation.original) }
+              : {}),
+          },
+        }
       : {}),
     ...(state.graphVocabulary ? { graphVocabulary: state.graphVocabulary } : {}),
   };
@@ -659,6 +744,7 @@ const UI_ARRAY_KEYS = [
   "participants",
   "initialParticipants",
   "lateJoiners",
+  "attendees",
 ] as const;
 
 function uiSnapshot() {
@@ -781,6 +867,7 @@ async function loadTabState(tabId: number) {
   state.participants = tabState.participants ?? [];
   state.initialParticipants = tabState.initialParticipants ?? [];
   state.lateJoiners = tabState.lateJoiners ?? [];
+  state.attendees = tabState.attendees ?? [];
   state.timeline = tabState.timeline ?? [];
   state.transcript = tabState.transcript ?? [];
   state.audioActive = tabState.audioActive ?? false;
@@ -913,6 +1000,10 @@ interface PipelineSettings {
   graphVocabulary?: boolean;
   /** Teach the graph the spelling fixes accepted in each meeting (default on). */
   learnCorrections?: boolean;
+  /** Review the record with the summary model when the meeting ends (default on). */
+  recordConsolidation?: boolean;
+  /** Look for a newer version on meet.valorbra.in once a day (default on). */
+  updateCheck?: boolean;
 }
 
 /** Terms the ValorBrain graph suggested for this recording (empty until loaded). */
@@ -1048,7 +1139,7 @@ function getTranscriptionPrompt(
     .join(" ");
   return buildTranscriptionPrompt({
     vocabulary,
-    names: [...selfNameCandidates(settings), ...state.participants],
+    names: [...selfNameCandidates(settings), ...state.attendees],
     recentText: recent,
   });
 }
@@ -1386,8 +1477,13 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     previousSummary: state.summary,
     transcriptLines: window.lines,
     features,
-    participants: [...selfNameCandidates(settings), ...state.participants],
-    known: { decisions: state.decisions, actionItems: state.actionItems, topics: state.topics },
+    participants: [...selfNameCandidates(settings), ...state.attendees],
+    known: {
+      decisions: state.decisions,
+      actionItems: state.actionItems,
+      topics: state.topics,
+      questionsRaised: state.questionsRaised,
+    },
     isFinal,
     vocabulary: reviewVocabularyFrom(settings),
     selfName: selfNameCandidates(settings)[0],
@@ -1486,7 +1582,7 @@ async function correctTranscriptTerms(): Promise<void> {
 
   const settings = (await getSettings()) as PipelineSettings;
   const vocabulary = reviewVocabularyFrom(settings);
-  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const participants = [...selfNameCandidates(settings), ...state.attendees];
   const lines = state.transcript.map(
     (entry) =>
       `[${entry.timestampLabel || formatTimestampLabel(entry.timestamp || 0)}] ${sanitizePromptText(entry.speaker, 100)}: ${sanitizePromptText(entry.text)}`,
@@ -1562,6 +1658,141 @@ async function correctTranscriptTerms(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Review of the record at the end
+// ---------------------------------------------------------------------------
+
+/** What bounds the model's review of the record (see consolidateMeetingRecord). */
+interface ReviewBudget {
+  /** When the time for it ends (ms since the epoch). */
+  deadline: number;
+  /** Aborts at the deadline, or when a new recording hurries the stop flow. */
+  signal: AbortSignal;
+}
+
+/**
+ * Asks the summary model which decisions, next steps, topics and open points
+ * stay, by id, and applies the answer once meetingConsolidation.ts has checked
+ * it. Returns the report, or null when the model did not answer in time, was
+ * cut short, failed, or gave an answer that was refused (the record is then
+ * untouched).
+ */
+async function reviewRecordWithModel(
+  settings: PipelineSettings,
+  config: ProviderConfig,
+  apiKey: string | null,
+  budget: ReviewBudget,
+): Promise<ConsolidationReport | null> {
+  const startTimeAtCall = state.startTime;
+  // Everyone who attended: the live list is often empty once the user hung up.
+  const participants = [...selfNameCandidates(settings), ...state.attendees];
+  const selfName = selfNameCandidates(settings)[0];
+  // Ids point at the items as they are now, whatever arrives during the request.
+  const prompted = promptedItems(state);
+  const messages = buildConsolidationMessages({
+    summary: state.summary,
+    decisions: state.decisions,
+    actionItems: state.actionItems,
+    topics: state.topics,
+    unresolvedDiscussions: state.unresolvedDiscussions,
+    questionsRaised: state.questionsRaised,
+    participants,
+    selfName,
+    outputLanguage: currentMeetingLanguage(settings),
+  });
+
+  // One budget for the wait in the queue, the request and its retries: once
+  // it is over (or cut short) nothing more is sent, and a request still running
+  // is cut, so no review keeps going (billed, untracked, holding the queue)
+  // after saving. Plain errors, not provider ones: the queue does not retry them.
+  const { deadline, signal } = budget;
+  let result;
+  try {
+    result = await untilAborted(
+      llmQueue.enqueue("consolidation", async () => {
+        const left = deadline - Date.now();
+        if (signal.aborted || left < 5_000) throw new Error("No time left for the record review");
+        try {
+          return await requestChatCompletion(config, apiKey, {
+            messages,
+            maxTokens: CONSOLIDATION_MAX_TOKENS,
+            temperature: 0,
+            json: true,
+            timeoutMs: left,
+            signal,
+          });
+        } catch (err) {
+          if (signal.aborted) throw new Error("The record review was cut short", { cause: err });
+          throw err;
+        }
+      }),
+      signal,
+    );
+  } catch (err) {
+    pauseSummaryOnQuota(err, config, apiKey);
+    console.warn(`${LOG_PREFIX} Record review by the model failed:`, err);
+    return null;
+  }
+  if (!result || state.startTime !== startTimeAtCall) return null;
+  if (result.usage) {
+    void trackUsage({
+      promptTokens: result.usage.prompt_tokens,
+      completionTokens: result.usage.completion_tokens,
+      totalTokens: result.usage.total_tokens,
+      model: config.model,
+    });
+  }
+  // Strict: an object recovered from a longer answer may be the prompt's example.
+  const { applied, report } = applyConsolidation(state, parseJsonObjectStrict(result.content), {
+    participants,
+    selfName,
+    prompted,
+  });
+  if (!applied) console.warn(`${LOG_PREFIX} Record review: the model's answer was refused`);
+  return applied ? report : null;
+}
+
+/**
+ * Reviews the record once the final summary is written, before it is saved:
+ * the summary model picks what stays (reviewRecordWithModel), then repeats
+ * are merged locally. Only the local merge runs when the setting is off, the
+ * record is small, the provider has no key or its quota is paused, the
+ * model's review did not work, or `hurry` aborted (a new recording was asked
+ * for). Best effort: saving never waits on it.
+ */
+async function consolidateMeetingRecord(hurry: AbortSignal): Promise<void> {
+  const startTimeAtCall = state.startTime;
+  // The model's time counts from here: reading the settings and waiting in
+  // the queue are part of it.
+  const budget: ReviewBudget = {
+    deadline: Date.now() + CONSOLIDATION_MODEL_TIMEOUT_MS,
+    signal: anySignal([AbortSignal.timeout(CONSOLIDATION_MODEL_TIMEOUT_MS), hurry]),
+  };
+  let reviewed: ConsolidationReport | null = null;
+  try {
+    const settings = (await getSettings()) as PipelineSettings;
+    const { config, apiKey } = await getSummaryProvider();
+    if (state.startTime !== startTimeAtCall) return;
+
+    const counts = countRecord(state);
+    const items = counts.decisions + counts.actionItems + counts.topics + counts.openPoints;
+    const useModel =
+      settings.recordConsolidation !== false &&
+      items > 4 &&
+      !(requiresApiKey(config) && !apiKey) &&
+      !summaryQuotaExhausted(config, apiKey) &&
+      !budget.signal.aborted;
+    if (useModel) reviewed = await reviewRecordWithModel(settings, config, apiKey, budget);
+  } catch (err) {
+    // Settings or provider could not be read: the local review still runs.
+    console.warn(`${LOG_PREFIX} Record review by the model skipped:`, err);
+  }
+  if (state.startTime !== startTimeAtCall) return;
+
+  const local = dedupeRecord(state);
+  state.consolidation = reviewed ? { ...reviewed, after: local.after } : local;
+}
+
+// ---------------------------------------------------------------------------
 // ValorBrain graph: company vocabulary and learned corrections
 // ---------------------------------------------------------------------------
 
@@ -1590,7 +1821,7 @@ async function loadGraphVocabulary(): Promise<void> {
   const vbSettings = normalizeVbSettings(settings);
   if (!isVbConfigured(vbSettings)) return;
 
-  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const participants = [...selfNameCandidates(settings), ...state.attendees];
   const key = participantsKey(participants);
   if (state.graphVocabulary && state.graphVocabulary.participantsKey === key) return;
 
@@ -1649,7 +1880,7 @@ function applyLearnedCorrections(
   const learned = state.graphVocabulary?.corrections ?? [];
   if (!text || learned.length === 0) return noop;
   // Any part of a participant's name ("Diego" of "Diego Braga") is off limits.
-  const names = nameVariants([...selfNameCandidates(settings), ...state.participants]);
+  const names = nameVariants([...selfNameCandidates(settings), ...state.attendees]);
   const usable = learned.filter((c) => !names.has(squashTerm(c.from)));
   const { text: fixed, counts } = applyKnownCorrections(text, usable);
   if (counts.size === 0) return noop;
@@ -1700,7 +1931,13 @@ async function teachCorrectionsToValorBrain(session: StoredSession, vbSettings: 
 function detectNewJoiners(currentList: string[], tabId: number): string[] {
   let tabState = perTabParticipants.get(tabId);
   if (!tabState) {
-    tabState = { participants: [], initialParticipants: [], lateJoiners: [], participantCount: 0 };
+    tabState = {
+      participants: [],
+      initialParticipants: [],
+      lateJoiners: [],
+      attendees: [],
+      participantCount: 0,
+    };
     perTabParticipants.set(tabId, tabState);
   }
 
@@ -1936,6 +2173,22 @@ interface LastSessionResult {
   vb?: VbDeliveryStatus | { status: "pending"; at: number };
 }
 
+let savedSessionsLock: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs a change of the saved meetings or of the popup's last-meeting card
+ * after the ones before it. Each change reads, then writes back, in steps:
+ * two that overlap (an undo and the result of a delivery, two meetings saved
+ * at once) would lose one of them. Only reads and writes go in, never a
+ * network request, and nothing inside takes the lock again. A task that fails
+ * rejects for its caller and lets the next one run.
+ */
+function withSavedSessions<T>(task: () => Promise<T>): Promise<T> {
+  const run = savedSessionsLock.then(task);
+  savedSessionsLock = run.catch(() => undefined);
+  return run;
+}
+
 async function recordLastSession(result: LastSessionResult) {
   try {
     await chrome.storage.local.set({ [LAST_SESSION_KEY]: result });
@@ -1958,7 +2211,10 @@ function sessionTitle(session: State): string {
   return topic || session.meetingId || `Reunião no ${platformLabelForUrl(session.meetingUrl)}`;
 }
 
-/** Saves a session record, evicting the oldest saved session on quota errors. */
+/**
+ * Saves a session record, evicting the oldest saved session on quota errors.
+ * Callers hold withSavedSessions.
+ */
 async function saveSessionRecord(session: StoredSession): Promise<StoredSession> {
   try {
     return await persistMeetingSession(chrome.storage.local, session);
@@ -1972,7 +2228,26 @@ async function saveSessionRecord(session: StoredSession): Promise<StoredSession>
   }
 }
 
-/** Sends a saved session to ValorBrain and records the outcome everywhere. */
+/**
+ * The delivery status to store once `sent` reached ValorBrain, given the
+ * session as it is now (`latest`): a review undone during the request leaves
+ * the memory with the reviewed record, so it is out of date ("stale") at once.
+ */
+function deliveredStatus(
+  vb: VbDeliveryStatus,
+  sent: StoredSession,
+  latest: StoredSession,
+): VbDeliveryStatus {
+  return vb.status === "sent" && latest.consolidation?.undone && !sent.consolidation?.undone
+    ? { ...vb, status: "stale" }
+    : vb;
+}
+
+/**
+ * Sends a saved session to ValorBrain and records the outcome everywhere: on
+ * the meeting, on the popup's card, and in what it returns ("sent", "failed",
+ * or "stale" when the review was undone during the upload).
+ */
 async function deliverSessionToValorBrain(
   session: StoredSession,
   vbSettings: VbSettings,
@@ -1985,23 +2260,29 @@ async function deliverSessionToValorBrain(
     : { status: "failed", at: Date.now(), error: result.error };
 
   // Re-persist only if the session still exists (the user may have deleted it).
-  const stillSaved = await getSavedMeetingSession(chrome.storage.local, session.id);
-  if (stillSaved) await saveSessionRecord({ ...stillSaved, vb });
-  await patchLastSession(session.id, { vb });
+  const delivered = await withSavedSessions(async () => {
+    const stillSaved = await getSavedMeetingSession(chrome.storage.local, session.id);
+    const status = stillSaved ? deliveredStatus(vb, session, stillSaved) : vb;
+    if (stillSaved) await saveSessionRecord({ ...stillSaved, vb: status });
+    await patchLastSession(session.id, { vb: status });
+    return status;
+  });
 
   if (!result.ok) {
     console.warn(`${LOG_PREFIX} ValorBrain delivery failed:`, result.error);
   }
-  return vb;
+  return delivered;
 }
 
 async function autoSendSavedSessionToValorBrain(session: StoredSession) {
   try {
     const vbSettings = await getVbSettings();
     if (!isVbConfigured(vbSettings)) {
-      await patchLastSession(session.id, {
-        vb: { status: "skipped", at: Date.now(), error: "ValorBrain não conectado" },
-      });
+      await withSavedSessions(() =>
+        patchLastSession(session.id, {
+          vb: { status: "skipped", at: Date.now(), error: "ValorBrain não conectado" },
+        }),
+      );
       notify(
         "saved",
         "Reunião salva neste navegador",
@@ -2010,20 +2291,31 @@ async function autoSendSavedSessionToValorBrain(session: StoredSession) {
       return;
     }
     if (!resolveAutoSend(vbSettings)) {
-      await patchLastSession(session.id, {
-        vb: { status: "skipped", at: Date.now(), error: "Envio automático desligado" },
-      });
+      await withSavedSessions(() =>
+        patchLastSession(session.id, {
+          vb: { status: "skipped", at: Date.now(), error: "Envio automático desligado" },
+        }),
+      );
       notify("saved", "Reunião salva", "Envie ao ValorBrain pelo histórico quando quiser.");
       return;
     }
-    await patchLastSession(session.id, { vb: { status: "pending", at: Date.now() } });
+    await withSavedSessions(() =>
+      patchLastSession(session.id, { vb: { status: "pending", at: Date.now() } }),
+    );
     const vb = await deliverSessionToValorBrain(session, vbSettings);
-    if (vb.status === "sent") void teachCorrectionsToValorBrain(session, vbSettings);
+    // It reached ValorBrain, even when the review was undone meanwhile ("stale").
+    if (vb.status !== "failed") void teachCorrectionsToValorBrain(session, vbSettings);
     if (vb.status === "sent") {
       notify(
         "saved",
         "Reunião salva no ValorBrain",
         `${sessionTitle(session)} já está na memória da sua empresa.`,
+      );
+    } else if (vb.status === "stale") {
+      notify(
+        "saved",
+        "Reunião enviada ao ValorBrain",
+        "A revisão do registro foi desfeita durante o envio. Use Reenviar no Histórico para atualizar a memória.",
       );
     } else {
       notify(
@@ -2042,7 +2334,9 @@ async function persistLegacyPendingSession(): Promise<StoredSession | null> {
   if (isProcessingSession) return null;
   isProcessingSession = true;
   try {
-    const session = await persistPendingMeetingSession(chrome.storage.local);
+    const session = await withSavedSessions(() =>
+      persistPendingMeetingSession(chrome.storage.local),
+    );
     void autoSendSavedSessionToValorBrain(session);
     return session;
   } catch {
@@ -2087,7 +2381,13 @@ async function startAudioCapture(
   if (!tabId) throw new Error("Não encontrei a aba da reunião.");
   if (state.audioActive) return { micActive: state.micActive !== false, alreadyActive: true };
   if (isStoppingAudio) {
-    throw new Error("Aguarde alguns segundos: a gravação anterior ainda está sendo salva.");
+    // Saving it may be waiting on the model's review of its record: the local
+    // review is enough now, so the save ends sooner (the spelling review and
+    // the final summary are not cut).
+    stopHurry?.abort();
+    throw new Error(
+      "A reunião anterior está terminando de ser salva. Tente de novo em alguns segundos.",
+    );
   }
   if (isStartingAudio) return { micActive: state.micActive !== false, alreadyActive: true };
   isStartingAudio = true;
@@ -2122,11 +2422,14 @@ async function startAudioCapture(
     state.targetTabId = tabId;
     selfParticipantName = keptSelfName;
     if (keptParticipants) Object.assign(state, keptParticipants);
+    // Whoever is in the call when the recording starts attends it.
+    addAttendees(state.attendees, state.participants);
     if (keptParticipants) {
       perTabParticipants.set(tabId, {
         participants: [...keptParticipants.participants],
         initialParticipants: [...keptParticipants.initialParticipants],
         lateJoiners: [...keptParticipants.lateJoiners],
+        attendees: [...state.attendees],
         participantCount: keptParticipants.participantCount,
       });
     }
@@ -2237,6 +2540,8 @@ async function sendStopSignalToOffscreen(): Promise<void> {
 async function stopAudioCapture(reason = "Gravação encerrada") {
   if (isStoppingAudio) return;
   isStoppingAudio = true;
+  const hurry = new AbortController();
+  stopHurry = hurry;
   const stopKeepAlive = startKeepAlive();
   const wasRecording = state.audioActive;
 
@@ -2265,6 +2570,13 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           summarizeTranscriptIfNeeded({ force: true, final: true }).catch(() => undefined),
           STOP_SUMMARY_TIMEOUT_MS,
         );
+        // Then the whole record at once: repeats, non-decisions, questions answered later.
+        await withTimeout(
+          consolidateMeetingRecord(hurry.signal).catch((err) =>
+            console.warn(`${LOG_PREFIX} Record review skipped:`, err),
+          ),
+          STOP_CONSOLIDATION_TIMEOUT_MS,
+        );
       }
 
       const hasContent = state.transcript.length > 0 || Boolean(state.summary.trim());
@@ -2272,8 +2584,11 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
         // The graph vocabulary belongs to the live recording, not to the saved meeting.
         const snap = snapshot();
         delete snap.graphVocabulary;
+        const appVersion = extensionVersion();
         const session: StoredSession = {
           ...snap,
+          // Everyone who attended, also whoever left before the end.
+          participants: [...state.attendees],
           id: crypto.randomUUID(),
           savedAt: Date.now(),
           isActive: false,
@@ -2281,16 +2596,21 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           finalizing: false,
           notice: null,
           endReason: reason,
+          // Which build wrote it, so a problem can be traced from the record.
+          ...(appVersion ? { appVersion } : {}),
         };
         try {
-          savedSession = await saveSessionRecord(session);
-          await recordLastSession({
-            sessionId: savedSession.id,
-            savedAt: savedSession.savedAt,
-            title: sessionTitle(savedSession),
-            duration: savedSession.duration ?? 0,
-            transcriptEntries: savedSession.transcript.length,
-            empty: false,
+          savedSession = await withSavedSessions(async () => {
+            const saved = await saveSessionRecord(session);
+            await recordLastSession({
+              sessionId: saved.id,
+              savedAt: saved.savedAt,
+              title: sessionTitle(saved),
+              duration: saved.duration ?? 0,
+              transcriptEntries: saved.transcript.length,
+              empty: false,
+            });
+            return saved;
           });
         } catch (err) {
           console.error(`${LOG_PREFIX} Failed to save the session:`, err);
@@ -2301,14 +2621,16 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           );
         }
       } else {
-        await recordLastSession({
-          sessionId: null,
-          savedAt: Date.now(),
-          title: state.meetingId || "Reunião",
-          duration: getDuration(),
-          transcriptEntries: 0,
-          empty: true,
-        });
+        await withSavedSessions(() =>
+          recordLastSession({
+            sessionId: null,
+            savedAt: Date.now(),
+            title: state.meetingId || "Reunião",
+            duration: getDuration(),
+            transcriptEntries: 0,
+            empty: true,
+          }),
+        );
         notify(
           "empty",
           "Nada foi transcrito nesta gravação",
@@ -2336,6 +2658,7 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
     if (savedSession) await autoSendSavedSessionToValorBrain(savedSession);
   } finally {
     isStoppingAudio = false;
+    stopHurry = null;
     stopKeepAlive();
     updateActionBadge();
   }
@@ -2429,6 +2752,56 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Update notice
+// ---------------------------------------------------------------------------
+// Chrome never updates an extension loaded from the site's zip. Once a day
+// the worker reads meet.valorbra.in/latest.json (updateCheck.ts), and the
+// popup and the settings say when a newer version exists. Nothing here is
+// awaited by a recording; a failure is only logged.
+
+let updateCheckQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Checks when due, or now for "Verificar agora". One check at a time: the
+ * popup, the settings and the browser start asking together make one request.
+ */
+function scheduleUpdateCheck(force = false): Promise<void> {
+  updateCheckQueue = updateCheckQueue.then(() => runUpdateCheck(force));
+  return updateCheckQueue;
+}
+
+async function runUpdateCheck(force: boolean): Promise<void> {
+  try {
+    const settings = (await getSettings()) as PipelineSettings;
+    if (settings.updateCheck === false) {
+      // Turned off: no request, and no old notice left behind.
+      await chrome.storage.local.remove?.(UPDATE_STATUS_KEY);
+      return;
+    }
+    const currentVersion = extensionVersion();
+    if (!currentVersion) return;
+    const stored = (await chrome.storage.local.get(UPDATE_STATUS_KEY))[UPDATE_STATUS_KEY] as
+      | UpdateStatus
+      | undefined;
+    const now = Date.now();
+    if (force || isCheckDue(stored, now)) {
+      const status = await checkForUpdate({ currentVersion, now, previous: stored });
+      if (!status.ok) console.debug(`${LOG_PREFIX} update check failed: ${status.error}`);
+      await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: status });
+    } else if (stored?.latestVersion) {
+      // The installed version may have changed since (an update, or going
+      // back): the flag follows it without asking the site again.
+      const available = compareVersions(stored.latestVersion, currentVersion) > 0;
+      if (available !== stored.available) {
+        await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: { ...stored, available } });
+      }
+    }
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} update check skipped`, err);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Message router
@@ -2629,6 +3002,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             participants: [...state.participants],
             initialParticipants: [...state.initialParticipants],
             lateJoiners: [...state.lateJoiners],
+            attendees: [...state.attendees],
             participantCount: state.participantCount ?? 0,
           });
         }
@@ -2638,9 +3012,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (tabId === state.targetTabId) {
           const tabState = perTabParticipants.get(tabId);
           if (tabState) {
+            // `participants` is who is in the call now (an empty page once the
+            // user hangs up); `attendees` keeps everyone for the saved meeting.
+            addAttendees(tabState.attendees, tabState.participants);
             state.participants = tabState.participants;
             state.initialParticipants = tabState.initialParticipants;
             state.lateJoiners = tabState.lateJoiners;
+            state.attendees = tabState.attendees;
             state.participantCount = tabState.participantCount;
           }
         }
@@ -2729,23 +3107,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case "DISCARD_SESSION": {
-        if (typeof message.sessionId === "string" && message.sessionId) {
-          await deleteSavedMeetingSession(chrome.storage.local, message.sessionId);
-          const stored = (await chrome.storage.local.get(LAST_SESSION_KEY))[LAST_SESSION_KEY] as
-            | LastSessionResult
-            | undefined;
-          if (stored?.sessionId === message.sessionId) {
-            await chrome.storage.local.remove?.(LAST_SESSION_KEY);
+        await withSavedSessions(async () => {
+          if (typeof message.sessionId === "string" && message.sessionId) {
+            await deleteSavedMeetingSession(chrome.storage.local, message.sessionId);
+            const stored = (await chrome.storage.local.get(LAST_SESSION_KEY))[LAST_SESSION_KEY] as
+              | LastSessionResult
+              | undefined;
+            if (stored?.sessionId === message.sessionId) {
+              await chrome.storage.local.remove?.(LAST_SESSION_KEY);
+            }
+          } else {
+            await discardPendingMeetingSession(chrome.storage.local);
           }
-        } else {
-          await discardPendingMeetingSession(chrome.storage.local);
-        }
+        });
         sendResponse({ success: true });
         return;
       }
 
       case "CLEAR_LAST_SESSION": {
-        await chrome.storage.local.remove?.(LAST_SESSION_KEY);
+        await withSavedSessions(async () => chrome.storage.local.remove?.(LAST_SESSION_KEY));
         sendResponse({ success: true });
         return;
       }
@@ -2765,7 +3145,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case "DELETE_SAVED_SESSION": {
-        await deleteSavedMeetingSession(chrome.storage.local, message.sessionId);
+        await withSavedSessions(() =>
+          deleteSavedMeetingSession(chrome.storage.local, message.sessionId),
+        );
         sendResponse({ success: true });
         return;
       }
@@ -2795,10 +3177,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const vb: VbDeliveryStatus = result.ok
           ? { status: "sent", at: Date.now(), docRef: result.docRef }
           : { status: "failed", at: Date.now(), error: result.error };
-        await saveSessionRecord({ ...session, vb });
-        await patchLastSession(session.id, { vb });
+        // Read it again: during the request it may have been deleted or had its review undone.
+        await withSavedSessions(async () => {
+          const latest = await getSavedMeetingSession(chrome.storage.local, session.id);
+          const delivered = latest ? deliveredStatus(vb, session, latest) : vb;
+          if (latest) await saveSessionRecord({ ...latest, vb: delivered });
+          await patchLastSession(session.id, { vb: delivered });
+        });
         if (result.ok) void teachCorrectionsToValorBrain(session, vbSettings);
         sendResponse(result);
+        return;
+      }
+
+      case "UNDO_RECORD_REVIEW": {
+        // The side panel puts back the lists the model's review changed in a
+        // saved meeting. ValorBrain gets them when the user sends it again:
+        // until then a meeting already sent is "stale" there (and nothing
+        // resends it by itself).
+        const restored = await withSavedSessions(async () => {
+          const session =
+            typeof message.sessionId === "string"
+              ? await getSavedMeetingSession(chrome.storage.local, message.sessionId)
+              : null;
+          const report = readConsolidationReport(session?.consolidation);
+          if (!session || !report?.original) return null;
+          const { original, ...review } = report;
+          const saved = await saveSessionRecord({
+            ...session,
+            ...original,
+            consolidation: { ...review, undone: true },
+            ...(session.vb?.status === "sent"
+              ? { vb: { ...session.vb, status: "stale" as const, at: Date.now() } }
+              : {}),
+          });
+          // The title comes from the first topic, which the review may have dropped;
+          // the popup's card also says when ValorBrain holds the reviewed copy.
+          await patchLastSession(saved.id, {
+            title: sessionTitle(saved),
+            ...(saved.vb ? { vb: saved.vb } : {}),
+          });
+          return saved;
+        });
+        sendResponse(
+          restored
+            ? { success: true, session: restored }
+            : { success: false, error: "Esta reunião não tem revisão para desfazer." },
+        );
         return;
       }
 
@@ -2813,6 +3237,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "FORCE_SUMMARY": {
         sendResponse({ success: true });
         await forceSummarizeTranscript();
+        return;
+      }
+
+      case "CHECK_FOR_UPDATE": {
+        // Sent when the popup or the settings open; "Verificar agora" forces it.
+        await scheduleUpdateCheck(message.force === true);
+        const stored = await chrome.storage.local.get(UPDATE_STATUS_KEY);
+        sendResponse({ success: true, status: stored[UPDATE_STATUS_KEY] ?? null });
         return;
       }
 
@@ -2914,6 +3346,8 @@ function createContextMenu() {
 
 chrome.runtime.onInstalled.addListener(async () => {
   createContextMenu();
+  // After an update this also drops a notice about the version just installed.
+  void scheduleUpdateCheck();
   try {
     const vals = await chrome.storage.local.get(["onboardingCompleted"]);
     if (!vals?.onboardingCompleted) {
@@ -2926,6 +3360,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onStartup.addListener(() => {
   createContextMenu();
+  void scheduleUpdateCheck();
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {

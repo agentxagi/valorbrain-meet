@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-10-07
+
+Feita a partir das duas últimas reuniões reais salvas no ValorBrain (30/09 e 02/10). Numa conversa de vendas que não fechou, o registro saiu com 42 "decisões", próximos passos repetidos com outras palavras, 84 assuntos e 93 pontos em aberto, e a reunião foi salva sem a lista de participantes.
+
+### 🚀 Features
+
+- **Registro revisado ao encerrar.** Antes de salvar, o modelo de resumo revê as listas inteiras: junta o que foi registrado duas vezes com outras palavras, tira das decisões o que não foi decidido (apresentações, opiniões, ofertas de uma negociação que não fecharam, propostas sem resposta, combinados sobre a própria conversa), fica com a versão final do que mudou durante a reunião, tira dos próximos passos o que já aconteceu na chamada e o que um serviço faria se fosse contratado, deixa no máximo 12 assuntos e tira as perguntas respondidas depois. O modelo só escolhe, pelo código, entre os itens que já existem; o texto não é reescrito e a extensão confere cada escolha: uma resposta incompleta, malformada, copiada do exemplo ou que esvaziaria uma lista longa é recusada, e então só os itens idênticos são juntados. Nas listas salvas das reuniões de 30/09 e 02/10, revistas com o GLM: na de 02/10, 42 → 10 a 11 decisões, 55 → 10 a 11 próximos passos (em 4 de 5 execuções), 82 → 10 a 12 assuntos e 91 → 11 a 15 pontos em aberto; na de 30/09, 54 → 12 assuntos e 56 → cerca de 30 pontos em aberto. No painel, o Resumo mostra quanto cada lista diminuiu, e **Desfazer revisão** (com confirmação) devolve as listas de antes; uma reunião já enviada fica **Desatualizada no ValorBrain** até você reenviar. Desligável em **Configurações → Recursos**
+- **Aviso de versão nova.** O Chrome não atualiza sozinho uma extensão instalada pelo zip. Uma vez por dia a extensão lê `meet.valorbra.in/latest.json` (um GET simples, sem nada da reunião) e, quando há versão nova, o ícone e **Configurações → Atualizações** mostram **Versão X disponível** com o link **Como atualizar**. Desligável em **Configurações → Atualizações**
+
+### 🐛 Bug Fixes
+
+- **Todos os participantes ficam na reunião salva.** A lista era a de quem ainda estava na chamada no fim; ao desligar a chamada antes de a gravação terminar de salvar, a reunião ia para o ValorBrain sem nomes. Agora vale quem participou em algum momento da gravação, também no resumo final e na revisão de grafia
+- Durante a reunião, o resumo vê os itens que já registrou (antes, só os 15 últimos de cada lista) e as perguntas em aberto, e para de registrá-los de novo com outras palavras. Regras mais claras para decisões e próximos passos; um compromisso que depende de uma condição continua sendo registrado
+- Os nomes dos participantes e o vocabulário da empresa entram nos prompts como dado, sem poder dar instruções ao modelo
+- **Reenviar** uma reunião não a leva mais para o topo do Histórico nem apaga a reunião mais antiga quando já há 20 salvas, e guarda o resultado na reunião como ela está depois do envio
+- Pedir uma gravação nova enquanto a anterior ainda está sendo salva encurta a revisão do registro da anterior, para liberar a gravação mais cedo, e a mensagem diz isso
+- Mudanças numa reunião salva feitas pela extensão e pelo painel (salvar, enviar, reenviar, desfazer a revisão, excluir pelo Histórico) acontecem uma de cada vez: uma não apaga mais a outra quando coincidem. Excluir em **Configurações → Dados e uso** ainda fica fora dessa fila
+
+### 🔧 Interno
+
+- A reunião enviada ao ValorBrain diz qual versão do Meet a registrou (`Registrado pelo ValorBrain Meet 2.4.0`)
+- O resumo tem mais espaço de resposta: o GLM raciocina dentro do mesmo limite, que cortava respostas com o prompt maior
+
+### Não verificado
+
+- Uma reunião real gravada com a 2.4: as medidas acima vêm de reuniões reais refeitas com o GLM a partir do registro e da transcrição salvos.
+- A revisão varia entre execuções do modelo: na mesma reunião de vendas, uma execução em cinco manteve 27 próximos passos (o que o serviço faria se fosse contratado) em vez de 11.
+- Quem fala na aba em reuniões de 3 ou mais pessoas no Google Meet real.
+
 ## [2.3.0] - 2026-10-01
 
 A extensão deixa de supor que a reunião é em português ou sobre o nosso produto.

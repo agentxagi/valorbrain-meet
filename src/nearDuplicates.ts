@@ -1,0 +1,552 @@
+/**
+ * @fileoverview Near-duplicate items of a meeting record.
+ *
+ * The live summarizer reads the meeting excerpt by excerpt, so the same
+ * decision, task or question is registered again. Two items are the same when
+ * their texts are equal (case and punctuation apart), or when both have at
+ * least 4 words and share at least 80% of them (word-set Jaccard) — but never
+ * when the words that differ include a negation, never when they carry
+ * different numbers or dates ("21x de 500" / "21x de 520"), and only when,
+ * articles apart, they say the same words in the same order.
+ *
+ * That last guard is deliberate: one changed word is enough to say the
+ * opposite ("aceita" / "recusa", "anual" / "mensal", another person, sender
+ * and recipient swapped), and close spellings are not safe either
+ * ("possível" / "impossível", "Paulo" / "Paula"). For the same reason accents
+ * count ("pode" / "pôde", "wurde" / "würde"), and so do a number's sign and
+ * separators and the signs around it ("-5%" / "5%", "1/2" / "1,2",
+ * "500 €" / "500 $"). Rewordings are left to the end-of-meeting review, where
+ * the model decides and the extension checks. Words come from Intl.Segmenter,
+ * so Chinese, Japanese and Thai, written without spaces, have words too.
+ *
+ * Used by the live merge (meetingSummary.ts) and by the end-of-meeting review
+ * (meetingConsolidation.ts, which re-exports isNearDuplicate). It lives in a
+ * module of its own so those two never import each other.
+ *
+ * Pure module: no Chrome APIs, unit-tested in node.
+ */
+
+import type { ActionItem, Decision, KeyInsight, Topic } from "./types";
+
+/** Share of words two items must have in common to be the same item. */
+const NEAR_DUPLICATE_JACCARD = 0.8;
+/** Below this many distinct words only an identical text is a duplicate. */
+const NEAR_DUPLICATE_MIN_WORDS = 4;
+
+/**
+ * Lower case, accents and other combining marks removed, anything but letters
+ * and digits turned into one space: "Perfilar o Gustavo!" → "perfilar o gustavo".
+ */
+export function normalizeItemText(value: unknown): string {
+  return (typeof value === "string" ? value : "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/**
+ * A word as the comparison reads it: lower case, accents kept ("Pôde" →
+ * "pôde"); anything but letters, marks and digits splits it ("can't" → "can",
+ * "t").
+ */
+function comparableWords(word: string): string[] {
+  return word
+    .toLowerCase()
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, " ")
+    .split(" ")
+    .filter(Boolean);
+}
+
+/** Accents and other combining marks removed ("pôde" → "pode"). */
+function withoutMarks(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .normalize("NFC");
+}
+
+/**
+ * A set of words from space-separated lists, as written and without accents,
+ * so a word typed without them ("nao", "tres") is found too.
+ */
+function wordSet(lists: string[]): Set<string> {
+  return new Set(
+    lists
+      .flatMap((list) => list.split(" "))
+      .flatMap((word) => [...comparableWords(word), normalizeItemText(word)])
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Words that turn a statement into its opposite: Portuguese, English, Spanish,
+ * French, German and Italian, plus the most common ones of other languages.
+ * "t" is what is left of "can't" or "don't" once punctuation is gone, "n" of
+ * the French "n'a"; なか, なく, せん, ず and ぬ are Japanese negative endings,
+ * 안 and 못 Korean, ไม่ Thai (Intl.Segmenter splits them off as words).
+ */
+const NEGATION_WORDS = wordSet([
+  "não nao nunca nem sem nenhum nenhuma ninguém nada jamais tampouco", // pt
+  "not no never without nor none nobody nothing neither cannot t cant dont doesnt didnt", // en
+  "wont isnt arent wasnt werent havent hasnt shouldnt wouldnt couldnt", // en
+  "sin ni jamás ningún ninguno ninguna nadie tampoco", // es
+  "ne n pas sans aucun aucune rien personne non guère", // fr
+  "nicht kein keine keinen keinem keiner keines nie niemals ohne weder nichts niemand nein", // de
+  "mai senza né nessuno nessuna niente nulla neanche nemmeno neppure mica", // it
+  "niet geen nooit zonder inte ikke ej aldrig utan uten uden bez nigdy", // nl, sv, no, da, pl
+  "не нет ни без никогда ничего никто değil yok hayır tidak bukan tanpa belum", // ru, tr, id
+  "لا لم لن ليس بدون غير לא אין בלי नहीं बिना", // ar, he, hi
+  "なか なく せん ず ぬ 안 못 ไม่", // ja, ko, th
+]);
+
+/**
+ * Negation inside a word: Chinese and Japanese 不 没 无 未 非…, Japanese
+ * しない or できません, Korean 않는다, 없다, 아니다.
+ */
+const NEGATION_INSIDE = /[不没沒无無未非别別勿莫否]|ない|なかっ|ません|않|없|아니/u;
+
+/**
+ * Number words and calendar names (pt, en, es, fr, de, it): "cinco parcelas"
+ * and "seis parcelas", "até sexta" and "até segunda" are different items.
+ * Words that are also common words elsewhere are left out ("um", "dos", "due",
+ * "sei", "once", "may", "meta", "meio").
+ */
+const NUMBER_WORDS = wordSet([
+  // pt
+  "zero dois duas três quatro cinco seis sete oito nove dez onze doze quinze vinte trinta",
+  "quarenta cinquenta cem cento mil milhão milhões bilhão metade dobro hoje amanhã ontem",
+  "segunda terça quarta quinta sexta sábado domingo janeiro fevereiro março abril maio junho",
+  "julho agosto setembro outubro novembro dezembro",
+  // en
+  "one two three four five six seven eight nine ten eleven twelve fifteen twenty thirty forty",
+  "fifty hundred thousand million billion half twice today tomorrow yesterday monday tuesday",
+  "wednesday thursday friday saturday sunday january february march april june july august",
+  "september october november december",
+  // es
+  "cuatro siete ocho nueve diez doce quince veinte treinta cien ciento millón millones mitad",
+  "hoy mañana ayer lunes martes miércoles jueves viernes enero febrero marzo mayo junio julio",
+  "septiembre setiembre octubre noviembre diciembre",
+  // fr
+  "deux trois quatre cinq sept huit neuf dix douze vingt trente cent mille moitié aujourd",
+  "demain hier lundi mardi mercredi jeudi vendredi samedi dimanche janvier février mars avril",
+  "juin juillet août septembre octobre novembre décembre",
+  // de
+  "zwei drei vier fünf sechs sieben acht neun zehn elf zwölf zwanzig dreißig dreissig hundert",
+  "tausend millionen hälfte heute morgen gestern montag dienstag mittwoch donnerstag freitag",
+  "samstag sonntag januar februar märz juni juli oktober dezember",
+  // it
+  "tre quattro cinque sette otto dieci undici dodici venti cento milione milioni oggi domani",
+  "ieri lunedì martedì mercoledì giovedì venerdì sabato domenica gennaio febbraio aprile",
+  "maggio giugno luglio settembre ottobre dicembre",
+]);
+
+/**
+ * Articles (pt, en, es, fr, de, it): the only words two items may differ by.
+ * Prepositions are not here: "para o Gustavo" and "do Gustavo" are not the
+ * same task. "à" and "às" are: they are "a" fused with an article, and both
+ * are ignored already ("à vista" / "a vista").
+ */
+const ARTICLES = wordSet([
+  "o a os as um uma uns umas à às the an el la los las unos unas le les l un une",
+  "der die das den dem des ein eine einen einem einer eines il lo i gli uno",
+]);
+
+/** Chinese and Japanese numerals inside a word (三个月, 两周); 一 is left out, it is also "a". */
+const HAN_NUMERAL = /[〇二三四五六七八九十百千万萬亿億两兩]/u;
+
+/**
+ * Words that only their accent tells apart from another word (es, pt):
+ * "sí" (yes) / "si" (if), "pôde" (could) / "pode" (can), "é" (is) / "e"
+ * (and), "firmará" / "firmara". Typed without accents, the two are the same
+ * letters, so the comparison without accents keeps such a pair apart. ("à"
+ * and "a" are both articles, ignored anyway.)
+ */
+const ACCENT_MINIMAL_PAIRS = new Set(
+  [
+    "sí él más tú sé dé té mí sólo qué aún está será firmará", // es
+    "pôde pôr avó avô é nós dá", // pt
+  ].flatMap((list) => list.split(" ")),
+);
+
+/** Labels the pipeline uses when it does not know who spoke: never a real name. */
+const PLACEHOLDER_NAMES = new Set(["participante", "you", "voce", "audio"]);
+
+/** True for "Participante", "You", "Você" and "Audio" (in any case, with or without accents). */
+export function isPlaceholderName(value: unknown): boolean {
+  return PLACEHOLDER_NAMES.has(normalizeItemText(value));
+}
+
+let wordSegmenter: Intl.Segmenter | null | undefined;
+
+/** Words as written, by Intl.Segmenter; split on spaces where it is missing. */
+function segmentWords(text: string): string[] {
+  if (wordSegmenter === undefined) {
+    const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+    wordSegmenter = Segmenter ? new Segmenter(undefined, { granularity: "word" }) : null;
+  }
+  if (!wordSegmenter) return text.split(/\s+/);
+  const words: string[] = [];
+  for (const part of wordSegmenter.segment(text)) if (part.isWordLike) words.push(part.segment);
+  return words;
+}
+
+/** "05" → "5" (a lone "0" stays). */
+const withoutLeadingZeros = (digits: string) => digits.replace(/^0+(?=.)/u, "");
+
+/**
+ * What the word segmenter would cut or drop although it changes what an item
+ * says: a number with its leading minus and inner separators ("-5", "22.990",
+ * "1/2", "1,2"), and the percent and currency signs ("%", "€", "R$").
+ */
+const NUMBER_OR_SIGN =
+  /(?<![\p{L}\p{N}])[-−]?\p{N}+(?:[.,/:]\p{N}+)*(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])r\$|[%\p{Sc}]/gu;
+
+/** A number token ("-5", "22.990", "5/10"); a word with digits ("21x") is not one. */
+const NUMBER_TOKEN = /^-?\p{N}+(?:[.,/:]\p{N}+)*$/u;
+
+/**
+ * The tokens of an item in order, lower case, accents kept: words in any
+ * script ("can't" gives "can" and "t"), numbers whole with their sign and
+ * separators, and signs. Leading zeros go: "05/10" and "5/10" are one date.
+ */
+function itemTokens(text: string): string[] {
+  const lower = text.toLowerCase().normalize("NFC");
+  const tokens: string[] = [];
+  const addWords = (part: string) => {
+    for (const word of segmentWords(part).flatMap(comparableWords)) {
+      tokens.push(/^\p{N}+$/u.test(word) ? withoutLeadingZeros(word) : word);
+    }
+  };
+  let last = 0;
+  for (const match of lower.matchAll(NUMBER_OR_SIGN)) {
+    addWords(lower.slice(last, match.index));
+    tokens.push(match[0].replace(/^−/u, "-").replace(/(^-?|\/)0+(?=\p{N})/gu, "$1"));
+    last = match.index + match[0].length;
+  }
+  addWords(lower.slice(last));
+  return tokens;
+}
+
+/** Distinct words, a number counted by its digits ("22.990" gives "22" and "990"). */
+function similarityWords(tokens: string[]): Set<string> {
+  return new Set(
+    tokens.flatMap((token) =>
+      NUMBER_TOKEN.test(token) ? (token.match(/\p{N}+/gu) ?? []).map(withoutLeadingZeros) : token,
+    ),
+  );
+}
+
+/** Digits, number words and calendar names among the words ("sábado" and "sabado" alike). */
+function numbersIn(words: Iterable<string>): Set<string> {
+  const numbers = new Set<string>();
+  for (const word of words) {
+    for (const match of word.matchAll(/\p{N}+/gu)) numbers.add(withoutLeadingZeros(match[0]));
+    if (NUMBER_WORDS.has(word) || HAN_NUMERAL.test(word)) numbers.add(withoutMarks(word));
+  }
+  return numbers;
+}
+
+function isNegation(word: string): boolean {
+  return NEGATION_WORDS.has(word) || NEGATION_INSIDE.test(word);
+}
+
+/** One way of reading an item for the comparison. */
+interface Reading {
+  /** Every token: two equal texts are the same item. */
+  text: string;
+  words: Set<string>;
+  numbers: Set<string>;
+  /** The tokens in order, articles left out; a number stays whole. */
+  sequence: string[];
+}
+
+interface ItemKey {
+  /** As written: accents count. */
+  written: Reading;
+  /** Without accents, for an item typed without them. */
+  unaccented: Reading;
+  /** Latin letters written with an accent ("é", "ç", "ü"). */
+  accents: number;
+}
+
+function reading(tokens: string[]): Reading {
+  const words = similarityWords(tokens);
+  return {
+    text: tokens.join(" "),
+    words,
+    numbers: numbersIn(words),
+    sequence: tokens.filter((token) => !ARTICLES.has(token)),
+  };
+}
+
+function itemKey(value: unknown): ItemKey {
+  const text = typeof value === "string" ? value : "";
+  const tokens = itemTokens(text);
+  return {
+    written: reading(tokens),
+    unaccented: reading(tokens.map(withoutMarks)),
+    accents: text.normalize("NFD").match(/\p{Script=Latin}\p{M}+/gu)?.length ?? 0,
+  };
+}
+
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const value of a) if (!b.has(value)) return false;
+  return true;
+}
+
+function sameReading(a: Reading, b: Reading): boolean {
+  if (!a.text || !b.text) return false;
+  if (a.text === b.text) return true;
+  if (a.words.size < NEAR_DUPLICATE_MIN_WORDS || b.words.size < NEAR_DUPLICATE_MIN_WORDS) {
+    return false;
+  }
+  if (!sameSet(a.numbers, b.numbers)) return false;
+  let shared = 0;
+  for (const word of a.words) if (b.words.has(word)) shared += 1;
+  if (shared / (a.words.size + b.words.size - shared) < NEAR_DUPLICATE_JACCARD) return false;
+  for (const word of a.words) if (!b.words.has(word) && isNegation(word)) return false;
+  for (const word of b.words) if (!a.words.has(word) && isNegation(word)) return false;
+  // Articles apart, the same words in the same order: no other word swapped
+  // ("aceita" / "recusa"), moved (who sends to whom) or added.
+  return (
+    a.sequence.length === b.sequence.length && a.sequence.every((word, i) => word === b.sequence[i])
+  );
+}
+
+/** Two words in the same place that only the accent of a known minimal pair tells apart. */
+function accentMinimalPair(a: string[], b: string[]): boolean {
+  return (
+    a.length === b.length &&
+    a.some(
+      (word, i) =>
+        word !== b[i] &&
+        withoutMarks(word) === withoutMarks(b[i]) &&
+        (ACCENT_MINIMAL_PAIRS.has(word) || ACCENT_MINIMAL_PAIRS.has(b[i])),
+    )
+  );
+}
+
+/**
+ * Accents count: one accent apart is another word ("pode" / "pôde", "si" /
+ * "sí"). Only a text without a single accent next to one with several is read
+ * without them: it was typed without accents ("apresentacao", "servico").
+ * Even then, a word that only an accent tells apart from another (see
+ * ACCENT_MINIMAL_PAIRS) keeps the two items apart.
+ */
+function sameItem(a: ItemKey, b: ItemKey): boolean {
+  const typedWithout = Math.min(a.accents, b.accents) === 0 && Math.max(a.accents, b.accents) >= 2;
+  if (!typedWithout) return sameReading(a.written, b.written);
+  if (accentMinimalPair(a.written.sequence, b.written.sequence)) return false;
+  return sameReading(a.unaccented, b.unaccented);
+}
+
+/**
+ * True when two item texts say the same thing: equal (case and punctuation
+ * apart), or at least 4 words each with 80% of the words in common, no
+ * negation among the words that differ, the same numbers and dates, and,
+ * articles apart, the same words in the same order. Accents, a number's sign
+ * and separators and the signs around it count (see sameItem).
+ */
+export function isNearDuplicate(a: string, b: string): boolean {
+  return sameItem(itemKey(a), itemKey(b));
+}
+
+/** Scripts written without spaces, where a word of 2 characters already says something. */
+const UNSPACED_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+/**
+ * Words of 3 letters or more that are in almost any sentence (pt, en, es):
+ * prepositions, conjunctions, pronouns, auxiliary verbs. Two items that share
+ * only these have nothing in common.
+ */
+const FUNCTION_WORDS = wordSet([
+  // pt
+  "para pra pro com que por pelo pela pelos pelas dos das nos nas num numa uns umas mais menos",
+  "muito muita muitos muitas pouco pouca até sem sob sobre entre após desde como quando onde",
+  "porque porém mas também ainda já não sim isso isto esse essa esses essas este esta estes estas",
+  "aquele aquela aquilo ele ela eles elas você vocês nós seu sua seus suas meu minha nosso nossa",
+  "dele dela deles delas cada todo toda todos todas outro outra outros outras mesmo mesma qual",
+  "quais quem ser ter estar foi era são vai vão vamos está estão tem têm fica pode deve depois",
+  "antes agora aqui ali então bem",
+  // en
+  "the and for with from this that these those into onto about after before over under will",
+  "would shall should can could may might must have has had are was were been being not but",
+  "our your their them they his her its who what when where which how all any also just more",
+  "most some such than then there here very",
+  // es
+  "los las del con una unos unas pero más sin ese esa eso esto ella ellos ellas sus muy también",
+  "cuando donde están son fue hay",
+]);
+
+/**
+ * What a text says beyond its articles and function words, case and accents
+ * apart: its numbers (by their digits) and its words of at least 3 letters (2
+ * in scripts written without spaces).
+ */
+function contentWords(text: string): Set<string> {
+  const content = new Set<string>();
+  for (const word of similarityWords(itemTokens(withoutMarks(text)))) {
+    for (const digits of word.match(/\p{N}+/gu) ?? []) content.add(withoutLeadingZeros(digits));
+    const letters = word.replace(/[^\p{L}]/gu, "").length;
+    if (ARTICLES.has(word) || FUNCTION_WORDS.has(word)) continue;
+    if (letters >= (UNSPACED_SCRIPT.test(word) ? 2 : 3)) content.add(word);
+  }
+  return content;
+}
+
+/** The words of these names, as sharesContent reads them ("Leonardo Castro" → leonardo, castro). */
+export function nameWords(names: Iterable<string>): Set<string> {
+  const words = new Set<string>();
+  for (const name of names) {
+    for (const word of contentWords(name)) if (/\p{L}/u.test(word)) words.add(word);
+  }
+  return words;
+}
+
+/**
+ * True when two texts have a number or a word of content in common, the
+ * words in `ignored` apart (the names of the people in the meeting: two items
+ * that both mention Gustavo are not the same item for that). The review uses
+ * it to keep apart two items it was told are the same (meetingConsolidation.ts).
+ */
+export function sharesContent(
+  a: string,
+  b: string,
+  ignored: ReadonlySet<string> = new Set(),
+): boolean {
+  const content = contentWords(b);
+  for (const word of contentWords(a)) if (content.has(word) && !ignored.has(word)) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Merging
+// ---------------------------------------------------------------------------
+
+/** How one kind of record item is compared and merged. */
+export interface MergeRule<T> {
+  text: (item: T) => string;
+  /** Two items that read alike but must stay apart (another person's task). */
+  conflict?: (a: T, b: T) => boolean;
+  /** The item kept, completed with what its repeat adds (never changes its inputs). */
+  absorb?: (kept: T, repeat: T) => T;
+}
+
+/**
+ * Adds `incoming` to `existing` without near-duplicates: an item that repeats
+ * one already in the list (an earlier one, or one added just before) is not
+ * added, and the item kept absorbs what the repeat adds. The earliest item
+ * keeps its text and its source. Returns a new array of at most `max` items.
+ */
+export function appendDistinct<T>(
+  existing: T[],
+  incoming: T[],
+  rule: MergeRule<T>,
+  max = 500,
+): T[] {
+  if (incoming.length === 0) return existing;
+  const out = [...existing];
+  const keys = out.map((item) => itemKey(rule.text(item)));
+  for (const item of incoming) {
+    const key = itemKey(rule.text(item));
+    const index = keys.findIndex(
+      (other, i) => sameItem(other, key) && !rule.conflict?.(out[i], item),
+    );
+    if (index === -1) {
+      out.push(item);
+      keys.push(key);
+    } else if (rule.absorb) {
+      out[index] = rule.absorb(out[index], item);
+    }
+  }
+  return out.length > max ? out.slice(-max) : out;
+}
+
+const CONFIDENCE_RANK: Record<string, number> = { low: 1, medium: 2, high: 3 };
+
+/** The higher of two confidences (undefined only when both are). */
+export function higherConfidence(
+  a: ActionItem["confidence"],
+  b: ActionItem["confidence"],
+): ActionItem["confidence"] {
+  return (CONFIDENCE_RANK[b ?? ""] ?? 0) > (CONFIDENCE_RANK[a ?? ""] ?? 0) ? b : a;
+}
+
+/** A name the repeat can give: the kept one is missing or a placeholder, the repeat's is real. */
+function betterName(kept: string | undefined, repeat: string | undefined): boolean {
+  return (!kept || isPlaceholderName(kept)) && !!repeat && !isPlaceholderName(repeat);
+}
+
+/** Fills the decision's missing (or "Participante") author from its repeat. */
+export function absorbDecision(kept: Decision, repeat: Decision): Decision {
+  return betterName(kept.by, repeat.by) ? { ...kept, by: repeat.by } : kept;
+}
+
+/**
+ * Fills the task's missing (or "Participante") owner and its missing deadline
+ * from its repeat, keeps the higher confidence, and stays an idea only if the
+ * repeat is one too.
+ */
+export function absorbAction(kept: ActionItem, repeat: ActionItem): ActionItem {
+  const merged: ActionItem = { ...kept };
+  if (betterName(merged.owner, repeat.owner)) merged.owner = repeat.owner;
+  if (!merged.deadline && repeat.deadline) merged.deadline = repeat.deadline;
+  const confidence = higherConfidence(kept.confidence, repeat.confidence);
+  if (confidence) merged.confidence = confidence;
+  if (merged.isSpeculative && !repeat.isSpeculative) merged.isSpeculative = false;
+  return merged;
+}
+
+/** Two different named people (one name not part of the other). */
+function ownersConflict(a: string | undefined, b: string | undefined): boolean {
+  const x = normalizeItemText(a);
+  const y = normalizeItemText(b);
+  if (!x || !y || PLACEHOLDER_NAMES.has(x) || PLACEHOLDER_NAMES.has(y)) return false;
+  return !` ${x} `.includes(` ${y} `) && !` ${y} `.includes(` ${x} `);
+}
+
+/** Two deadlines with different days or numbers ("sexta" / "segunda", "05/10" / "12/10"). */
+function deadlinesConflict(a: string | undefined, b: string | undefined): boolean {
+  if (!normalizeItemText(a) || !normalizeItemText(b)) return false;
+  const numbers = (deadline: string) => numbersIn(similarityWords(itemTokens(deadline)));
+  return !sameSet(numbers(a ?? ""), numbers(b ?? ""));
+}
+
+const TOPIC_STATUSES = new Set(["active", "completed", "unresolved"]);
+
+/** A decision said again carries its latest classification ("tentative" that became "finalized"). */
+export const decisionRule: MergeRule<Decision> = {
+  text: (decision) => decision.text,
+  absorb: (kept, repeat) => {
+    const merged = absorbDecision(kept, repeat);
+    return repeat.classification && repeat.classification !== merged.classification
+      ? { ...merged, classification: repeat.classification }
+      : merged;
+  },
+};
+
+/** The same words for two people, or for two dates, are two commitments. */
+export const actionRule: MergeRule<ActionItem> = {
+  text: (action) => action.task,
+  conflict: (a, b) => ownersConflict(a.owner, b.owner) || deadlinesConflict(a.deadline, b.deadline),
+  absorb: absorbAction,
+};
+
+/** A topic said again carries its latest status. */
+export const topicRule: MergeRule<Topic> = {
+  text: (topic) => topic.name,
+  absorb: (kept, repeat) =>
+    TOPIC_STATUSES.has(repeat.status) && repeat.status !== kept.status
+      ? { ...kept, status: repeat.status }
+      : kept,
+};
+
+export const insightRule: MergeRule<KeyInsight> = { text: (insight) => insight.text };
+
+export const textRule: MergeRule<string> = { text: (value) => value };

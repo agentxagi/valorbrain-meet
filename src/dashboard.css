@@ -399,6 +399,16 @@ button.db-ts:hover {
   text-align: center;
 }
 
+/* What the review of the record changed, and its undo button. */
+.db-review {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 8px;
+  text-align: center;
+}
+
 /* ——— Transcript ——— */
 .db-search {
   position: sticky;

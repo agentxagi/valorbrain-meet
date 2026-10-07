@@ -40,11 +40,27 @@ const SEEDED_STATE = {
   participants: ["Alice", "Bob"],
   initialParticipants: ["Alice"],
   lateJoiners: ["Bob"],
+  // Everyone seen during the recording: Carol already left the call.
+  attendees: ["Alice", "Carol", "Bob"],
   timeline: [{ event: "Meeting started", timestamp: 1_700_000_000_000, elapsed: 0 }],
   transcript: [{ speaker: "Alice", text: "Hello everyone", timestamp: 1 }],
   audioActive: true,
   targetTabId: 42,
   participantCount: 2,
+  consolidation: {
+    mode: "model",
+    before: { decisions: 2, actionItems: 1, topics: 1, openPoints: 2 },
+    after: { decisions: 1, actionItems: 1, topics: 1, openPoints: 2 },
+    at: 1_700_000_100_000,
+    // The lists from before the review, kept so it can be undone.
+    original: {
+      decisions: [{ text: "Ship the beta" }, { text: "Alice presents the roadmap" }],
+      actionItems: [{ task: "Email the team" }],
+      topics: [{ name: "Roadmap", status: "active" }],
+      unresolvedDiscussions: ["Pricing tiers"],
+      questionsRaised: ["When do we launch?"],
+    },
+  },
 };
 
 const SEEDED_GUARDS = {
@@ -177,6 +193,7 @@ test("recovers AI-derived meeting content", async () => {
   );
   assert.deepEqual(state.unresolvedDiscussions, ["Pricing tiers"]);
   assert.deepEqual(state.questionsRaised, ["When do we launch?"]);
+  assert.deepEqual(state.consolidation, SEEDED_STATE.consolidation);
 });
 
 test("recovers transcript, timeline, and participant lists", async () => {
@@ -191,6 +208,7 @@ test("recovers transcript, timeline, and participant lists", async () => {
   assert.deepEqual(state.participants, ["Alice", "Bob"]);
   assert.deepEqual(state.initialParticipants, ["Alice"]);
   assert.deepEqual(state.lateJoiners, ["Bob"]);
+  assert.deepEqual(state.attendees, ["Alice", "Carol", "Bob"], "nobody who left is forgotten");
 });
 
 test("keeps audioActive when the offscreen document is still present", async () => {

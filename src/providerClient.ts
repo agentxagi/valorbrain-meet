@@ -46,7 +46,23 @@ export interface ChatRequest {
   /** Ask for a JSON object (`response_format: json_object`) when supported. */
   json?: boolean;
   timeoutMs?: number;
+  /** Cuts the request short, like the timeout (whichever comes first). */
+  signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+}
+
+/** A signal that aborts as soon as one of `signals` does (AbortSignal.any where it exists). */
+export function anySignal(signals: AbortSignal[]): AbortSignal {
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(signals);
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      break;
+    }
+    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+  }
+  return controller.signal;
 }
 
 function authHeaders(apiKey: string | null): Record<string, string> {
@@ -123,13 +139,16 @@ export async function requestChatCompletion(
 ): Promise<ChatResult> {
   const url = joinProviderUrl(config.baseUrl, "/chat/completions");
   const doFetch = request.fetchImpl ?? fetch;
+  // One deadline for the request and its retry below, cut short by the caller's signal.
+  const timeout = AbortSignal.timeout(request.timeoutMs ?? 60_000);
+  const signal = request.signal ? anySignal([request.signal, timeout]) : timeout;
 
   const send = async (thinking: "disabled" | "low" | null) => {
     const response = await doFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders(apiKey) },
       body: JSON.stringify(buildChatBody(config, request, thinking)),
-      signal: AbortSignal.timeout(request.timeoutMs ?? 60_000),
+      signal,
     });
     await ensureOk(response, url);
     return response.json().catch(() => null);

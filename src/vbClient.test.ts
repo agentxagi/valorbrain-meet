@@ -194,6 +194,46 @@ test("buildValorBrainContent fills placeholders for empty sections", () => {
   assert.ok(content.includes("## Transcrição\n_(sem transcrição)_"));
 });
 
+test("buildValorBrainContent says which version of the extension recorded the meeting", () => {
+  assert.ok(
+    buildValorBrainContent(makeSession({ appVersion: "2.4.0" })).includes(
+      "\n- Registrado pelo ValorBrain Meet 2.4.0 (transcrição automática, pode conter erros)\n",
+    ),
+  );
+  assert.ok(
+    buildValorBrainContent(makeSession()).includes(
+      "\n- Registrado pelo ValorBrain Meet (transcrição automática, pode conter erros)\n",
+    ),
+    "a session saved before 2.4 keeps the line without a version",
+  );
+});
+
+test("the document never carries the review of the record or what it removed", () => {
+  const counts = { decisions: 2, actionItems: 2, topics: 1, openPoints: 1 };
+  const session = makeSession({
+    consolidation: {
+      mode: "model",
+      before: counts,
+      after: { decisions: 1, actionItems: 1, topics: 1, openPoints: 0 },
+      at: 1,
+      original: {
+        decisions: [{ text: "Adotar REST", by: "Gus" }, { text: "Leonardo apresenta o método" }],
+        actionItems: [
+          { task: "Publicar o PRD", owner: "Ana", deadline: "2026-02-01" },
+          { task: "Mandar o link da reunião" },
+        ],
+        topics: [{ name: "Roadmap", status: "active" }],
+        unresolvedDiscussions: [],
+        questionsRaised: ["Tudo bem com vocês?"],
+      },
+    },
+  });
+  const payload = JSON.stringify(buildValorBrainPayload(session));
+  assert.doesNotMatch(payload, /Leonardo apresenta|Mandar o link|Tudo bem com vocês/);
+  assert.doesNotMatch(payload, /revis|desfeita|original/i);
+  assert.match(payload, /Adotar REST/);
+});
+
 test("buildValorBrainContent falls back to computed labels when timestampLabel is absent", () => {
   const content = buildValorBrainContent(
     makeSession({ transcript: [{ speaker: "Ana", text: "Oi", timestamp: 3725 }] }),

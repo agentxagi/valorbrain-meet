@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { extractJsonObject } from "./llmJson.ts";
+import { extractJsonObject, parseJsonObjectStrict } from "./llmJson.ts";
 
 test("parses a plain JSON object", () => {
   assert.deepEqual(extractJsonObject('{"summary":"ok","decisions":[]}'), {
@@ -30,4 +30,30 @@ test("returns null for arrays, invalid JSON and non-strings", () => {
 test("passes plain objects through untouched", () => {
   const value = { summary: "já objeto" };
   assert.equal(extractJsonObject(value), value);
+});
+
+test("the strict parser takes one object, bare or in one fence, and nothing else", () => {
+  assert.deepEqual(parseJsonObjectStrict(' {"decisions":["D1"]} \n'), { decisions: ["D1"] });
+  assert.deepEqual(parseJsonObjectStrict('```json\n{"decisions":["D1"]}\n```'), {
+    decisions: ["D1"],
+  });
+  assert.deepEqual(parseJsonObjectStrict('```\n{"a":1}\n```'), { a: 1 });
+  // One reasoning block before the answer, as reasoning models write it.
+  assert.deepEqual(parseJsonObjectStrict('<think>vou pensar {"x":1}</think>\n{"a":1}'), { a: 1 });
+  assert.deepEqual(parseJsonObjectStrict('<think>ok</think>\n```json\n{"a":1}\n```'), { a: 1 });
+  const refused: unknown[] = [
+    'Segue a revisão: {"decisions":["D1"]}',
+    '{"decisions":["D1"]} Espero ter ajudado.',
+    // The prompt's example first, the real answer after: neither is taken.
+    '{"decisions":["D2"]}\n{"decisions":["D1","D2"]}',
+    '```json\n{"a":1}\n```\n```json\n{"b":2}\n```',
+    '<think>a</think><think>b</think>{"a":1}', // only one reasoning block is taken off
+    '<think>ok</think> Segue: {"a":1}',
+    'Antes <think>ok</think>{"a":1}',
+    "[1,2]",
+    "",
+    undefined,
+    { a: 1 },
+  ];
+  for (const raw of refused) assert.equal(parseJsonObjectStrict(raw), null, String(raw));
 });

@@ -22,7 +22,8 @@ memória do ValorBrain. Sem bot na chamada.
 - **Revisa os termos no fim**: nomes, marcas e termos em inglês que o reconhecimento errou são corrigidos na transcrição antes do resumo final (no painel, as trocas ficam em Detalhes; no ValorBrain vai só a grafia certa). As correções voltam para o ValorBrain, e a próxima reunião da empresa já sai certa.
 - **Avisa no chat que está gravando** (opcional): ao começar, publica no chat da reunião que ela está sendo gravada e transcrita pelo ValorBrain Meet, uma vez por reunião.
 - **Resume enquanto a reunião acontece**: resumo, decisões, próximos passos com responsável e prazo, assuntos, pontos em aberto e clima da reunião.
-- **Fecha sozinha**: ao encerrar (ou ao sair da chamada), transcreve o último trecho, gera o resumo final, salva a reunião neste navegador e envia para o ValorBrain. Uma notificação confirma.
+- **Revisa o registro no fim**: antes de salvar, o modelo de resumo revê as listas inteiras. Junta o que foi registrado duas vezes com outras palavras, tira das decisões o que não foi decidido (apresentações, opiniões, propostas sem resposta), fica com a versão final do que mudou durante a conversa, tira dos próximos passos o que já aconteceu na chamada e tira dos pontos em aberto as perguntas respondidas depois. O modelo só escolhe entre os itens que existem; a extensão confere cada escolha. No painel, o Resumo mostra quanto cada lista diminuiu, e **Desfazer revisão** devolve as listas de antes (depois, **Reenviar** no Histórico atualiza o ValorBrain). Desligável em **Configurações → Recursos**.
+- **Fecha sozinha**: ao encerrar (ou ao sair da chamada), transcreve o último trecho, gera o resumo final, revisa o registro, salva a reunião neste navegador e envia para o ValorBrain. Uma notificação confirma.
 - **Histórico**: reabra reuniões salvas, reenvie ao ValorBrain e exporte em Markdown, texto ou JSON.
 - **Para quem chega atrasado**: mostra um resumo privado na sua tela quando alguém entra depois (e, se você ativar, envia no chat).
 
@@ -39,6 +40,8 @@ Requisito: Google Chrome 116 ou mais recente, no macOS ou no Windows.
 Na primeira instalação, a página de configurações abre sozinha.
 
 **Atualizar:** substitua a pasta pela versão nova (mesmo lugar, mesmo nome) e clique em ↻ no cartão da extensão em `chrome://extensions`. O histórico e as configurações continuam. Carregar de outra pasta cria outra extensão, com o histórico vazio.
+
+**Aviso de versão nova:** o Chrome não atualiza sozinho uma extensão instalada pelo zip. Por isso, uma vez por dia, a extensão lê `https://meet.valorbra.in/latest.json` (um GET simples, sem nada da reunião) e, quando há versão nova, o ícone mostra **Versão X disponível** com o link **Como atualizar**. Desligue em **Configurações → Atualizações**; detalhes em [`docs/PRIVACY.md`](docs/PRIVACY.md#aviso-de-versão-nova).
 
 ## Primeira configuração
 
@@ -93,7 +96,7 @@ Os atalhos podem ser trocados em `chrome://extensions/shortcuts`. O rodapé do �
 
 ## O que vai para o ValorBrain
 
-Cada reunião vira uma memória do tipo `observation` na coleção `meetings`, com as seções Resumo, Decisões, Próximos passos, Assuntos, Pontos em aberto, Participantes, Detalhes e Transcrição. O envio é automático ao encerrar (pode ser desligado em **Configurações → ValorBrain**). Se falhar, a reunião continua salva no navegador: no **Histórico**, clique em **Enviar ao ValorBrain** nela.
+Cada reunião vira uma memória do tipo `observation` na coleção `meetings`, com as seções Resumo, Decisões, Próximos passos, Assuntos, Pontos em aberto, Participantes, Detalhes e Transcrição. Participantes são todos que estiveram na chamada durante a gravação, mesmo quem saiu antes do fim, e Detalhes diz qual versão da extensão registrou a reunião. O envio é automático ao encerrar (pode ser desligado em **Configurações → ValorBrain**). Se falhar, a reunião continua salva no navegador: no **Histórico**, clique em **Enviar ao ValorBrain** nela.
 
 Junto com a reunião, as correções que a revisão final aceitou ("Rapplet" → "Replit") viram apelidos no ValorBrain, e o vocabulário das próximas reuniões já traz a grafia certa. O ValorBrain nunca junta pessoas nem troca um nome que já conhece por causa de uma correção. As duas coisas podem ser desligadas em **Configurações → ValorBrain**.
 
@@ -103,6 +106,7 @@ Contrato da API e roteiro de teste manual: [`docs/VB-INGEST.md`](docs/VB-INGEST.
 
 - O áudio vai só para o provedor de transcrição que você escolheu. O texto vai só para o provedor de resumo. A reunião vai para o seu tenant do ValorBrain. A extensão não tem servidor próprio.
 - Ao começar a gravar, os nomes dos participantes vão para o seu ValorBrain para buscar o vocabulário da empresa. O ValorBrain só devolve o que a sua conta pode ver.
+- Uma vez por dia, a extensão pergunta a meet.valorbra.in qual é a versão mais recente, sem enviar nada da reunião. Dá para desligar.
 - Reuniões, chaves e configurações ficam no armazenamento local do Chrome deste perfil. Nada sincroniza entre computadores.
 - **Configurações → Dados e uso** mostra o espaço usado, apaga reuniões e zera tudo. Apagar aqui não apaga o que já está no ValorBrain.
 

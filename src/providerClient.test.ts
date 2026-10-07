@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  anySignal,
   makeSilentWav,
   probeChat,
   requestChatCompletion,
@@ -86,6 +87,66 @@ test("models that cannot disable thinking are retried with low effort", async ()
   const answer = await probeChat(ZAI, "k", fetchImpl);
   assert.equal(answer, "ok");
   assert.deepEqual(bodies[1].thinking, { type: "low" });
+});
+
+test("the low-effort retry keeps the first try's deadline and the caller's signal", async () => {
+  const signals: AbortSignal[] = [];
+  const fetchImpl = (async (_url: string, init: RequestInit) => {
+    signals.push(init.signal!);
+    if (signals.length === 1) {
+      return json(400, { error: { code: "1210", message: "cannot be disabled" } });
+    }
+    return json(200, { choices: [{ message: { content: "ok" } }] });
+  }) as typeof fetch;
+  const caller = new AbortController();
+  await requestChatCompletion(ZAI, "k", {
+    messages: [],
+    maxTokens: 10,
+    timeoutMs: 30_000,
+    signal: caller.signal,
+    fetchImpl,
+  });
+  assert.equal(signals.length, 2);
+  assert.equal(signals[1], signals[0], "no fresh timeout for the retry");
+  caller.abort();
+  assert.equal(signals[1].aborted, true, "the caller can still cut it");
+});
+
+test("the caller's signal cuts a request short", async () => {
+  const fetchImpl = ((_url: string, init: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+    })) as typeof fetch;
+  const caller = new AbortController();
+  const request = requestChatCompletion(ZAI, "k", {
+    messages: [],
+    maxTokens: 10,
+    signal: caller.signal,
+    fetchImpl,
+  });
+  caller.abort();
+  await assert.rejects(request, (err: unknown) => (err as Error).name === "AbortError");
+});
+
+test("anySignal aborts with the first of its signals, also without AbortSignal.any", () => {
+  const native = AbortSignal.any;
+  for (const withAny of [true, false]) {
+    if (!withAny) (AbortSignal as { any?: unknown }).any = undefined;
+    try {
+      const first = new AbortController();
+      const second = new AbortController();
+      const either = anySignal([first.signal, second.signal]);
+      assert.equal(either.aborted, false);
+      second.abort("hurry");
+      assert.equal(either.aborted, true);
+      assert.equal(either.reason, "hurry");
+      const done = new AbortController();
+      done.abort("before");
+      assert.equal(anySignal([new AbortController().signal, done.signal]).reason, "before");
+    } finally {
+      AbortSignal.any = native;
+    }
+  }
 });
 
 test("an empty answer cut by the token limit is a payload error", async () => {

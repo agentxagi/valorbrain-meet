@@ -32,6 +32,42 @@ export interface TermCorrectionRecord {
   source?: "graph";
 }
 
+/** Items of each kind in a meeting record (open points: unresolved discussions and questions). */
+export interface RecordCounts {
+  decisions: number;
+  actionItems: number;
+  topics: number;
+  openPoints: number;
+}
+
+/** The lists of a meeting record the end-of-meeting review works on. */
+export interface RecordLists {
+  decisions: Decision[];
+  actionItems: ActionItem[];
+  topics: Topic[];
+  unresolvedDiscussions: string[];
+  questionsRaised: string[];
+}
+
+/** End-of-meeting review of the record: repeats merged, what does not belong removed. */
+export interface ConsolidationReport {
+  /**
+   * "model": the summary model chose what stays (checked by the extension);
+   * "local": only repeats were merged.
+   */
+  mode: "model" | "local";
+  before: RecordCounts;
+  after: RecordCounts;
+  at: number;
+  /**
+   * The lists as they were before the model's review, so the side panel can
+   * undo it. Kept on the saved session only: never in the ValorBrain document.
+   */
+  original?: RecordLists;
+  /** The review was undone: the lists are back to how they were before it. */
+  undone?: boolean;
+}
+
 /** Vocabulary the ValorBrain graph suggested for the current recording. */
 export interface GraphVocabulary {
   /** Terms in the engine's order (participants excluded: the prompt names them). */
@@ -110,7 +146,8 @@ export interface MeetingStats {
 
 /** Outcome of delivering a saved session to ValorBrain. */
 export interface VbDeliveryStatus {
-  status: "sent" | "failed" | "skipped";
+  /** "stale": it was sent, but its record review was undone afterwards. */
+  status: "sent" | "failed" | "skipped" | "stale";
   at: number;
   docRef?: string | null;
   error?: string;
@@ -137,6 +174,12 @@ export interface State {
   participants: string[];
   initialParticipants: string[];
   lateJoiners: string[];
+  /**
+   * Everyone seen in the call during the recording, in order of arrival; it
+   * never shrinks (`participants` is who is in the call right now). A saved
+   * session carries this list as its `participants`.
+   */
+  attendees?: string[];
   timeline: TimelineEvent[];
   transcript: TranscriptEntry[];
   summaryItems: SummaryItem[];
@@ -164,8 +207,12 @@ export interface State {
   vb?: VbDeliveryStatus;
   /** Why the session ended (saved sessions only). */
   endReason?: string;
+  /** Version of the extension that recorded it, e.g. "2.4.0" (saved sessions only). */
+  appVersion?: string;
   /** Spelling fixes applied to the transcript (learned ones as lines arrive, the review at the end). */
   termCorrections?: TermCorrectionRecord[];
+  /** The review of decisions, next steps, topics and open points when the meeting ended. */
+  consolidation?: ConsolidationReport;
   /** Live recording only: vocabulary from the ValorBrain graph (never saved with the session). */
   graphVocabulary?: GraphVocabulary | null;
 }

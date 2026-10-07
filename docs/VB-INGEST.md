@@ -66,7 +66,7 @@ X-Tenant-ID: <tenant>        (só se configurado)
 {
   "type": "observation",
   "title": "Reunião: Planejamento do lançamento da versão 2 (2026-09-29 09:23)",
-  "content": "## Resumo\n…\n\n## Decisões\n- …\n\n## Próximos passos\n- [ ] … — Responsável (prazo: …)\n\n## Assuntos\n…\n\n## Pontos em aberto\n…\n\n## Participantes\n…\n\n## Detalhes\n…\n\n## Transcrição\n[00:00] Nome: …",
+  "content": "## Resumo\n…\n\n## Decisões\n- …\n\n## Próximos passos\n- [ ] … — Responsável (prazo: …)\n\n## Assuntos\n…\n\n## Pontos em aberto\n…\n\n## Participantes\n…\n\n## Detalhes\n…\n- Registrado pelo ValorBrain Meet 2.4.0 (transcrição automática, pode conter erros)\n\n## Transcrição\n[00:00] Nome: …",
   "collection": "meetings",
   "tags": ["reuniao", "meet", "valorbrain-meet"],
   "confidence": 0.85
@@ -74,12 +74,17 @@ X-Tenant-ID: <tenant>        (só se configurado)
 ```
 
 O título usa o primeiro assunto identificado pelo resumo; sem assunto, o código da reunião.
-Seções sem conteúdo (Assuntos, Pontos em aberto, Participantes) são omitidas.
+Seções sem conteúdo (Assuntos, Pontos em aberto, Participantes) são omitidas. **Participantes**
+lista todo mundo que apareceu na chamada durante a gravação, mesmo quem saiu antes do fim.
 
 Em **Detalhes**, `Grafia revisada na transcrição: gbrain (4), Replit` lista só a grafia certa dos
 termos corrigidos. As formas erradas ("D-Brain") não vão para a memória: o ValorBrain extrai
 entidades desse texto e elas voltariam como entidades próprias. Elas ficam no grafo como apelidos
 (ensinados depois do envio) e na linha do tempo do painel da extensão.
+
+A última linha de **Detalhes** diz qual versão da extensão gravou a reunião
+(`Registrado pelo ValorBrain Meet 2.4.0 …`), para entender um problema a partir do registro.
+Reuniões salvas por versões anteriores à 2.4 saem sem o número.
 
 A resposta deve trazer `path` ou `docid`; esse valor aparece como referência do documento.
 
