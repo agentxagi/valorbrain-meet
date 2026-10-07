@@ -68,7 +68,7 @@ test("buildSummaryMessages asks for JSON in the meeting language and fences the 
     transcriptLines: ["[chunk_1] [00:10] Ana: Vamos lançar na sexta."],
     features: ALL,
     participants: ["You", "Ana", "Bruno"],
-    known: { decisions: [{ text: "Usar REST" }], actionItems: [], topics: [] },
+    known: { decisions: [{ text: "Usar REST" }], actionItems: [], topics: [], questionsRaised: [] },
     isFinal: true,
   });
   assert.equal(system.role, "system");
@@ -89,12 +89,71 @@ test("disabled features are left out of the requested JSON keys", () => {
     transcriptLines: [],
     features: { topics: false, decisions: false, actions: false, sentiment: false },
     participants: [],
-    known: { decisions: [], actionItems: [], topics: [] },
+    known: { decisions: [], actionItems: [], topics: [], questionsRaised: [] },
     isFinal: false,
   });
   assert.doesNotMatch(user.content, /"actionItems"/);
   assert.doesNotMatch(user.content, /"sentiment"/);
   assert.match(user.content, /"summary"/);
+});
+
+test("the summarizer sees what is already registered, open questions included, within a budget", () => {
+  // 80 decisions of ~60 characters: far more than fits, far more than 15.
+  const decisions = Array.from({ length: 80 }, (_, i) => ({
+    text: `Decisão número ${String(i + 1).padStart(2, "0")} sobre o plano de lançamento da versão`,
+  }));
+  const [, user] = buildSummaryMessages({
+    previousSummary: "",
+    transcriptLines: [],
+    features: ALL,
+    participants: [],
+    known: {
+      decisions,
+      actionItems: [],
+      topics: [{ name: "Preço do programa", status: "active" }],
+      questionsRaised: ["Qual é o valor do serviço?", "<b>Quando começa?</b>"],
+    },
+    isFinal: false,
+  });
+  const block = /<ja_registrado>\n([\s\S]*?)\n<\/ja_registrado>/.exec(user.content)![1];
+  const decisionLines = /Decisões:\n([\s\S]*?)\nAções:/.exec(block)![1].split("\n");
+  assert.ok(decisionLines.length > 15, `${decisionLines.length} decisions shown`);
+  assert.ok(decisionLines.join("\n").length <= 2500);
+  assert.match(decisionLines.at(-1)!, /número 80 /, "the most recent one is shown last");
+  assert.match(decisionLines[0], /número \d\d /);
+  assert.doesNotMatch(block, /número 01 /, "the oldest ones are left out");
+  const numbers = decisionLines.map((line) => Number(/número (\d\d)/.exec(line)![1]));
+  assert.deepEqual(
+    numbers,
+    [...numbers].sort((a, b) => a - b),
+    "printed in chronological order",
+  );
+  assert.match(block, /Ações:\n\(nenhum\)/);
+  assert.match(block, /Assuntos:\n- Preço do programa/);
+  assert.match(block, /Perguntas sem resposta:\n- Qual é o valor do serviço\?\n- Quando começa\?$/);
+});
+
+test("the summary rules say what a decision, an action, a topic and an open question are", () => {
+  const [system] = buildSummaryMessages({
+    previousSummary: "",
+    transcriptLines: [],
+    features: ALL,
+    participants: [],
+    known: { decisions: [], actionItems: [], topics: [], questionsRaised: [] },
+    isFinal: false,
+  });
+  // The rules added after the fabricated "decisions" of 2026-10-02 stay.
+  assert.match(system.content, /Analogia, comparação, piada ou comentário tangencial/);
+  assert.match(system.content, /atribua o item à pessoa certa/);
+  assert.match(system.content, /uma recusa também é decisão/);
+  assert.match(system.content, /Não é decisão: apresentação ou descrição/);
+  assert.match(system.content, /proposta que ainda não teve resposta/);
+  assert.match(system.content, /combinado sobre a própria reunião/);
+  assert.match(system.content, /compromisso de fazer algo depois da reunião/);
+  assert.match(system.content, /nem o que um produto ou serviço oferece/);
+  assert.match(system.content, /use exatamente o mesmo nome/);
+  assert.match(system.content, /deixe de fora perguntas de cortesia/);
+  assert.match(system.content, /nem com outras palavras/);
 });
 
 test("mergeSummaryResult validates, deduplicates and keeps source references", () => {
@@ -240,7 +299,7 @@ test("the summary prompt carries the company vocabulary", () => {
     transcriptLines: [],
     features: ALL,
     participants: [],
-    known: { decisions: [], actionItems: [], topics: [] },
+    known: { decisions: [], actionItems: [], topics: [], questionsRaised: [] },
     isFinal: false,
     vocabulary: ["ValorBrain", "Climoo"],
   });
@@ -253,7 +312,7 @@ test("buildSummaryMessages writes in the meeting language it is given", () => {
     transcriptLines: ["[chunk_1] [00:10] Ana: Let's ship on Friday."],
     features: ALL,
     participants: ["Ana"],
-    known: { decisions: [], actionItems: [], topics: [] },
+    known: { decisions: [], actionItems: [], topics: [], questionsRaised: [] },
     isFinal: false,
   };
   const [english] = buildSummaryMessages({ ...base, outputLanguage: "en" });

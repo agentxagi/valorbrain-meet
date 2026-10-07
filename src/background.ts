@@ -1387,7 +1387,12 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     transcriptLines: window.lines,
     features,
     participants: [...selfNameCandidates(settings), ...state.participants],
-    known: { decisions: state.decisions, actionItems: state.actionItems, topics: state.topics },
+    known: {
+      decisions: state.decisions,
+      actionItems: state.actionItems,
+      topics: state.topics,
+      questionsRaised: state.questionsRaised,
+    },
     isFinal,
     vocabulary: reviewVocabularyFrom(settings),
     selfName: selfNameCandidates(settings)[0],

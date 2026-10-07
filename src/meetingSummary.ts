@@ -48,7 +48,8 @@ export interface SummaryState {
 }
 
 const MAX_TEXT_PER_LINE = 2000;
-const MAX_KNOWN_ITEMS = 15;
+/** Characters of each already registered list shown to the summarizer. */
+const KNOWN_CHARS_PER_KIND = 2500;
 
 /** Strips control chars, tags and fences so transcript text can't break the prompt. */
 export function sanitizePromptText(value: unknown, maxLength = MAX_TEXT_PER_LINE): string {
@@ -145,12 +146,21 @@ export function selectTranscriptWindow(
   return { lines: [...context, ...selected], endIndex: transcript.length, skipped };
 }
 
-function knownList(items: string[]): string {
-  const cleaned = items
-    .map((item) => sanitizePromptText(item, 160))
-    .filter(Boolean)
-    .slice(-MAX_KNOWN_ITEMS);
-  return cleaned.length > 0 ? cleaned.map((item) => `- ${item}`).join("\n") : "(nenhum)";
+/**
+ * What is already registered, so the model does not register it again: the
+ * most recent items that fit the character budget, printed oldest first.
+ */
+function knownList(items: string[], budget = KNOWN_CHARS_PER_KIND): string {
+  const lines: string[] = [];
+  let used = 0;
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = sanitizePromptText(items[i], 160);
+    if (!item) continue;
+    if (used + item.length + 3 > budget) break;
+    lines.unshift(`- ${item}`);
+    used += item.length + 3;
+  }
+  return lines.length > 0 ? lines.join("\n") : "(nenhum)";
 }
 
 export interface BuildSummaryPromptOptions {
@@ -158,7 +168,7 @@ export interface BuildSummaryPromptOptions {
   transcriptLines: string[];
   features: SummaryFeatures;
   participants: string[];
-  known: Pick<SummaryState, "decisions" | "actionItems" | "topics">;
+  known: Pick<SummaryState, "decisions" | "actionItems" | "topics" | "questionsRaised">;
   /** Final pass after the meeting ended: produce the definitive summary. */
   isFinal: boolean;
   /** Company terms with their correct spelling (from the settings). */
@@ -186,18 +196,18 @@ export function buildSummaryMessages(options: BuildSummaryPromptOptions): ChatMe
     "O campo summary resume a reunião inteira até agora (contexto anterior + trecho novo) em 3 a 6 frases.",
     "summaryItems lista só os pontos novos deste trecho, um por fato relevante.",
     features.topics
-      ? "Identifique os assuntos discutidos. status: active (em discussão), completed (encerrado) ou unresolved (ficou sem conclusão)."
+      ? "Assuntos são os temas principais da conversa, não cada fala. Para um tema que já está em <ja_registrado>, use exatamente o mesmo nome (só o status muda). status: active (em discussão), completed (encerrado) ou unresolved (ficou sem conclusão)."
       : "",
     features.decisions
-      ? "Registre decisões explícitas. classification: tentative quando houver hesitação (talvez, acho que, vamos ver); finalized quando foi fechado."
+      ? "Decisão é algo decidido na reunião: escolhido, aprovado, aceito, recusado ou combinado (uma recusa também é decisão). Não é decisão: apresentação ou descrição de um produto, serviço, pessoa ou método; opinião ou autoavaliação; proposta que ainda não teve resposta; combinado sobre a própria reunião (duração, formato, ordem da conversa). classification: tentative quando houver hesitação (talvez, acho que, vamos ver); finalized quando foi fechado."
       : "",
     features.actions
-      ? "Registre ações concretas. owner apenas se alguém assumiu a tarefa; deadline apenas se um prazo foi dito. confidence: high, medium ou low. isSpeculative: true quando foi só uma ideia."
+      ? "Ação é um compromisso de fazer algo depois da reunião. Não registre o que aconteceu durante a própria conversa nem o que um produto ou serviço oferece. owner apenas se alguém assumiu a tarefa; deadline apenas se um prazo foi dito. confidence: high, medium ou low. isSpeculative: true quando foi só uma ideia."
       : "",
     features.sentiment ? "sentiment: positive, neutral, negative ou mixed." : "",
     "keyInsights: fatos ou riscos importantes, com confidenceScore de 0 a 100.",
-    "questionsRaised: perguntas que ficaram sem resposta. contradictions: pontos em que alguém contradisse algo dito antes.",
-    "Não repita itens que já estão registrados; devolva listas vazias quando não houver novidade.",
+    "questionsRaised: só as perguntas importantes que ficaram sem resposta neste trecho; deixe de fora perguntas de cortesia e as que foram respondidas logo depois. contradictions: pontos em que alguém contradisse algo dito antes.",
+    "Não registre de novo o que já está em <ja_registrado>, nem com outras palavras; devolva listas vazias quando não houver novidade.",
     "Responda somente com um objeto JSON válido, sem texto antes ou depois.",
   ].filter(Boolean);
 
@@ -254,6 +264,8 @@ Ações:
 ${knownList(options.known.actionItems.map((a) => a.task))}
 Assuntos:
 ${knownList(options.known.topics.map((t) => t.name))}
+Perguntas sem resposta:
+${knownList(options.known.questionsRaised)}
 </ja_registrado>
 
 <transcricao>
