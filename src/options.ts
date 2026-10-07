@@ -56,6 +56,7 @@ const TOGGLES: Array<{ id: string; key: string; defaultOn: boolean }> = [
   { id: "decision-toggle", key: "decisionDetection", defaultOn: true },
   { id: "action-toggle", key: "actionExtraction", defaultOn: true },
   { id: "sentiment-toggle", key: "sentimentAnalysis", defaultOn: true },
+  { id: "consolidation-toggle", key: "recordConsolidation", defaultOn: true },
   { id: "refinement-toggle", key: "transcriptRefinement", defaultOn: false },
   { id: "late-joiner-toggle", key: "lateJoinerBriefing", defaultOn: true },
   { id: "public-late-joiner-chat-toggle", key: "publicLateJoinerChat", defaultOn: false },

@@ -32,7 +32,7 @@ export interface TermCorrectionRecord {
   source?: "graph";
 }
 
-/** Items of each kind in a meeting record (open points: unresolved discussions and open questions). */
+/** Items of each kind in a meeting record (open points: unresolved discussions and questions). */
 export interface RecordCounts {
   decisions: number;
   actionItems: number;
@@ -40,9 +40,12 @@ export interface RecordCounts {
   openPoints: number;
 }
 
-/** The review of the record when the meeting ends (repeats merged, what does not belong removed). */
+/** End-of-meeting review of the record: repeats merged, what does not belong removed. */
 export interface ConsolidationReport {
-  /** "model": the summary model chose what stays (checked by the extension); "local": repeats merged only. */
+  /**
+   * "model": the summary model chose what stays (checked by the extension);
+   * "local": only repeats were merged.
+   */
   mode: "model" | "local";
   before: RecordCounts;
   after: RecordCounts;
@@ -183,6 +186,8 @@ export interface State {
   endReason?: string;
   /** Spelling fixes applied to the transcript (learned ones as lines arrive, the review at the end). */
   termCorrections?: TermCorrectionRecord[];
+  /** The review of decisions, next steps, topics and open points when the meeting ended. */
+  consolidation?: ConsolidationReport;
   /** Live recording only: vocabulary from the ValorBrain graph (never saved with the session). */
   graphVocabulary?: GraphVocabulary | null;
 }

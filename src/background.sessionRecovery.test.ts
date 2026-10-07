@@ -45,6 +45,12 @@ const SEEDED_STATE = {
   audioActive: true,
   targetTabId: 42,
   participantCount: 2,
+  consolidation: {
+    mode: "model",
+    before: { decisions: 42, actionItems: 55, topics: 84, openPoints: 93 },
+    after: { decisions: 6, actionItems: 14, topics: 9, openPoints: 7 },
+    at: 1_700_000_100_000,
+  },
 };
 
 const SEEDED_GUARDS = {
@@ -177,6 +183,7 @@ test("recovers AI-derived meeting content", async () => {
   );
   assert.deepEqual(state.unresolvedDiscussions, ["Pricing tiers"]);
   assert.deepEqual(state.questionsRaised, ["When do we launch?"]);
+  assert.deepEqual(state.consolidation, SEEDED_STATE.consolidation);
 });
 
 test("recovers transcript, timeline, and participant lists", async () => {

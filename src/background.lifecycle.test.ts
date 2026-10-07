@@ -76,6 +76,23 @@ const sttResponses: AnyRecord[] = [];
 /** What the model answers to the final spelling pass (no corrections by default). */
 let correctionResponse: AnyRecord = { correcoes: [] };
 
+const DEFAULT_SUMMARY: AnyRecord = {
+  summary: "A equipe decidiu lançar a versão 2 na sexta-feira.",
+  summaryItems: [{ text: "Lançamento na sexta", chunkId: "chunk_1", timestampLabel: "00:00" }],
+  topics: [{ name: "Lançamento da versão 2", status: "completed" }],
+  currentTopic: "Lançamento da versão 2",
+  decisions: [{ text: "Lançar na sexta-feira", chunkId: "chunk_1", classification: "finalized" }],
+  actionItems: [{ task: "Preparar o changelog", owner: "Bruno", deadline: "quinta-feira" }],
+  sentiment: "positive",
+  keyInsights: [],
+  contradictions: [],
+  questionsRaised: ["Qual o preço do plano empresarial?"],
+};
+/** What the model answers to a summary pass. */
+let summaryResponse: AnyRecord = DEFAULT_SUMMARY;
+/** What the model answers to the review of the record at the end (raw content). */
+let consolidationContent = "{}";
+
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
     status,
@@ -104,33 +121,18 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
       usage: { prompt_tokens: 400, completion_tokens: 40, total_tokens: 440 },
     });
   }
+  if (
+    url === "https://api.z.ai/api/coding/paas/v4/chat/completions" &&
+    /revisa o registro/.test(chatSystemPrompt(init))
+  ) {
+    return jsonResponse(200, {
+      choices: [{ finish_reason: "stop", message: { content: consolidationContent } }],
+      usage: { prompt_tokens: 1500, completion_tokens: 200, total_tokens: 1700 },
+    });
+  }
   if (url === "https://api.z.ai/api/coding/paas/v4/chat/completions") {
     return jsonResponse(200, {
-      choices: [
-        {
-          finish_reason: "stop",
-          message: {
-            content: JSON.stringify({
-              summary: "A equipe decidiu lançar a versão 2 na sexta-feira.",
-              summaryItems: [
-                { text: "Lançamento na sexta", chunkId: "chunk_1", timestampLabel: "00:00" },
-              ],
-              topics: [{ name: "Lançamento da versão 2", status: "completed" }],
-              currentTopic: "Lançamento da versão 2",
-              decisions: [
-                { text: "Lançar na sexta-feira", chunkId: "chunk_1", classification: "finalized" },
-              ],
-              actionItems: [
-                { task: "Preparar o changelog", owner: "Bruno", deadline: "quinta-feira" },
-              ],
-              sentiment: "positive",
-              keyInsights: [],
-              contradictions: [],
-              questionsRaised: ["Qual o preço do plano empresarial?"],
-            }),
-          },
-        },
-      ],
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(summaryResponse) } }],
       usage: { prompt_tokens: 900, completion_tokens: 120, total_tokens: 1020 },
     });
   }
@@ -380,6 +382,20 @@ test("a recording is transcribed, its language detected, summarized in it, saved
   assert.equal(saved.transcript.length, 2);
   assert.equal(saved.vb.status, "sent");
   assert.equal(saved.isActive, false);
+  // Four items are too few for the model's review of the record: only the local one ran.
+  assert.ok(
+    !fetchCalls.some(
+      (c) =>
+        c.url.endsWith("/chat/completions") && /revisa o registro/.test(chatSystemPrompt(c.init)),
+    ),
+  );
+  assert.equal(saved.consolidation.mode, "local");
+  assert.deepEqual(saved.consolidation.after, {
+    decisions: 1,
+    actionItems: 1,
+    topics: 1,
+    openPoints: 1,
+  });
 
   // Delivered to the tenant with the OAuth token and PT-BR sections.
   const storeCall = fetchCalls.find((c) => c.url.endsWith("/api/v1/memory/store"))!;
@@ -612,4 +628,189 @@ test("muting the microphone in Meet reaches the recorder", async () => {
     async () => ((await sendMessage({ type: "GET_STATE" })).audioActive === false ? true : null),
     "stop",
   );
+});
+
+/** The record of a sales call as the live summary leaves it: 10 items, most of them noise. */
+const SALES_CALL_SUMMARY: AnyRecord = {
+  summary: "Leonardo apresentou o programa de mentoria; Gustavo decidiu não aderir agora.",
+  summaryItems: [],
+  topics: [
+    { name: "Programa de mentoria", status: "active" },
+    { name: "Preço do programa", status: "active" },
+  ],
+  currentTopic: "Preço do programa",
+  decisions: [
+    {
+      text: "Leonardo apresenta a metodologia do programa",
+      chunkId: "chunk_1",
+      classification: "finalized",
+    },
+    { text: "Pacote completo por 22.990", chunkId: "chunk_1", classification: "tentative" },
+    {
+      text: "Gustavo decide não aderir agora",
+      by: "Gustavo",
+      chunkId: "chunk_1",
+      classification: "tentative",
+    },
+  ],
+  actionItems: [
+    { task: "Enviar o link da reunião para o Gustavo entrar", confidence: "high" },
+    { task: "Desenhar a carta de apresentação do Gustavo", owner: "Leonardo", deadline: "sexta" },
+  ],
+  sentiment: "neutral",
+  keyInsights: [],
+  contradictions: [],
+  unresolvedDiscussions: ["Qual é o valor do serviço"],
+  questionsRaised: ["Qual é o valor do serviço?", "Tudo bem com vocês?"],
+};
+
+function isReviewCall(c: { url: string; init: RequestInit }): boolean {
+  return c.url.endsWith("/chat/completions") && /revisa o registro/.test(chatSystemPrompt(c.init));
+}
+
+/** One short recording, stopped and saved; returns the saved session. */
+async function recordAndSave(streamId: string): Promise<AnyRecord> {
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId,
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+  const text = "Eu não vou aderir agora, mas mande a carta de apresentação.";
+  sttResponses.push({
+    text,
+    duration: 5,
+    segments: [{ text: ` ${text}`, no_speech_prob: 0.02, avg_logprob: -0.2 }],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    startedAt: Date.now() - 5000,
+    endedAt: Date.now(),
+  });
+  await waitFor(async () => {
+    const s = await sendMessage({ type: "GET_STATE" });
+    return s.stats?.chunksTranscribed === 1 ? s : null;
+  }, "chunk transcribed");
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  const index = await waitFor(
+    () =>
+      (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
+        ? (localStore.savedSessionIndex as AnyRecord[])
+        : null,
+    "session saved",
+  );
+  return localStore[`savedSession:${index[0].id}`];
+}
+
+test("the record is reviewed by the model, checked and merged before it is saved", async () => {
+  fetchCalls.length = 0;
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationContent = JSON.stringify({
+    decisions: [{ keep: "D3", classification: "finalized" }, { keep: "D99" }],
+    actionItems: [{ keep: "a2", owner: "Ricardo" }],
+    topics: [{ keep: "T1", same: ["T2"], status: "completed" }],
+    openPoints: [],
+  });
+  try {
+    const saved = await recordAndSave("stream-6");
+
+    assert.deepEqual(saved.decisions, [
+      {
+        text: "Gustavo decide não aderir agora",
+        by: "Gustavo",
+        chunkId: "chunk_1",
+        classification: "finalized",
+      },
+    ]);
+    // "Ricardo" is not in this meeting: the owner the summary found stays.
+    assert.deepEqual(
+      saved.actionItems.map((a: AnyRecord) => [a.task, a.owner]),
+      [["Desenhar a carta de apresentação do Gustavo", "Leonardo"]],
+    );
+    assert.deepEqual(saved.topics, [{ name: "Programa de mentoria", status: "completed" }]);
+    assert.deepEqual(saved.unresolvedDiscussions, []);
+    assert.deepEqual(saved.questionsRaised, []);
+    assert.equal(saved.consolidation.mode, "model");
+    assert.deepEqual(saved.consolidation.before, {
+      decisions: 3,
+      actionItems: 2,
+      topics: 2,
+      openPoints: 3,
+    });
+    assert.deepEqual(saved.consolidation.after, {
+      decisions: 1,
+      actionItems: 1,
+      topics: 1,
+      openPoints: 0,
+    });
+
+    // One request after the final summary: deterministic, JSON, room for GLM to reason.
+    const summaryIndex = fetchCalls.findIndex(
+      (c) =>
+        c.url.endsWith("/chat/completions") &&
+        /motor de inteligência/.test(chatSystemPrompt(c.init)),
+    );
+    const reviewCalls = fetchCalls.filter(isReviewCall);
+    assert.equal(reviewCalls.length, 1);
+    assert.ok(summaryIndex >= 0 && fetchCalls.indexOf(reviewCalls[0]) > summaryIndex);
+    const body = JSON.parse(String(reviewCalls[0].init.body));
+    assert.equal(body.temperature, 0);
+    assert.equal(body.max_tokens, 6000);
+    assert.deepEqual(body.response_format, { type: "json_object" });
+    assert.match(body.messages[1].content, /\nD3 Gustavo decide não aderir agora — por: Gustavo/);
+    assert.match(body.messages[1].content, /Quem gravou a reunião: Gustavo\./);
+
+    // The document sent to ValorBrain carries the reviewed record and nothing about the review.
+    const store = await waitFor(
+      () => fetchCalls.find((c) => c.url.endsWith("/api/v1/memory/store")),
+      "ValorBrain delivery",
+    );
+    const payload = JSON.parse(String(store.init.body));
+    assert.match(payload.content, /## Decisões\n- Gustavo decide não aderir agora — Gustavo\n\n/);
+    assert.doesNotMatch(payload.content, /metodologia|22\.990|Tudo bem com vocês/);
+    assert.doesNotMatch(payload.content, /Registro revisado|revisão local/);
+  } finally {
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationContent = "{}";
+  }
+});
+
+test("without the model's review, repeats are still merged before saving", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  try {
+    // A refused answer (it would empty the record): the local review runs instead.
+    fetchCalls.length = 0;
+    consolidationContent = JSON.stringify({
+      decisions: [],
+      actionItems: [],
+      topics: [],
+      openPoints: [],
+    });
+    const refused = await recordAndSave("stream-7");
+    assert.equal(fetchCalls.filter(isReviewCall).length, 1);
+    assert.equal(refused.consolidation.mode, "local");
+    assert.equal(refused.decisions.length, 3);
+    assert.deepEqual(refused.unresolvedDiscussions, ["Qual é o valor do serviço"]);
+    assert.deepEqual(refused.questionsRaised, ["Tudo bem com vocês?"], "the repeat was merged");
+    assert.equal(refused.consolidation.before.openPoints, 3);
+    assert.equal(refused.consolidation.after.openPoints, 2);
+
+    // The setting off: no request at all, the local review still runs.
+    fetchCalls.length = 0;
+    localStore.settings = { ...localStore.settings, recordConsolidation: false };
+    const off = await recordAndSave("stream-8");
+    assert.equal(fetchCalls.filter(isReviewCall).length, 0);
+    assert.equal(off.consolidation.mode, "local");
+    assert.equal(off.decisions.length, 3);
+    assert.equal(off.consolidation.after.openPoints, 2);
+  } finally {
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationContent = "{}";
+    delete localStore.settings.recordConsolidation;
+  }
 });

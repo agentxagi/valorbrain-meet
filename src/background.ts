@@ -7,6 +7,7 @@
 
 import {
   ActionItem,
+  ConsolidationReport,
   Decision,
   MeetingNotice,
   MeetingStats,
@@ -137,6 +138,14 @@ import {
   squashTerm,
   type TermCorrection,
 } from "./termCorrection";
+import {
+  applyConsolidation,
+  buildConsolidationMessages,
+  countRecord,
+  dedupeRecord,
+  promptedItems,
+  readConsolidationReport,
+} from "./meetingConsolidation";
 
 const OFFSCREEN_DOCUMENT_PATH = "src/offscreen.html";
 const OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
@@ -151,6 +160,12 @@ const STOP_TRANSCRIPTION_TIMEOUT_MS = 150_000;
 const STOP_CORRECTION_TIMEOUT_MS = 75_000;
 /** Upper bound for the final summary pass after "stop". */
 const STOP_SUMMARY_TIMEOUT_MS = 90_000;
+/** Upper bound for the review of the record (decisions, next steps…) after "stop". */
+const STOP_CONSOLIDATION_TIMEOUT_MS = 100_000;
+/** The model's share of it: past this the local review runs instead, still in time. */
+const CONSOLIDATION_MODEL_TIMEOUT_MS = 95_000;
+/** The answer is short (ids), but GLM may reason inside the same budget. */
+const CONSOLIDATION_MAX_TOKENS = 6000;
 /** Active-speaker changes kept for attributing tab segments (well above any segment). */
 const SPEAKER_EVENT_WINDOW_MS = 10 * 60_000;
 /** Echo checks look this many lines back. */
@@ -442,6 +457,8 @@ async function hydrateState() {
                 ...(c.source === "graph" ? { source: "graph" as const } : {}),
               }));
           }
+          const consolidation = readConsolidationReport(stored.consolidation);
+          if (consolidation) state.consolidation = consolidation;
           const graph = stored.graphVocabulary as Partial<GraphVocabulary> | null | undefined;
           if (graph && typeof graph === "object" && Array.isArray(graph.terms)) {
             state.graphVocabulary = {
@@ -579,6 +596,7 @@ function resetState() {
   state.finalizing = false;
   state.stats = emptyStats();
   state.termCorrections = [];
+  delete state.consolidation;
   state.graphVocabulary = null;
   if (vocabularyRetryTimer) clearTimeout(vocabularyRetryTimer);
   vocabularyRetryTimer = null;
@@ -640,6 +658,15 @@ function snapshot(): State {
     stats: { ...(state.stats ?? emptyStats()) },
     ...(state.termCorrections && state.termCorrections.length > 0
       ? { termCorrections: state.termCorrections.map((c) => ({ ...c })) }
+      : {}),
+    ...(state.consolidation
+      ? {
+          consolidation: {
+            ...state.consolidation,
+            before: { ...state.consolidation.before },
+            after: { ...state.consolidation.after },
+          },
+        }
       : {}),
     ...(state.graphVocabulary ? { graphVocabulary: state.graphVocabulary } : {}),
   };
@@ -913,6 +940,8 @@ interface PipelineSettings {
   graphVocabulary?: boolean;
   /** Teach the graph the spelling fixes accepted in each meeting (default on). */
   learnCorrections?: boolean;
+  /** Review the record with the summary model when the meeting ends (default on). */
+  recordConsolidation?: boolean;
 }
 
 /** Terms the ValorBrain graph suggested for this recording (empty until loaded). */
@@ -1564,6 +1593,102 @@ async function correctTranscriptTerms(): Promise<void> {
         .join(", ")}`,
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Review of the record at the end
+// ---------------------------------------------------------------------------
+
+/**
+ * Asks the summary model which decisions, next steps, topics and open points
+ * stay, by id, and applies the answer once meetingConsolidation.ts has checked
+ * it. Returns the report, or null when the model did not answer in time,
+ * failed, or gave an answer that was refused (the record is then untouched).
+ */
+async function reviewRecordWithModel(
+  settings: PipelineSettings,
+  config: ProviderConfig,
+  apiKey: string | null,
+): Promise<ConsolidationReport | null> {
+  const startTimeAtCall = state.startTime;
+  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const selfName = selfNameCandidates(settings)[0];
+  // Ids point at the items as they are now, whatever arrives during the request.
+  const prompted = promptedItems(state);
+  const messages = buildConsolidationMessages({
+    summary: state.summary,
+    decisions: state.decisions,
+    actionItems: state.actionItems,
+    topics: state.topics,
+    unresolvedDiscussions: state.unresolvedDiscussions,
+    questionsRaised: state.questionsRaised,
+    participants,
+    selfName,
+    outputLanguage: currentMeetingLanguage(settings),
+  });
+
+  let result;
+  try {
+    result = await withTimeout(
+      llmQueue.enqueue("consolidation", () =>
+        requestChatCompletion(config, apiKey, {
+          messages,
+          maxTokens: CONSOLIDATION_MAX_TOKENS,
+          temperature: 0,
+          json: true,
+          timeoutMs: 90_000,
+        }),
+      ),
+      CONSOLIDATION_MODEL_TIMEOUT_MS,
+    );
+  } catch (err) {
+    pauseSummaryOnQuota(err, config, apiKey);
+    console.warn(`${LOG_PREFIX} Record review by the model failed:`, err);
+    return null;
+  }
+  if (!result || state.startTime !== startTimeAtCall) return null;
+  if (result.usage) {
+    void trackUsage({
+      promptTokens: result.usage.prompt_tokens,
+      completionTokens: result.usage.completion_tokens,
+      totalTokens: result.usage.total_tokens,
+      model: config.model,
+    });
+  }
+  const { applied, report } = applyConsolidation(state, extractJsonObject(result.content), {
+    participants,
+    selfName,
+    prompted,
+  });
+  if (!applied) console.warn(`${LOG_PREFIX} Record review: the model's answer was refused`);
+  return applied ? report : null;
+}
+
+/**
+ * Reviews the record once the final summary is written, before it is saved:
+ * the summary model picks what stays (reviewRecordWithModel), then repeats
+ * are merged locally. Only the local merge runs when the setting is off, the
+ * record is small, the provider has no key or its quota is paused, or the
+ * model's review did not work. Best effort: saving never waits on it.
+ */
+async function consolidateMeetingRecord(): Promise<void> {
+  const startTimeAtCall = state.startTime;
+  const settings = (await getSettings()) as PipelineSettings;
+  const { config, apiKey } = await getSummaryProvider();
+  if (state.startTime !== startTimeAtCall) return;
+
+  const counts = countRecord(state);
+  const items = counts.decisions + counts.actionItems + counts.topics + counts.openPoints;
+  const useModel =
+    settings.recordConsolidation !== false &&
+    items > 4 &&
+    !(requiresApiKey(config) && !apiKey) &&
+    !summaryQuotaExhausted(config, apiKey);
+  const reviewed = useModel ? await reviewRecordWithModel(settings, config, apiKey) : null;
+  if (state.startTime !== startTimeAtCall) return;
+
+  const local = dedupeRecord(state);
+  state.consolidation = reviewed ? { ...reviewed, after: local.after } : local;
 }
 
 // ---------------------------------------------------------------------------
@@ -2269,6 +2394,13 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
         await withTimeout(
           summarizeTranscriptIfNeeded({ force: true, final: true }).catch(() => undefined),
           STOP_SUMMARY_TIMEOUT_MS,
+        );
+        // Then the whole record at once: repeats, non-decisions, questions answered later.
+        await withTimeout(
+          consolidateMeetingRecord().catch((err) =>
+            console.warn(`${LOG_PREFIX} Record review skipped:`, err),
+          ),
+          STOP_CONSOLIDATION_TIMEOUT_MS,
         );
       }
 
