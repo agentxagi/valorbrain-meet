@@ -159,6 +159,7 @@ function installChromeMock() {
       getURL: (path: string) => `chrome-extension://vbmeet/${path}`,
       getContexts: async () => (offscreenOpen ? [{ contextType: "OFFSCREEN_DOCUMENT" }] : []),
       getPlatformInfo: (cb: () => void) => cb?.(),
+      getManifest: () => ({ version: "2.4.0" }),
       sendMessage: async (message: AnyRecord) => {
         runtimeMessages.push(message);
         switch (message.type) {
@@ -232,6 +233,7 @@ function installChromeMock() {
 
 installChromeMock();
 await import("./background.ts");
+const { buildValorBrainContent } = await import("./vbClient.ts");
 
 function sendMessage(message: AnyRecord, sender: AnyRecord = {}): Promise<AnyRecord> {
   return new Promise((resolve) => {
@@ -399,6 +401,7 @@ test("a recording is transcribed, its language detected, summarized in it, saved
     topics: 1,
     openPoints: 1,
   });
+  assert.equal(saved.appVersion, "2.4.0", "the record says which version wrote it");
 
   // Delivered to the tenant with the OAuth token and PT-BR sections.
   const storeCall = fetchCalls.find((c) => c.url.endsWith("/api/v1/memory/store"))!;
@@ -410,6 +413,7 @@ test("a recording is transcribed, its language detected, summarized in it, saved
   assert.match(payload.content, /## Próximos passos\n- \[ \] Preparar o changelog — Bruno/);
   assert.match(payload.content, /## Pontos em aberto\n- Qual o preço do plano empresarial\?/);
   assert.match(payload.content, /## Transcrição\n\[00:00\] Participante: Bom dia, pessoal\./);
+  assert.match(payload.content, /\n- Registrado pelo ValorBrain Meet 2\.4\.0 \(transcrição/);
 
   // UI side effects: session-ended event, badge cleared, offscreen closed, notification.
   assert.ok(runtimeMessages.some((m) => m.type === "SESSION_ENDED" && m.saved === true));
@@ -630,6 +634,76 @@ test("muting the microphone in Meet reaches the recorder", async () => {
   await waitFor(
     async () => ((await sendMessage({ type: "GET_STATE" })).audioActive === false ? true : null),
     "stop",
+  );
+});
+
+test("everyone who attended is saved, even after they left or the user hung up", async () => {
+  const savedSessions = () => (localStore.savedSessionIndex as AnyRecord[] | undefined) ?? [];
+  const savedBefore = savedSessions().length;
+  fetchCalls.length = 0;
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId: "stream-6",
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+
+  const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+  await sendMessage(
+    { type: "PARTICIPANTS_UPDATED", participants: ["Ana", "Bruno", "Você", "You"] },
+    sender,
+  );
+  sttResponses.push({
+    text: "Fechamos o escopo da integração.",
+    duration: 4,
+    segments: [
+      { text: " Fechamos o escopo da integração.", no_speech_prob: 0.02, avg_logprob: -0.3 },
+    ],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    source: "tab",
+    startedAt: Date.now() - 4000,
+    endedAt: Date.now(),
+  });
+  await waitFor(
+    async () => (await sendMessage({ type: "GET_STATE" })).stats?.chunksTranscribed === 1,
+    "line transcribed",
+  );
+
+  // Bruno leaves, then the user hangs up: Meet shows nobody while the meeting is saved.
+  await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: ["Ana"] }, sender);
+  await sendMessage({ type: "PARTICIPANTS_UPDATED", participants: [] }, sender);
+  const live = await sendMessage({ type: "GET_STATE" });
+  assert.deepEqual(live.participants, [], "the live list is who is in the call now");
+  assert.deepEqual(live.attendees, ["Ana", "Bruno"], "no placeholders, nobody dropped");
+
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  const index = await waitFor(
+    () => (savedSessions().length === savedBefore + 1 ? savedSessions() : null),
+    "session saved",
+  );
+  const saved = localStore[`savedSession:${index[0].id}`];
+  assert.deepEqual(saved.participants, ["Ana", "Bruno"]);
+  assert.match(buildValorBrainContent(saved), /\n## Participantes\nAna, Bruno\n/);
+
+  // The final review and summary still know who was there.
+  const chatUser = (pattern: RegExp) =>
+    JSON.parse(
+      String(
+        fetchCalls.find(
+          (c) => c.url.endsWith("/chat/completions") && pattern.test(chatSystemPrompt(c.init)),
+        )!.init.body,
+      ),
+    ).messages[1].content as string;
+  assert.match(chatUser(/revisa a grafia/), /\nParticipantes: .*Ana, Bruno\n/);
+  assert.match(
+    chatUser(/motor de inteligência/),
+    /Participantes detectados na reunião: .*Ana, Bruno\./,
   );
 });
 

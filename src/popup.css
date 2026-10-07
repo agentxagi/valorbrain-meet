@@ -115,6 +115,20 @@ body::-webkit-scrollbar-thumb {
   cursor: pointer;
 }
 
+/* ——— Update notice ——— */
+.pp-update {
+  align-items: center;
+  padding: 8px 12px;
+}
+
+.pp-update .vb-notice-body {
+  font-weight: 600;
+}
+
+.pp-update .pp-link {
+  flex-shrink: 0;
+}
+
 /* ——— Idle ——— */
 .pp-idle-icon {
   display: flex;

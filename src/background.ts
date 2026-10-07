@@ -146,6 +146,13 @@ import {
   promptedItems,
   readConsolidationReport,
 } from "./meetingConsolidation";
+import {
+  checkForUpdate,
+  compareVersions,
+  isCheckDue,
+  UPDATE_STATUS_KEY,
+  type UpdateStatus,
+} from "./updateCheck";
 
 const OFFSCREEN_DOCUMENT_PATH = "src/offscreen.html";
 const OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
@@ -185,6 +192,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined>
     timer = setTimeout(() => resolve(undefined), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** This build's version ("2.4.0"); null where the runtime has no manifest (tests). */
+function extensionVersion(): string | null {
+  try {
+    return chrome.runtime.getManifest().version || null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +267,7 @@ function emptyStats(): MeetingStats {
   return { chunksReceived: 0, chunksTranscribed: 0, chunksFiltered: 0, chunksFailed: 0 };
 }
 
-const state: State = {
+const state: State & { attendees: string[] } = {
   isActive: false,
   meetingId: null,
   meetingUrl: null,
@@ -269,6 +285,7 @@ const state: State = {
   participants: [],
   initialParticipants: [],
   lateJoiners: [],
+  attendees: [],
   timeline: [],
   transcript: [],
   summaryItems: [],
@@ -417,6 +434,7 @@ async function hydrateState() {
             "participants",
             "initialParticipants",
             "lateJoiners",
+            "attendees",
             "summaryItems",
           ] as const;
           for (const key of arrayKeys) {
@@ -530,6 +548,7 @@ interface PerTabParticipantState {
   participants: string[];
   initialParticipants: string[];
   lateJoiners: string[];
+  attendees: string[];
   participantCount: number;
 }
 
@@ -561,6 +580,19 @@ function sanitizeParticipantName(value: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Adds to `attendees` the names it does not have yet, in order of arrival.
+ * Meet's "You"/"Você" placeholders are not names and never enter.
+ */
+function addAttendees(attendees: string[], names: string[]) {
+  for (const raw of names) {
+    const name = sanitizeParticipantName(raw);
+    if (name && !SELF_PLACEHOLDER.test(name) && !findParticipant(name, attendees)) {
+      attendees.push(name);
+    }
+  }
+}
+
 function resetState() {
   languageLock = EMPTY_LANGUAGE_LOCK;
   state.isActive = false;
@@ -581,6 +613,7 @@ function resetState() {
   state.participants = [];
   state.initialParticipants = [];
   state.lateJoiners = [];
+  state.attendees = [];
   state.timeline = [];
   state.transcript = [];
   state.audioActive = false;
@@ -641,6 +674,7 @@ function snapshot(): State {
     participants: state.participants,
     initialParticipants: state.initialParticipants,
     lateJoiners: state.lateJoiners,
+    attendees: state.attendees,
     timeline: state.timeline,
     transcript: state.transcript,
     audioActive: state.audioActive,
@@ -686,6 +720,7 @@ const UI_ARRAY_KEYS = [
   "participants",
   "initialParticipants",
   "lateJoiners",
+  "attendees",
 ] as const;
 
 function uiSnapshot() {
@@ -808,6 +843,7 @@ async function loadTabState(tabId: number) {
   state.participants = tabState.participants ?? [];
   state.initialParticipants = tabState.initialParticipants ?? [];
   state.lateJoiners = tabState.lateJoiners ?? [];
+  state.attendees = tabState.attendees ?? [];
   state.timeline = tabState.timeline ?? [];
   state.transcript = tabState.transcript ?? [];
   state.audioActive = tabState.audioActive ?? false;
@@ -942,6 +978,8 @@ interface PipelineSettings {
   learnCorrections?: boolean;
   /** Review the record with the summary model when the meeting ends (default on). */
   recordConsolidation?: boolean;
+  /** Look for a newer version on meet.valorbra.in once a day (default on). */
+  updateCheck?: boolean;
 }
 
 /** Terms the ValorBrain graph suggested for this recording (empty until loaded). */
@@ -1077,7 +1115,7 @@ function getTranscriptionPrompt(
     .join(" ");
   return buildTranscriptionPrompt({
     vocabulary,
-    names: [...selfNameCandidates(settings), ...state.participants],
+    names: [...selfNameCandidates(settings), ...state.attendees],
     recentText: recent,
   });
 }
@@ -1415,7 +1453,7 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     previousSummary: state.summary,
     transcriptLines: window.lines,
     features,
-    participants: [...selfNameCandidates(settings), ...state.participants],
+    participants: [...selfNameCandidates(settings), ...state.attendees],
     known: {
       decisions: state.decisions,
       actionItems: state.actionItems,
@@ -1520,7 +1558,7 @@ async function correctTranscriptTerms(): Promise<void> {
 
   const settings = (await getSettings()) as PipelineSettings;
   const vocabulary = reviewVocabularyFrom(settings);
-  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const participants = [...selfNameCandidates(settings), ...state.attendees];
   const lines = state.transcript.map(
     (entry) =>
       `[${entry.timestampLabel || formatTimestampLabel(entry.timestamp || 0)}] ${sanitizePromptText(entry.speaker, 100)}: ${sanitizePromptText(entry.text)}`,
@@ -1611,7 +1649,8 @@ async function reviewRecordWithModel(
   apiKey: string | null,
 ): Promise<ConsolidationReport | null> {
   const startTimeAtCall = state.startTime;
-  const participants = [...selfNameCandidates(settings), ...state.participants];
+  // Everyone who attended: the live list is often empty once the user hung up.
+  const participants = [...selfNameCandidates(settings), ...state.attendees];
   const selfName = selfNameCandidates(settings)[0];
   // Ids point at the items as they are now, whatever arrives during the request.
   const prompted = promptedItems(state);
@@ -1733,7 +1772,7 @@ async function loadGraphVocabulary(): Promise<void> {
   const vbSettings = normalizeVbSettings(settings);
   if (!isVbConfigured(vbSettings)) return;
 
-  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const participants = [...selfNameCandidates(settings), ...state.attendees];
   const key = participantsKey(participants);
   if (state.graphVocabulary && state.graphVocabulary.participantsKey === key) return;
 
@@ -1792,7 +1831,7 @@ function applyLearnedCorrections(
   const learned = state.graphVocabulary?.corrections ?? [];
   if (!text || learned.length === 0) return noop;
   // Any part of a participant's name ("Diego" of "Diego Braga") is off limits.
-  const names = nameVariants([...selfNameCandidates(settings), ...state.participants]);
+  const names = nameVariants([...selfNameCandidates(settings), ...state.attendees]);
   const usable = learned.filter((c) => !names.has(squashTerm(c.from)));
   const { text: fixed, counts } = applyKnownCorrections(text, usable);
   if (counts.size === 0) return noop;
@@ -1843,7 +1882,13 @@ async function teachCorrectionsToValorBrain(session: StoredSession, vbSettings: 
 function detectNewJoiners(currentList: string[], tabId: number): string[] {
   let tabState = perTabParticipants.get(tabId);
   if (!tabState) {
-    tabState = { participants: [], initialParticipants: [], lateJoiners: [], participantCount: 0 };
+    tabState = {
+      participants: [],
+      initialParticipants: [],
+      lateJoiners: [],
+      attendees: [],
+      participantCount: 0,
+    };
     perTabParticipants.set(tabId, tabState);
   }
 
@@ -2265,11 +2310,14 @@ async function startAudioCapture(
     state.targetTabId = tabId;
     selfParticipantName = keptSelfName;
     if (keptParticipants) Object.assign(state, keptParticipants);
+    // Whoever is in the call when the recording starts attends it.
+    addAttendees(state.attendees, state.participants);
     if (keptParticipants) {
       perTabParticipants.set(tabId, {
         participants: [...keptParticipants.participants],
         initialParticipants: [...keptParticipants.initialParticipants],
         lateJoiners: [...keptParticipants.lateJoiners],
+        attendees: [...state.attendees],
         participantCount: keptParticipants.participantCount,
       });
     }
@@ -2422,8 +2470,11 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
         // The graph vocabulary belongs to the live recording, not to the saved meeting.
         const snap = snapshot();
         delete snap.graphVocabulary;
+        const appVersion = extensionVersion();
         const session: StoredSession = {
           ...snap,
+          // Everyone who attended, also whoever left before the end.
+          participants: [...state.attendees],
           id: crypto.randomUUID(),
           savedAt: Date.now(),
           isActive: false,
@@ -2431,6 +2482,8 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           finalizing: false,
           notice: null,
           endReason: reason,
+          // Which build wrote it, so a problem can be traced from the record.
+          ...(appVersion ? { appVersion } : {}),
         };
         try {
           savedSession = await saveSessionRecord(session);
@@ -2579,6 +2632,56 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Update notice
+// ---------------------------------------------------------------------------
+// Chrome never updates an extension loaded from the site's zip. Once a day
+// the worker reads meet.valorbra.in/latest.json (updateCheck.ts), and the
+// popup and the settings say when a newer version exists. Nothing here is
+// awaited by a recording; a failure is only logged.
+
+let updateCheckQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Checks when due, or now for "Verificar agora". One check at a time: the
+ * popup, the settings and the browser start asking together make one request.
+ */
+function scheduleUpdateCheck(force = false): Promise<void> {
+  updateCheckQueue = updateCheckQueue.then(() => runUpdateCheck(force));
+  return updateCheckQueue;
+}
+
+async function runUpdateCheck(force: boolean): Promise<void> {
+  try {
+    const settings = (await getSettings()) as PipelineSettings;
+    if (settings.updateCheck === false) {
+      // Turned off: no request, and no old notice left behind.
+      await chrome.storage.local.remove?.(UPDATE_STATUS_KEY);
+      return;
+    }
+    const currentVersion = extensionVersion();
+    if (!currentVersion) return;
+    const stored = (await chrome.storage.local.get(UPDATE_STATUS_KEY))[UPDATE_STATUS_KEY] as
+      | UpdateStatus
+      | undefined;
+    const now = Date.now();
+    if (force || isCheckDue(stored, now)) {
+      const status = await checkForUpdate({ currentVersion, now, previous: stored });
+      if (!status.ok) console.debug(`${LOG_PREFIX} update check failed: ${status.error}`);
+      await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: status });
+    } else if (stored?.latestVersion) {
+      // The installed version may have changed since (an update, or going
+      // back): the flag follows it without asking the site again.
+      const available = compareVersions(stored.latestVersion, currentVersion) > 0;
+      if (available !== stored.available) {
+        await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: { ...stored, available } });
+      }
+    }
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} update check skipped`, err);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Message router
@@ -2779,6 +2882,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             participants: [...state.participants],
             initialParticipants: [...state.initialParticipants],
             lateJoiners: [...state.lateJoiners],
+            attendees: [...state.attendees],
             participantCount: state.participantCount ?? 0,
           });
         }
@@ -2788,9 +2892,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (tabId === state.targetTabId) {
           const tabState = perTabParticipants.get(tabId);
           if (tabState) {
+            // `participants` is who is in the call now (an empty page once the
+            // user hangs up); `attendees` keeps everyone for the saved meeting.
+            addAttendees(tabState.attendees, tabState.participants);
             state.participants = tabState.participants;
             state.initialParticipants = tabState.initialParticipants;
             state.lateJoiners = tabState.lateJoiners;
+            state.attendees = tabState.attendees;
             state.participantCount = tabState.participantCount;
           }
         }
@@ -2966,6 +3074,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
+      case "CHECK_FOR_UPDATE": {
+        // Sent when the popup or the settings open; "Verificar agora" forces it.
+        await scheduleUpdateCheck(message.force === true);
+        const stored = await chrome.storage.local.get(UPDATE_STATUS_KEY);
+        sendResponse({ success: true, status: stored[UPDATE_STATUS_KEY] ?? null });
+        return;
+      }
+
       default: {
         sendResponse({ success: false, error: "Unknown message type" });
       }
@@ -3064,6 +3180,8 @@ function createContextMenu() {
 
 chrome.runtime.onInstalled.addListener(async () => {
   createContextMenu();
+  // After an update this also drops a notice about the version just installed.
+  void scheduleUpdateCheck();
   try {
     const vals = await chrome.storage.local.get(["onboardingCompleted"]);
     if (!vals?.onboardingCompleted) {
@@ -3076,6 +3194,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onStartup.addListener(() => {
   createContextMenu();
+  void scheduleUpdateCheck();
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {

@@ -157,6 +157,12 @@ export interface State {
   participants: string[];
   initialParticipants: string[];
   lateJoiners: string[];
+  /**
+   * Everyone seen in the call during the recording, in order of arrival; it
+   * never shrinks (`participants` is who is in the call right now). A saved
+   * session carries this list as its `participants`.
+   */
+  attendees?: string[];
   timeline: TimelineEvent[];
   transcript: TranscriptEntry[];
   summaryItems: SummaryItem[];
@@ -184,6 +190,8 @@ export interface State {
   vb?: VbDeliveryStatus;
   /** Why the session ended (saved sessions only). */
   endReason?: string;
+  /** Version of the extension that recorded it, e.g. "2.4.0" (saved sessions only). */
+  appVersion?: string;
   /** Spelling fixes applied to the transcript (learned ones as lines arrive, the review at the end). */
   termCorrections?: TermCorrectionRecord[];
   /** The review of decisions, next steps, topics and open points when the meeting ended. */

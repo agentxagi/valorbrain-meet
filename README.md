@@ -40,6 +40,8 @@ Na primeira instalação, a página de configurações abre sozinha.
 
 **Atualizar:** substitua a pasta pela versão nova (mesmo lugar, mesmo nome) e clique em ↻ no cartão da extensão em `chrome://extensions`. O histórico e as configurações continuam. Carregar de outra pasta cria outra extensão, com o histórico vazio.
 
+**Aviso de versão nova:** o Chrome não atualiza sozinho uma extensão instalada pelo zip. Por isso, uma vez por dia, a extensão lê `https://meet.valorbra.in/latest.json` (um GET simples, sem nada da reunião) e, quando há versão nova, o ícone mostra **Versão X disponível** com o link **Como atualizar**. Desligue em **Configurações → Atualizações**; detalhes em [`docs/PRIVACY.md`](docs/PRIVACY.md#aviso-de-versão-nova).
+
 ## Primeira configuração
 
 Em **Configurações → Primeiros passos**, a lista mostra o que falta. Cada item leva ao ajuste certo.
@@ -103,6 +105,7 @@ Contrato da API e roteiro de teste manual: [`docs/VB-INGEST.md`](docs/VB-INGEST.
 
 - O áudio vai só para o provedor de transcrição que você escolheu. O texto vai só para o provedor de resumo. A reunião vai para o seu tenant do ValorBrain. A extensão não tem servidor próprio.
 - Ao começar a gravar, os nomes dos participantes vão para o seu ValorBrain para buscar o vocabulário da empresa. O ValorBrain só devolve o que a sua conta pode ver.
+- Uma vez por dia, a extensão pergunta a meet.valorbra.in qual é a versão mais recente, sem enviar nada da reunião. Dá para desligar.
 - Reuniões, chaves e configurações ficam no armazenamento local do Chrome deste perfil. Nada sincroniza entre computadores.
 - **Configurações → Dados e uso** mostra o espaço usado, apaga reuniões e zera tudo. Apagar aqui não apaga o que já está no ValorBrain.
 
