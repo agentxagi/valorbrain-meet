@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  consolidationLabel,
   formatClock,
   formatDurationHuman,
   formatRelative,
@@ -50,4 +51,29 @@ test("secrets are masked and hosts extracted", () => {
   assert.equal(maskSecret("short"), "••••");
   assert.equal(maskSecret(""), "");
   assert.equal(hostOf("https://valorbrain-api.valor.digital/x"), "valorbrain-api.valor.digital");
+});
+
+test("the review of the record is told in one line, only what changed", () => {
+  const before = { decisions: 42, actionItems: 55, topics: 84, openPoints: 93 };
+  assert.equal(
+    consolidationLabel({
+      mode: "model",
+      before,
+      after: { decisions: 6, actionItems: 14, topics: 9, openPoints: 7 },
+      at: 1,
+    }),
+    "Registro revisado ao encerrar: decisões 42 → 6 · próximos passos 55 → 14 · assuntos 84 → 9 · pontos em aberto 93 → 7",
+  );
+  assert.equal(
+    consolidationLabel({
+      mode: "local",
+      before,
+      after: { ...before, openPoints: 90 },
+      at: 1,
+    }),
+    "Registro revisado ao encerrar (revisão local): pontos em aberto 93 → 90",
+  );
+  assert.equal(consolidationLabel({ mode: "model", before, after: { ...before }, at: 1 }), "");
+  assert.equal(consolidationLabel(undefined), "");
+  assert.equal(consolidationLabel(null), "");
 });

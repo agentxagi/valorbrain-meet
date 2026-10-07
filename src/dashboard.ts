@@ -6,6 +6,7 @@ import { hydrateIcons, icon, type IconName } from "./ui/icons";
 import { escapeHtml } from "./utils/domHelpers";
 import {
   confidenceLabel,
+  consolidationLabel,
   formatClock,
   formatDateTime,
   formatDurationHuman,
@@ -355,6 +356,11 @@ function renderSummaryTab(s: State | null) {
   fill.style.width = widths[sentiment] ?? "50%";
   fill.dataset.sentiment = sentiment;
   $("db-sentiment-label").textContent = sentimentLabel(sentiment);
+
+  // What the review at the end changed (the document sent to ValorBrain never says it).
+  const review = $("db-consolidation");
+  review.textContent = consolidationLabel(s?.consolidation);
+  review.hidden = !review.textContent;
 
   const tokens = s?.tokensUsed ?? 0;
   const cost = s?.estimatedCost ?? 0;
