@@ -137,6 +137,13 @@ import {
   squashTerm,
   type TermCorrection,
 } from "./termCorrection";
+import {
+  checkForUpdate,
+  compareVersions,
+  isCheckDue,
+  UPDATE_STATUS_KEY,
+  type UpdateStatus,
+} from "./updateCheck";
 
 const OFFSCREEN_DOCUMENT_PATH = "src/offscreen.html";
 const OFFSCREEN_DOCUMENT_URL = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
@@ -942,6 +949,8 @@ interface PipelineSettings {
   graphVocabulary?: boolean;
   /** Teach the graph the spelling fixes accepted in each meeting (default on). */
   learnCorrections?: boolean;
+  /** Look for a newer version on meet.valorbra.in once a day (default on). */
+  updateCheck?: boolean;
 }
 
 /** Terms the ValorBrain graph suggested for this recording (empty until loaded). */
@@ -2474,6 +2483,55 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 });
 
 // ---------------------------------------------------------------------------
+// Update notice
+// ---------------------------------------------------------------------------
+// Chrome never updates an extension loaded from the site's zip. Once a day
+// the worker reads meet.valorbra.in/latest.json (updateCheck.ts), and the
+// popup and the settings say when a newer version exists. Nothing here is
+// awaited by a recording; a failure is only logged.
+
+let updateCheckQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Checks when due, or now for "Verificar agora". One check at a time: the
+ * popup, the settings and the browser start asking together make one request.
+ */
+function scheduleUpdateCheck(force = false): Promise<void> {
+  updateCheckQueue = updateCheckQueue.then(() => runUpdateCheck(force));
+  return updateCheckQueue;
+}
+
+async function runUpdateCheck(force: boolean): Promise<void> {
+  try {
+    const settings = (await getSettings()) as PipelineSettings;
+    if (settings.updateCheck === false) {
+      // Turned off: no request, and no old notice left behind.
+      await chrome.storage.local.remove?.(UPDATE_STATUS_KEY);
+      return;
+    }
+    const currentVersion = extensionVersion();
+    if (!currentVersion) return;
+    const stored = (await chrome.storage.local.get(UPDATE_STATUS_KEY))[UPDATE_STATUS_KEY] as
+      | UpdateStatus
+      | undefined;
+    const now = Date.now();
+    if (force || isCheckDue(stored, now)) {
+      const status = await checkForUpdate({ currentVersion, now, previous: stored });
+      if (!status.ok) console.debug(`${LOG_PREFIX} update check failed: ${status.error}`);
+      await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: status });
+    } else if (
+      stored?.available &&
+      compareVersions(stored.latestVersion ?? "", currentVersion) <= 0
+    ) {
+      // Updated since the last check: the notice was about this very version.
+      await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: { ...stored, available: false } });
+    }
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} update check skipped`, err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Message router
 // ---------------------------------------------------------------------------
 
@@ -2864,6 +2922,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
+      case "CHECK_FOR_UPDATE": {
+        // Sent when the popup or the settings open; "Verificar agora" forces it.
+        await scheduleUpdateCheck(message.force === true);
+        const stored = await chrome.storage.local.get(UPDATE_STATUS_KEY);
+        sendResponse({ success: true, status: stored[UPDATE_STATUS_KEY] ?? null });
+        return;
+      }
+
       default: {
         sendResponse({ success: false, error: "Unknown message type" });
       }
@@ -2962,6 +3028,8 @@ function createContextMenu() {
 
 chrome.runtime.onInstalled.addListener(async () => {
   createContextMenu();
+  // After an update this also drops a notice about the version just installed.
+  void scheduleUpdateCheck();
   try {
     const vals = await chrome.storage.local.get(["onboardingCompleted"]);
     if (!vals?.onboardingCompleted) {
@@ -2974,6 +3042,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onStartup.addListener(() => {
   createContextMenu();
+  void scheduleUpdateCheck();
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {

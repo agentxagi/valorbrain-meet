@@ -20,6 +20,7 @@
     "https://api.openai.com/*",
     "https://api.z.ai/*",
     "https://*.valor.digital/*",
+    "https://meet.valorbra.in/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
