@@ -157,6 +157,10 @@ test("the review prompt states the rules, the security fence and the meeting lan
   assert.match(system.content, /perguntas de cortesia/);
   assert.match(system.content, /o mais completo vai em "keep" e os outros em "same"/);
   assert.match(system.content, /Nunca invente códigos, textos, nomes, números ou datas/);
+  // Items cannot move between lists: a misplaced one stays unless it is already in the right one.
+  assert.match(system.content, /só sai se o mesmo conteúdo já estiver na lista certa/);
+  // An unclear name leaves the field empty, never the item out.
+  assert.match(system.content, /Sem certeza, não preencha o campo \(o item continua\)/);
 
   const [unknown] = buildConsolidationMessages({ ...salesCall(), ...CONTEXT });
   assert.match(unknown.content, /no idioma em que a reunião acontece/);

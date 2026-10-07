@@ -199,7 +199,7 @@ export function buildSummaryMessages(options: BuildSummaryPromptOptions): ChatMe
       ? "Assuntos são os temas principais da conversa, não cada fala. Para um tema que já está em <ja_registrado>, use exatamente o mesmo nome (só o status muda). status: active (em discussão), completed (encerrado) ou unresolved (ficou sem conclusão)."
       : "",
     features.decisions
-      ? "Decisão é algo decidido na reunião: escolhido, aprovado, aceito, recusado ou combinado (uma recusa também é decisão). Não é decisão: apresentação ou descrição de um produto, serviço, pessoa ou método; opinião ou autoavaliação; proposta que ainda não teve resposta; combinado sobre a própria reunião (duração, formato, ordem da conversa). classification: tentative quando houver hesitação (talvez, acho que, vamos ver); finalized quando foi fechado."
+      ? "Decisão é algo decidido na reunião: escolhido, aprovado, aceito, recusado ou combinado (uma recusa também é decisão). Não é decisão: apresentação ou descrição de um produto, serviço, pessoa ou método; opinião ou autoavaliação; oferta ou proposta que ainda não teve resposta (ela só vira decisão quando é aceita, recusada ou combinada); combinado sobre a própria reunião (duração, formato, ordem da conversa). classification: tentative quando houver hesitação (talvez, acho que, vamos ver); finalized quando foi fechado."
       : "",
     features.actions
       ? "Ação é um compromisso de fazer algo depois da reunião. Não registre o que aconteceu durante a própria conversa nem o que um produto ou serviço oferece. owner apenas se alguém assumiu a tarefa; deadline apenas se um prazo foi dito. confidence: high, medium ou low. isSpeculative: true quando foi só uma ideia."

@@ -168,7 +168,7 @@ export function buildConsolidationMessages(input: ConsolidationPromptInput): Cha
   const rules = [
     outputLanguageRule(input.outputLanguage ?? null),
     "Use só o resumo e as listas. Nunca invente códigos, textos, nomes, números ou datas.",
-    "Cada lista fica só com o que ela pede: um item que está na lista errada sai dela.",
+    "Um item registrado na lista errada (um próximo passo entre as decisões, por exemplo) só sai se o mesmo conteúdo já estiver na lista certa; se não estiver, deixe-o onde está.",
     "Decisão é algo decidido na reunião: escolhido, aprovado, aceito, recusado ou combinado. Uma recusa também é decisão.",
     "Não é decisão: apresentação ou descrição (de um produto, serviço, pessoa ou método), opinião ou autoavaliação, intenção vaga, explicação de como algo funciona, combinado sobre a própria reunião (duração, formato, ordem da conversa), oferta ou proposta que ninguém respondeu, analogia, comparação ou piada.",
     'Quando uma decisão foi revista ou trocada por outra na mesma reunião (um preço que baixou, um "sim" que virou "agora não"), fique só com a versão final.',
@@ -177,7 +177,7 @@ export function buildConsolidationMessages(input: ConsolidationPromptInput): Cha
     "Pontos em aberto: tire as perguntas que foram respondidas depois (no resumo, numa decisão ou num item seguinte) e as perguntas de cortesia; junte as repetidas; fique só com o que de fato ficou em aberto.",
     'Itens repetidos: o mais completo vai em "keep" e os outros em "same". Cada código aparece uma vez só.',
     '"classification": "finalized" quando a decisão foi fechada; "tentative" quando ficou a confirmar.',
-    '"by" (quem decidiu) e "owner" (quem assumiu o próximo passo): só quando estiver claro, com o nome escrito como aparece na reunião. Sem certeza, deixe de fora.',
+    '"by" (quem decidiu) e "owner" (quem assumiu o próximo passo): só quando estiver claro, com o nome escrito como aparece na reunião. Sem certeza, não preencha o campo (o item continua).',
     '"status" de um assunto: "completed" (encerrado), "unresolved" (ficou sem conclusão) ou "active" (ainda em discussão quando a reunião acabou).',
     "Responda somente com um objeto JSON válido, sem texto antes ou depois.",
   ];
