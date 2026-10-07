@@ -3,19 +3,21 @@
  *
  * The live summarizer reads the meeting excerpt by excerpt, so the same
  * decision, task or question is registered again. Two items are the same when
- * their normalized texts are equal (case, accents, punctuation), or when both
- * have at least 4 words and share at least 80% of them (word-set Jaccard) —
- * but never when the words that differ include a negation, never when they
- * carry different numbers or dates ("21x de 500" / "21x de 520"), and only
- * when, articles apart, they say the same words in the same order.
+ * their texts are equal (case and punctuation apart), or when both have at
+ * least 4 words and share at least 80% of them (word-set Jaccard) — but never
+ * when the words that differ include a negation, never when they carry
+ * different numbers or dates ("21x de 500" / "21x de 520"), and only when,
+ * articles apart, they say the same words in the same order.
  *
  * That last guard is deliberate: one changed word is enough to say the
  * opposite ("aceita" / "recusa", "anual" / "mensal", another person, sender
  * and recipient swapped), and close spellings are not safe either
- * ("possível" / "impossível", "Paulo" / "Paula"). Rewordings are left to the
- * end-of-meeting review, where the model decides and the extension checks.
- * Words come from Intl.Segmenter, so Chinese, Japanese and Thai, written
- * without spaces, have words too.
+ * ("possível" / "impossível", "Paulo" / "Paula"). For the same reason accents
+ * count ("pode" / "pôde", "wurde" / "würde"), and so do a number's sign and
+ * separators and the signs around it ("-5%" / "5%", "1/2" / "1,2",
+ * "500 €" / "500 $"). Rewordings are left to the end-of-meeting review, where
+ * the model decides and the extension checks. Words come from Intl.Segmenter,
+ * so Chinese, Japanese and Thai, written without spaces, have words too.
  *
  * Used by the live merge (meetingSummary.ts) and by the end-of-meeting review
  * (meetingConsolidation.ts, which re-exports isNearDuplicate). It lives in a
@@ -45,12 +47,37 @@ export function normalizeItemText(value: unknown): string {
     .trim();
 }
 
-/** A set of normalized words from space-separated lists. */
+/**
+ * A word as the comparison reads it: lower case, accents kept ("Pôde" →
+ * "pôde"); anything but letters, marks and digits splits it ("can't" → "can",
+ * "t").
+ */
+function comparableWords(word: string): string[] {
+  return word
+    .toLowerCase()
+    .normalize("NFC")
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, " ")
+    .split(" ")
+    .filter(Boolean);
+}
+
+/** Accents and other combining marks removed ("pôde" → "pode"). */
+function withoutMarks(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .normalize("NFC");
+}
+
+/**
+ * A set of words from space-separated lists, as written and without accents,
+ * so a word typed without them ("nao", "tres") is found too.
+ */
 function wordSet(lists: string[]): Set<string> {
   return new Set(
     lists
       .flatMap((list) => list.split(" "))
-      .map(normalizeItemText)
+      .flatMap((word) => [...comparableWords(word), normalizeItemText(word)])
       .filter(Boolean),
   );
 }
@@ -120,10 +147,11 @@ const NUMBER_WORDS = wordSet([
 /**
  * Articles (pt, en, es, fr, de, it): the only words two items may differ by.
  * Prepositions are not here: "para o Gustavo" and "do Gustavo" are not the
- * same task.
+ * same task. "à" and "às" are: they are "a" fused with an article, and both
+ * are ignored already ("à vista" / "a vista").
  */
 const ARTICLES = wordSet([
-  "o a os as um uma uns umas the an el la los las unos unas le les l un une",
+  "o a os as um uma uns umas à às the an el la los las unos unas le les l un une",
   "der die das den dem des ein eine einen einem einer eines il lo i gli uno",
 ]);
 
@@ -156,22 +184,54 @@ function segmentWords(text: string): string[] {
 const withoutLeadingZeros = (digits: string) => digits.replace(/^0+(?=.)/u, "");
 
 /**
- * Normalized words in any script: "can't" gives "can" and "t", "22.990" gives
- * "22" and "990", "05" gives "5".
+ * What the word segmenter would cut or drop although it changes what an item
+ * says: a number with its leading minus and inner separators ("-5", "22.990",
+ * "1/2", "1,2"), and the percent and currency signs ("%", "€", "R$").
  */
-function itemWords(text: string): string[] {
-  return segmentWords(text)
-    .flatMap((word) => normalizeItemText(word).split(" "))
-    .filter(Boolean)
-    .map((word) => (/^\p{N}+$/u.test(word) ? withoutLeadingZeros(word) : word));
+const NUMBER_OR_SIGN =
+  /(?<![\p{L}\p{N}])[-−]?\p{N}+(?:[.,/:]\p{N}+)*(?![\p{L}\p{N}])|(?<![\p{L}\p{N}])r\$|[%\p{Sc}]/gu;
+
+/** A number token ("-5", "22.990", "5/10"); a word with digits ("21x") is not one. */
+const NUMBER_TOKEN = /^-?\p{N}+(?:[.,/:]\p{N}+)*$/u;
+
+/**
+ * The tokens of an item in order, lower case, accents kept: words in any
+ * script ("can't" gives "can" and "t"), numbers whole with their sign and
+ * separators, and signs. Leading zeros go: "05/10" and "5/10" are one date.
+ */
+function itemTokens(text: string): string[] {
+  const lower = text.toLowerCase().normalize("NFC");
+  const tokens: string[] = [];
+  const addWords = (part: string) => {
+    for (const word of segmentWords(part).flatMap(comparableWords)) {
+      tokens.push(/^\p{N}+$/u.test(word) ? withoutLeadingZeros(word) : word);
+    }
+  };
+  let last = 0;
+  for (const match of lower.matchAll(NUMBER_OR_SIGN)) {
+    addWords(lower.slice(last, match.index));
+    tokens.push(match[0].replace(/^−/u, "-").replace(/(^-?|\/)0+(?=\p{N})/gu, "$1"));
+    last = match.index + match[0].length;
+  }
+  addWords(lower.slice(last));
+  return tokens;
 }
 
-/** Digits, number words and calendar names among the words. */
+/** Distinct words, a number counted by its digits ("22.990" gives "22" and "990"). */
+function similarityWords(tokens: string[]): Set<string> {
+  return new Set(
+    tokens.flatMap((token) =>
+      NUMBER_TOKEN.test(token) ? (token.match(/\p{N}+/gu) ?? []).map(withoutLeadingZeros) : token,
+    ),
+  );
+}
+
+/** Digits, number words and calendar names among the words ("sábado" and "sabado" alike). */
 function numbersIn(words: Iterable<string>): Set<string> {
   const numbers = new Set<string>();
   for (const word of words) {
     for (const match of word.matchAll(/\p{N}+/gu)) numbers.add(withoutLeadingZeros(match[0]));
-    if (NUMBER_WORDS.has(word) || HAN_NUMERAL.test(word)) numbers.add(word);
+    if (NUMBER_WORDS.has(word) || HAN_NUMERAL.test(word)) numbers.add(withoutMarks(word));
   }
   return numbers;
 }
@@ -180,23 +240,42 @@ function isNegation(word: string): boolean {
   return NEGATION_WORDS.has(word) || NEGATION_INSIDE.test(word);
 }
 
-interface ItemKey {
+/** One way of reading an item for the comparison. */
+interface Reading {
+  /** Every token: two equal texts are the same item. */
   text: string;
   words: Set<string>;
   numbers: Set<string>;
-  /** The words in order, articles left out. */
+  /** The tokens in order, articles left out; a number stays whole. */
   sequence: string[];
+}
+
+interface ItemKey {
+  /** As written: accents count. */
+  written: Reading;
+  /** Without accents, for an item typed without them. */
+  unaccented: Reading;
+  /** Latin letters written with an accent ("é", "ç", "ü"). */
+  accents: number;
+}
+
+function reading(tokens: string[]): Reading {
+  const words = similarityWords(tokens);
+  return {
+    text: tokens.join(" "),
+    words,
+    numbers: numbersIn(words),
+    sequence: tokens.filter((token) => !ARTICLES.has(token)),
+  };
 }
 
 function itemKey(value: unknown): ItemKey {
   const text = typeof value === "string" ? value : "";
-  const sequence = itemWords(text);
-  const words = new Set(sequence);
+  const tokens = itemTokens(text);
   return {
-    text: normalizeItemText(text),
-    words,
-    numbers: numbersIn(words),
-    sequence: sequence.filter((word) => !ARTICLES.has(word)),
+    written: reading(tokens),
+    unaccented: reading(tokens.map(withoutMarks)),
+    accents: text.normalize("NFD").match(/\p{Script=Latin}\p{M}+/gu)?.length ?? 0,
   };
 }
 
@@ -206,7 +285,7 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-function sameItem(a: ItemKey, b: ItemKey): boolean {
+function sameReading(a: Reading, b: Reading): boolean {
   if (!a.text || !b.text) return false;
   if (a.text === b.text) return true;
   if (a.words.size < NEAR_DUPLICATE_MIN_WORDS || b.words.size < NEAR_DUPLICATE_MIN_WORDS) {
@@ -226,10 +305,21 @@ function sameItem(a: ItemKey, b: ItemKey): boolean {
 }
 
 /**
- * True when two item texts say the same thing: equal once normalized, or at
- * least 4 words each with 80% of the words in common, no negation among the
- * words that differ, the same numbers and dates, and, articles apart, the same
- * words in the same order.
+ * Accents count: one accent apart is another word ("pode" / "pôde", "si" /
+ * "sí"). Only a text without a single accent next to one with several is read
+ * without them: it was typed without accents ("apresentacao", "servico").
+ */
+function sameItem(a: ItemKey, b: ItemKey): boolean {
+  const typedWithout = Math.min(a.accents, b.accents) === 0 && Math.max(a.accents, b.accents) >= 2;
+  return typedWithout ? sameReading(a.unaccented, b.unaccented) : sameReading(a.written, b.written);
+}
+
+/**
+ * True when two item texts say the same thing: equal (case and punctuation
+ * apart), or at least 4 words each with 80% of the words in common, no
+ * negation among the words that differ, the same numbers and dates, and,
+ * articles apart, the same words in the same order. Accents, a number's sign
+ * and separators and the signs around it count (see sameItem).
  */
 export function isNearDuplicate(a: string, b: string): boolean {
   return sameItem(itemKey(a), itemKey(b));
@@ -324,7 +414,8 @@ function ownersConflict(a: string | undefined, b: string | undefined): boolean {
 /** Two deadlines with different days or numbers ("sexta" / "segunda", "05/10" / "12/10"). */
 function deadlinesConflict(a: string | undefined, b: string | undefined): boolean {
   if (!normalizeItemText(a) || !normalizeItemText(b)) return false;
-  return !sameSet(numbersIn(itemWords(a ?? "")), numbersIn(itemWords(b ?? "")));
+  const numbers = (deadline: string) => numbersIn(similarityWords(itemTokens(deadline)));
+  return !sameSet(numbers(a ?? ""), numbers(b ?? ""));
 }
 
 const TOPIC_STATUSES = new Set(["active", "completed", "unresolved"]);

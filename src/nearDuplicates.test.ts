@@ -178,6 +178,35 @@ test("different numbers, number words or dates keep two items apart", () => {
   for (const [a, b] of pairs) assert.equal(isNearDuplicate(a, b), false, `${a} / ${b}`);
 });
 
+test("accents, signs and a number's separators keep two items apart", () => {
+  const pairs: Array<[string, string]> = [
+    ["Das Projekt wurde vom Vorstand genehmigt", "Das Projekt würde vom Vorstand genehmigt"],
+    ["Wir zahlen die Rechnungen im Oktober", "Wir zählen die Rechnungen im Oktober"],
+    ["Sí, firmamos el contrato anual", "Si firmamos el contrato anual"],
+    ["O avô vai assinar o contrato hoje", "A avó vai assinar o contrato hoje"],
+    ["Ele pode pagar a entrada amanhã", "Ele pôde pagar a entrada amanhã"],
+    ["Pagamento de 500 € por mês", "Pagamento de 500 $ por mês"],
+    ["Desconto de 10% no plano anual", "Desconto de 10 no plano anual"],
+    ["Margem de -5% no trimestre", "Margem de 5% no trimestre"],
+    ["Prazo de 1/2 mês para entrega", "Prazo de 1,2 mês para entrega"],
+    ["Taxa de 1.05 ao mês no plano anual", "Taxa de 1.5 ao mês no plano anual"],
+  ];
+  for (const [a, b] of pairs) assert.equal(isNearDuplicate(a, b), false, `${a} / ${b}`);
+
+  // The same sign written closer or farther from its number is still the same item.
+  assert.ok(
+    isNearDuplicate("Pagar R$500 de entrada no cartão", "Pagar R$ 500 de entrada no cartão"),
+  );
+  assert.ok(isNearDuplicate("Desconto de 10% no plano anual", "Desconto de 10 % no plano anual"));
+  // "à" is "a" fused with an article: "à vista" and "a vista" say the same.
+  assert.ok(
+    isNearDuplicate(
+      "Fechar o pacote de mentoria por 12.990 reais à vista",
+      "Fechar o pacote de mentoria por 12.990 reais a vista",
+    ),
+  );
+});
+
 test("scripts written without spaces have words too", () => {
   // Punctuation changes where the words fall: the words themselves are the same.
   assert.ok(isNearDuplicate("我们决定，下周发布新版本。", "我们决定下周发布新版本"));
