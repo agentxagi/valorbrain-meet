@@ -554,8 +554,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   render();
   void loadSetup();
-  // Checks only when due (once a day); a new result arrives through storage.
-  void chrome.runtime.sendMessage({ type: "CHECK_FOR_UPDATE" }).catch(() => {});
+  // Checks only when due (once a day). The answer carries the latest result,
+  // also one stored while this popup was opening.
+  void chrome.runtime
+    .sendMessage({ type: "CHECK_FOR_UPDATE" })
+    .then((response) => {
+      if (!response?.success) return;
+      updateStatus = (response.status as UpdateStatus | null) ?? null;
+      renderUpdate();
+    })
+    .catch(() => {});
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "STATE_UPDATE" && message.state) {
