@@ -107,7 +107,7 @@ import {
 } from "./providerErrors";
 import { requestChatCompletion, requestTranscription } from "./providerClient";
 import { cleanTranscription, type CleanTranscription } from "./transcriptFilter";
-import { extractJsonObject } from "./llmJson";
+import { extractJsonObject, parseJsonObjectStrict } from "./llmJson";
 import {
   buildSummaryMessages,
   formatTimestampLabel,
@@ -1705,7 +1705,8 @@ async function reviewRecordWithModel(
       model: config.model,
     });
   }
-  const { applied, report } = applyConsolidation(state, extractJsonObject(result.content), {
+  // Strict: an object recovered from a longer answer may be the prompt's example.
+  const { applied, report } = applyConsolidation(state, parseJsonObjectStrict(result.content), {
     participants,
     selfName,
     prompted,

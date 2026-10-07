@@ -227,12 +227,12 @@ Participantes detectados na reunião: ${participants.length > 0 ? participants.j
     selfName ? `\nQuem gravou a reunião: ${selfName}.` : ""
   }
 
-Devolva um JSON com exatamente estas chaves (uma lista sem nada para manter volta vazia: []):
+Devolva um JSON com exatamente estas chaves, com os códigos dos itens no lugar de Dn, An, Tn e Pn (uma lista sem nada para manter volta vazia: []):
 {
-  "decisions": ["D2", {"keep": "D4", "same": ["D9"], "classification": "finalized|tentative", "by": "quem decidiu (opcional)"}],
-  "actionItems": ["A1", {"keep": "A3", "same": ["A10"], "owner": "responsável (opcional)", "isSpeculative": false}],
-  "topics": [{"keep": "T1", "same": ["T2", "T7"], "status": "active|completed|unresolved"}],
-  "openPoints": ["P2", {"keep": "P5", "same": ["P8"]}]
+  "decisions": ["Dn", {"keep": "Dn", "same": ["Dn"], "classification": "finalized|tentative", "by": "quem decidiu (opcional)"}],
+  "actionItems": ["An", {"keep": "An", "same": ["An"], "owner": "responsável (opcional)", "isSpeculative": false}],
+  "topics": [{"keep": "Tn", "same": ["Tn", "Tn"], "status": "active|completed|unresolved"}],
+  "openPoints": ["Pn", {"keep": "Pn", "same": ["Pn"]}]
 }`;
 
   return [
@@ -475,6 +475,30 @@ function rebuild<T>(items: T[], groups: Group[], shown: number, merge: (group: G
 }
 
 /**
+ * True when a group carries a value only the prompt's example has
+ * ("finalized|tentative", a name "(opcional)"): the answer copied the example.
+ */
+function copiesExample(parsed: Record<string, unknown>): boolean {
+  return ["decisions", "actionItems", "topics", "openPoints"].some((key) => {
+    const raw = parsed[key];
+    return (
+      Array.isArray(raw) &&
+      raw.some((entry) => {
+        if (!entry || typeof entry !== "object") return false;
+        const group = entry as Record<string, unknown>;
+        return (
+          enumValue(group.classification) === "finalized|tentative" ||
+          enumValue(group.status) === "active|completed|unresolved" ||
+          [group.by, group.owner].some(
+            (name) => typeof name === "string" && name.toLowerCase().includes("(opcional)"),
+          )
+        );
+      })
+    );
+  });
+}
+
+/**
  * True when every list still starts with the items the prompt showed. Lists
  * only grow during the request; any other change (an item gone, the list
  * shifted) means the ids would now point at other items.
@@ -520,7 +544,7 @@ function stillShown(prompted: PromptedItems, state: ConsolidationState): boolean
  *   with topics has main themes);
  * - an answer whose lists all come back empty is refused when there were
  *   more than 3 items, and so is any answer once a list no longer starts with
- *   the items it showed.
+ *   the items it showed, or that carries a value of the prompt's example.
  */
 export function applyConsolidation(
   state: ConsolidationState,
@@ -532,7 +556,7 @@ export function applyConsolidation(
     applied: false,
     report: { mode: "model", before, after: { ...before }, at: Date.now() },
   };
-  if (!parsed || typeof parsed !== "object") return refused;
+  if (!parsed || typeof parsed !== "object" || copiesExample(parsed)) return refused;
 
   const prompted = context.prompted ?? promptedItems(state);
   if (!stillShown(prompted, state)) return refused;

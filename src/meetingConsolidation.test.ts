@@ -11,6 +11,7 @@ import {
   readConsolidationReport,
   type ConsolidationState,
 } from "./meetingConsolidation.ts";
+import { extractJsonObject } from "./llmJson.ts";
 
 /** A small version of the 1h49 sales call of 2026-10-02, as the live summary left it. */
 function salesCall(): ConsolidationState & { summary: string } {
@@ -136,10 +137,57 @@ test("the review prompt lists every item with its id, time, people and marks", (
   assert.match(user.content, /Participantes detectados na reunião: Leonardo Castro, Gustavo\./);
   assert.match(user.content, /Quem gravou a reunião: Gustavo\./);
   // A lone item is just its id; the object form merges repeats or changes a field.
+  // The example's ids ("Dn") can never be read as ids of this record.
   for (const key of ["decisions", "actionItems", "openPoints"]) {
-    assert.match(user.content, new RegExp(`"${key}": \\["[DAP]\\d+", \\{"keep"`));
+    assert.match(user.content, new RegExp(`"${key}": \\["[DAP]n", \\{"keep": "[DAP]n"`));
   }
-  assert.match(user.content, /"topics": \[\{"keep"/);
+  assert.match(user.content, /"topics": \[\{"keep": "Tn"/);
+  assert.match(user.content, /com os códigos dos itens no lugar de Dn, An, Tn e Pn/);
+});
+
+test("an answer that copies the prompt's example is refused", () => {
+  // The items are sanitized, so the first object of the prompt is the example.
+  const [, user] = buildConsolidationMessages({ ...salesCall(), ...CONTEXT });
+  const example = extractJsonObject(user.content);
+  assert.deepEqual(Object.keys(example ?? {}), [
+    "decisions",
+    "actionItems",
+    "topics",
+    "openPoints",
+  ]);
+  const state = salesCall();
+  assert.equal(applyConsolidation(state, example, CONTEXT).applied, false);
+  assert.deepEqual(state, salesCall());
+
+  // Its values, even next to real ids, give the copy away.
+  const copied: Array<Record<string, unknown>> = [
+    { keep: "D1", classification: "finalized|tentative" },
+    { keep: "D1", by: "quem decidiu (opcional)" },
+  ];
+  for (const group of copied) {
+    const state = salesCall();
+    const answer = { decisions: [group, "D5"], actionItems: ["A3"] };
+    assert.equal(applyConsolidation(state, answer, CONTEXT).applied, false, JSON.stringify(group));
+    assert.deepEqual(state, salesCall());
+  }
+  const topics = salesCall();
+  assert.equal(
+    applyConsolidation(
+      topics,
+      { topics: [{ keep: "T1", status: "Active|Completed|Unresolved" }] },
+      CONTEXT,
+    ).applied,
+    false,
+  );
+  const owner = salesCall();
+  assert.equal(
+    applyConsolidation(
+      owner,
+      { actionItems: [{ keep: "A4", owner: "Responsável (Opcional)" }] },
+      CONTEXT,
+    ).applied,
+    false,
+  );
 });
 
 test("the review prompt states the rules, the security fence and the meeting language", () => {

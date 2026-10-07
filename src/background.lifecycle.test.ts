@@ -877,6 +877,14 @@ test("without the model's review, repeats are still merged before saving", async
     assert.equal(refused.consolidation.before.openPoints, 3);
     assert.equal(refused.consolidation.after.openPoints, 2);
 
+    // Text around the object: it may be the prompt's example, so the answer is refused.
+    fetchCalls.length = 0;
+    consolidationContent = `Segue a revisão:\n${JSON.stringify({ decisions: ["D3"] })}`;
+    const wrapped = await recordAndSave("stream-7b");
+    assert.equal(fetchCalls.filter(isReviewCall).length, 1);
+    assert.equal(wrapped.consolidation.mode, "local");
+    assert.equal(wrapped.decisions.length, 3);
+
     // The setting off: no request at all, the local review still runs.
     fetchCalls.length = 0;
     localStore.settings = { ...localStore.settings, recordConsolidation: false };

@@ -48,6 +48,21 @@ function findMatchingBrace(text: string, start: number): number {
 }
 
 /**
+ * Parses an answer that must be one JSON object and nothing else: blank space
+ * and one Markdown code fence around it are accepted, any other text (a
+ * sentence, a second object) is not. For the review of the record, where an
+ * object recovered from a longer answer may be the prompt's own example.
+ *
+ * @returns the parsed object, or `null`.
+ */
+export function parseJsonObjectStrict(raw: unknown): JsonObject | null {
+  if (typeof raw !== "string") return null;
+  const text = raw.trim();
+  const fenced = /^```[\w-]*\s*([\s\S]*?)\s*```$/.exec(text);
+  return tryParse(fenced ? fenced[1] : text);
+}
+
+/**
  * Extracts a JSON object from raw model output.
  *
  * @returns the parsed object, or `null` when no object can be recovered.
