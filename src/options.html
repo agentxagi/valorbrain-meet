@@ -33,6 +33,7 @@
           <a href="#microfone">Microfone</a>
           <a href="#recursos">Recursos</a>
           <a href="#aparencia">Aparência</a>
+          <a href="#atualizacoes">Atualizações</a>
           <a href="#dados">Dados e uso</a>
         </nav>
 
@@ -601,6 +602,37 @@
                 <option value="light">Claro</option>
                 <option value="dark">Escuro</option>
               </select>
+            </div>
+          </section>
+
+          <!-- Updates -->
+          <section id="atualizacoes" class="op-section">
+            <div class="op-section-head">
+              <h2 class="op-section-title"><span data-icon="download"></span>Atualizações</h2>
+            </div>
+            <p class="vb-muted">
+              O Chrome não atualiza sozinho uma extensão instalada pelo zip. Quando sai uma versão
+              nova, o ícone do ValorBrain Meet avisa e mostra como atualizar.
+            </p>
+            <p id="update-status" class="op-test-status" role="status" aria-live="polite"></p>
+            <div class="op-actions">
+              <button id="update-check" class="vb-btn" type="button">
+                <span data-icon="refresh"></span>Verificar agora
+              </button>
+            </div>
+            <div class="op-toggle">
+              <div>
+                <label class="vb-label" for="update-check-toggle"
+                  >Avisar quando houver uma versão nova</label
+                >
+                <p class="vb-hint">
+                  Uma vez por dia o Meet consulta meet.valorbra.in/latest.json. Nada da reunião é
+                  enviado.
+                </p>
+              </div>
+              <label class="vb-switch"
+                ><input id="update-check-toggle" type="checkbox" data-dirty /><span></span
+              ></label>
             </div>
           </section>
 

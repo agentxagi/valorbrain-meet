@@ -14,6 +14,12 @@ import {
 import { getMeetingIdFromUrl } from "./meetingTabs";
 import { shortcutKeys } from "./ui/shortcut";
 import { getMicPermission, getSetupStatus, isSetupComplete, type SetupItem } from "./setupStatus";
+import {
+  compareVersions,
+  UPDATE_PAGE_URL,
+  UPDATE_STATUS_KEY,
+  type UpdateStatus,
+} from "./updateCheck";
 
 void initTheme();
 
@@ -43,6 +49,7 @@ let state: State | null = null;
 let activeTab: chrome.tabs.Tab | undefined;
 let lastSession: LastSessionResult | null = null;
 let setupItems: SetupItem[] = [];
+let updateStatus: UpdateStatus | null = null;
 let timerHandle: ReturnType<typeof setInterval> | null = null;
 let toastHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -313,6 +320,21 @@ function renderSetup() {
   });
 }
 
+/**
+ * "Versão X disponível" when the site has a newer version. Hidden while
+ * recording or saving: updating the extension then would end the recording.
+ */
+function renderUpdate() {
+  const latest = updateStatus?.latestVersion ?? "";
+  const visible =
+    updateStatus?.available === true &&
+    compareVersions(latest, chrome.runtime.getManifest().version) > 0 &&
+    !state?.audioActive &&
+    !state?.finalizing;
+  show("pp-update", visible);
+  $("pp-update-text").textContent = visible ? `Versão ${latest} disponível` : "";
+}
+
 async function renderReadyMicWarning() {
   const permission = await getMicPermission();
   show("pp-mic-warning", permission === "prompt" || permission === "denied");
@@ -321,6 +343,7 @@ async function renderReadyMicWarning() {
 function render() {
   renderStatusLine();
   renderNotice(state?.notice);
+  renderUpdate();
 
   const finalizing = state?.finalizing === true;
   const recording = !finalizing && state?.audioActive === true;
@@ -436,6 +459,11 @@ async function loadLastSession() {
   lastSession = (stored[LAST_SESSION_KEY] as LastSessionResult | undefined) ?? null;
 }
 
+async function loadUpdateStatus() {
+  const stored = await chrome.storage.local.get(UPDATE_STATUS_KEY);
+  updateStatus = (stored[UPDATE_STATUS_KEY] as UpdateStatus | undefined) ?? null;
+}
+
 async function loadSetup() {
   setupItems = await getSetupStatus({ probe: true }).catch(() => []);
   renderSetup();
@@ -488,6 +516,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     void chrome.tabs.create({ url: "https://meet.google.com/" });
     window.close();
   });
+  $("pp-update-open").addEventListener("click", () => {
+    void chrome.tabs.create({ url: UPDATE_PAGE_URL });
+    window.close();
+  });
   $("pp-go-meeting").addEventListener("click", async () => {
     if (typeof state?.targetTabId === "number") {
       const tab = await chrome.tabs.update(state.targetTabId, { active: true }).catch(() => null);
@@ -514,6 +546,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("pp-record-tab").hidden = internalPage;
 
   await loadLastSession();
+  await loadUpdateStatus();
   try {
     state = await chrome.runtime.sendMessage({ type: "GET_STATE" });
   } catch {
@@ -521,6 +554,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   render();
   void loadSetup();
+  // Checks only when due (once a day); a new result arrives through storage.
+  void chrome.runtime.sendMessage({ type: "CHECK_FOR_UPDATE" }).catch(() => {});
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "STATE_UPDATE" && message.state) {
@@ -536,6 +571,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (changes[LAST_SESSION_KEY]) {
       lastSession = (changes[LAST_SESSION_KEY].newValue as LastSessionResult | undefined) ?? null;
       renderLastSession();
+    }
+    if (changes[UPDATE_STATUS_KEY]) {
+      updateStatus = (changes[UPDATE_STATUS_KEY].newValue as UpdateStatus | undefined) ?? null;
+      renderUpdate();
     }
     if (changes.settings || changes["provider.summary"] || changes["provider.transcription"]) {
       void loadSetup();

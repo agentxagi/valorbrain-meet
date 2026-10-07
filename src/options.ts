@@ -34,6 +34,7 @@ import { renderStorageDashboard } from "./storageDashboard";
 import { DEFAULT_RECORDING_NOTICE, RECORDING_NOTICE_MAX_CHARS } from "./recordingNotice";
 import { renderApiUsageDashboard } from "./apiUsageDashboard";
 import { isVaultInitialized, unlockCredentials } from "./utils/credentials";
+import { compareVersions, UPDATE_PAGE_URL, type UpdateStatus } from "./updateCheck";
 
 void initTheme();
 
@@ -62,6 +63,7 @@ const TOGGLES: Array<{ id: string; key: string; defaultOn: boolean }> = [
   { id: "recording-notice-toggle", key: "recordingChatNotice", defaultOn: false },
   { id: "vb-graph-vocabulary", key: "graphVocabulary", defaultOn: true },
   { id: "vb-learn-corrections", key: "learnCorrections", defaultOn: true },
+  { id: "update-check-toggle", key: "updateCheck", defaultOn: true },
 ];
 
 let dirty = false;
@@ -425,6 +427,51 @@ async function refreshChecklist() {
     : `${icon("alertTriangle")}${pending} ${pending === 1 ? "item pendente" : "itens pendentes"}`;
 }
 
+// ——— Updates ———
+
+/** The last check: up to date, a newer version (and how to update) or a failure. */
+function renderUpdateStatus(status: UpdateStatus | null) {
+  const latest = status?.latestVersion ?? "";
+  if (status?.available && compareVersions(latest, chrome.runtime.getManifest().version) > 0) {
+    setStatus("update-status", "warning", `Versão ${latest} disponível — `);
+    const link = document.createElement("a");
+    link.href = UPDATE_PAGE_URL;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "Como atualizar";
+    $("update-status").querySelector("span")?.append(link);
+  } else if (status && !status.ok) {
+    setStatus("update-status", "error", "Não foi possível verificar agora.");
+  } else if (status) {
+    setStatus("update-status", "success", "Você está na versão mais recente.");
+  } else {
+    setStatus("update-status", "", "");
+  }
+}
+
+/**
+ * Asks the service worker, which only goes to the site when a check is due
+ * or `force`d ("Verificar agora"). With the notice off (saved setting) it
+ * asks nothing of the site and the button stays disabled.
+ */
+async function refreshUpdateStatus(force = false) {
+  const button = $<HTMLButtonElement>("update-check");
+  const enabled = (await readSettings()).updateCheck !== false;
+  button.disabled = true;
+  if (enabled) setStatus("update-status", "pending", "Verificando…");
+  const response = await chrome.runtime
+    .sendMessage({ type: "CHECK_FOR_UPDATE", force: force && enabled })
+    .catch(() => null);
+  if (!enabled) {
+    setStatus("update-status", "", "");
+  } else if (response?.success) {
+    renderUpdateStatus((response.status as UpdateStatus | null) ?? null);
+  } else {
+    setStatus("update-status", "error", "Não foi possível verificar agora.");
+  }
+  button.disabled = !enabled;
+}
+
 // ——— Load / save ———
 
 async function loadForm() {
@@ -570,6 +617,8 @@ async function save() {
     );
     await renderVbStatus();
     void refreshChecklist();
+    // Turned off: the worker drops the last result. Turned on: it checks if due.
+    void refreshUpdateStatus();
   } catch (err) {
     toast(`Não foi possível salvar: ${(err as Error)?.message || err}`, "error");
   } finally {
@@ -653,6 +702,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await renderVbStatus();
   void renderMic();
   void refreshChecklist();
+  void refreshUpdateStatus();
   void setupLegacyVault();
   watchCurrentSection();
 
@@ -686,6 +736,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("vb-test").addEventListener("click", () => void testVb());
   $("vb-disconnect").addEventListener("click", () => void disconnectVb());
   $("mic-grant").addEventListener("click", () => void grantMic());
+  $("update-check").addEventListener("click", () => void refreshUpdateStatus(true));
 
   $("op-save").addEventListener("click", () => void save());
   $("op-discard").addEventListener("click", async () => {
