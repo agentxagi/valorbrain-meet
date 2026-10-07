@@ -619,7 +619,8 @@ test("muting the microphone in Meet reaches the recorder", async () => {
 });
 
 test("everyone who attended is saved, even after they left or the user hung up", async () => {
-  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  const savedSessions = () => (localStore.savedSessionIndex as AnyRecord[] | undefined) ?? [];
+  const savedBefore = savedSessions().length;
   fetchCalls.length = 0;
   const start = await sendMessage({
     type: "MANUAL_START_AUDIO",
@@ -664,10 +665,7 @@ test("everyone who attended is saved, even after they left or the user hung up",
 
   await sendMessage({ type: "MANUAL_STOP_AUDIO" });
   const index = await waitFor(
-    () =>
-      (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
-        ? (localStore.savedSessionIndex as AnyRecord[])
-        : null,
+    () => (savedSessions().length === savedBefore + 1 ? savedSessions() : null),
     "session saved",
   );
   const saved = localStore[`savedSession:${index[0].id}`];
