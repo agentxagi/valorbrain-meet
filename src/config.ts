@@ -7,8 +7,13 @@ export const MAX_PROMPT_LENGTH = 2000;
 /** Number of transcript entries included in the rolling context window sent to the AI. */
 export const TRANSCRIPT_WINDOW_SIZE = 25;
 
-/** Maximum number of tokens the AI may generate for a meeting summary response. */
-export const SUMMARIZATION_MAX_TOKENS = 2400;
+/**
+ * Maximum number of tokens the AI may generate for a meeting summary response.
+ * GLM reasons inside this budget (it cannot be turned off for glm-5.3-flash):
+ * replaying a real 1h49 meeting, 2400 cut 9 of 42 answers before the JSON
+ * once the prompt carried every registered item.
+ */
+export const SUMMARIZATION_MAX_TOKENS = 4800;
 
 /** Character budget of new transcript text sent in one summarization pass. */
 export const SUMMARY_TRANSCRIPT_CHAR_BUDGET = 14000;
