@@ -54,6 +54,7 @@ test("secrets are masked and hosts extracted", () => {
 });
 
 test("the review of the record is told in one line, only what changed", () => {
+  // The model's review, the local merge of repeats alone, an undone review.
   const before = { decisions: 42, actionItems: 55, topics: 84, openPoints: 93 };
   assert.equal(
     consolidationLabel({
@@ -71,7 +72,7 @@ test("the review of the record is told in one line, only what changed", () => {
       after: { ...before, openPoints: 90 },
       at: 1,
     }),
-    "Registro revisado ao encerrar (revisão local): pontos em aberto 93 → 90",
+    "Itens repetidos juntados ao encerrar: pontos em aberto 93 → 90",
   );
   assert.equal(consolidationLabel({ mode: "model", before, after: { ...before }, at: 1 }), "");
   assert.equal(

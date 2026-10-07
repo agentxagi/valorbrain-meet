@@ -873,7 +873,7 @@ test("the record is reviewed by the model, checked and merged before it is saved
     const payload = JSON.parse(String(store.init.body));
     assert.match(payload.content, /## Decisões\n- Gustavo decide não aderir agora — Gustavo\n\n/);
     assert.doesNotMatch(payload.content, /metodologia|22\.990|Tudo bem com vocês/);
-    assert.doesNotMatch(payload.content, /Registro revisado|revisão local/);
+    assert.doesNotMatch(payload.content, /Registro revisado|Itens repetidos juntados/);
 
     // What the review removed stays on the saved meeting, where the side panel can put it back.
     const original = saved.consolidation.original;
