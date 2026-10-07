@@ -253,7 +253,11 @@ export function buildValorBrainContent(session: State): string {
   else if (session.meetingId) lines.push(`- Reunião: ${session.meetingId}`);
   const corrected = correctedTermsSummary(session.termCorrections ?? []);
   if (corrected) lines.push(`- Grafia revisada na transcrição: ${corrected}`);
-  lines.push("- Registrado pelo ValorBrain Meet (transcrição automática, pode conter erros)");
+  // The version that recorded it (absent on sessions saved before 2.4).
+  const version = session.appVersion ? ` ${session.appVersion}` : "";
+  lines.push(
+    `- Registrado pelo ValorBrain Meet${version} (transcrição automática, pode conter erros)`,
+  );
   lines.push("");
 
   lines.push("## Transcrição");

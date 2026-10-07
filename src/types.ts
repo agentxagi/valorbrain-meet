@@ -170,6 +170,8 @@ export interface State {
   vb?: VbDeliveryStatus;
   /** Why the session ended (saved sessions only). */
   endReason?: string;
+  /** Version of the extension that recorded it, e.g. "2.4.0" (saved sessions only). */
+  appVersion?: string;
   /** Spelling fixes applied to the transcript (learned ones as lines arrive, the review at the end). */
   termCorrections?: TermCorrectionRecord[];
   /** Live recording only: vocabulary from the ValorBrain graph (never saved with the session). */

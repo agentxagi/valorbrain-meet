@@ -152,6 +152,7 @@ function installChromeMock() {
     runtime: {
       lastError: undefined,
       getURL: (path: string) => `chrome-extension://vbmeet/${path}`,
+      getManifest: () => ({ version: "2.4.0" }),
       getContexts: async () => (offscreenOpen ? [{ contextType: "OFFSCREEN_DOCUMENT" }] : []),
       getPlatformInfo: (cb: () => void) => cb?.(),
       sendMessage: async (message: AnyRecord) => {
@@ -381,6 +382,7 @@ test("a recording is transcribed, its language detected, summarized in it, saved
   assert.equal(saved.transcript.length, 2);
   assert.equal(saved.vb.status, "sent");
   assert.equal(saved.isActive, false);
+  assert.equal(saved.appVersion, "2.4.0", "the record says which version wrote it");
 
   // Delivered to the tenant with the OAuth token and PT-BR sections.
   const storeCall = fetchCalls.find((c) => c.url.endsWith("/api/v1/memory/store"))!;
@@ -391,6 +393,7 @@ test("a recording is transcribed, its language detected, summarized in it, saved
   assert.match(payload.content, /## Resumo\nA equipe decidiu lançar/);
   assert.match(payload.content, /## Próximos passos\n- \[ \] Preparar o changelog — Bruno/);
   assert.match(payload.content, /## Pontos em aberto\n- Qual o preço do plano empresarial\?/);
+  assert.match(payload.content, /\n- Registrado pelo ValorBrain Meet 2\.4\.0 \(transcrição/);
   assert.match(payload.content, /## Transcrição\n\[00:00\] Participante: Bom dia, pessoal\./);
 
   // UI side effects: session-ended event, badge cleared, offscreen closed, notification.

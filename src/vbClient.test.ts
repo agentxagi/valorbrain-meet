@@ -194,6 +194,20 @@ test("buildValorBrainContent fills placeholders for empty sections", () => {
   assert.ok(content.includes("## Transcrição\n_(sem transcrição)_"));
 });
 
+test("buildValorBrainContent says which version of the extension recorded the meeting", () => {
+  assert.ok(
+    buildValorBrainContent(makeSession({ appVersion: "2.4.0" })).includes(
+      "\n- Registrado pelo ValorBrain Meet 2.4.0 (transcrição automática, pode conter erros)\n",
+    ),
+  );
+  assert.ok(
+    buildValorBrainContent(makeSession()).includes(
+      "\n- Registrado pelo ValorBrain Meet (transcrição automática, pode conter erros)\n",
+    ),
+    "a session saved before 2.4 keeps the line without a version",
+  );
+});
+
 test("buildValorBrainContent falls back to computed labels when timestampLabel is absent", () => {
   const content = buildValorBrainContent(
     makeSession({ transcript: [{ speaker: "Ana", text: "Oi", timestamp: 3725 }] }),

@@ -172,6 +172,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined>
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+/** This build's version ("2.4.0"); null where the runtime has no manifest (tests). */
+function extensionVersion(): string | null {
+  try {
+    return chrome.runtime.getManifest().version || null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Request queues
 // ---------------------------------------------------------------------------
@@ -2301,6 +2310,7 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
         // The graph vocabulary belongs to the live recording, not to the saved meeting.
         const snap = snapshot();
         delete snap.graphVocabulary;
+        const appVersion = extensionVersion();
         const session: StoredSession = {
           ...snap,
           // Everyone who attended, also whoever left before the end.
@@ -2312,6 +2322,8 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           finalizing: false,
           notice: null,
           endReason: reason,
+          // Which build wrote it, so a problem can be traced from the record.
+          ...(appVersion ? { appVersion } : {}),
         };
         try {
           savedSession = await saveSessionRecord(session);
