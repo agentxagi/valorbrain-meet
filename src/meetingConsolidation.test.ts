@@ -135,9 +135,11 @@ test("the review prompt lists every item with its id, time, people and marks", (
   );
   assert.match(user.content, /Participantes detectados na reunião: Leonardo Castro, Gustavo\./);
   assert.match(user.content, /Quem gravou a reunião: Gustavo\./);
-  for (const key of ["decisions", "actionItems", "topics", "openPoints"]) {
-    assert.match(user.content, new RegExp(`"${key}": \\[\\{"keep"`));
+  // A lone item is just its id; the object form merges repeats or changes a field.
+  for (const key of ["decisions", "actionItems", "openPoints"]) {
+    assert.match(user.content, new RegExp(`"${key}": \\["[DAP]\\d+", \\{"keep"`));
   }
+  assert.match(user.content, /"topics": \[\{"keep"/);
 });
 
 test("the review prompt states the rules, the security fence and the meeting language", () => {
@@ -150,6 +152,11 @@ test("the review prompt states the rules, the security fence and the meeting lan
   assert.match(system.content, /combinado sobre a própria reunião/);
   assert.match(system.content, /oferta ou proposta que ninguém respondeu/);
   assert.match(system.content, /fique só com a versão final/);
+  assert.match(system.content, /Uma proposta recusada ou substituída por outra também sai/);
+  // A promise that hangs on something that did not happen (a sale not closed) is neither.
+  assert.match(system.content, /Promessa que depende de algo que não aconteceu na reunião/);
+  assert.match(system.content, /no máximo 12 temas/);
+  assert.match(system.content, /escreva só o código \("D2"\)/);
   assert.match(system.content, /compromisso de fazer algo depois da reunião/);
   assert.match(system.content, /Tire o que já aconteceu durante a própria reunião/);
   assert.match(system.content, /"isSpeculative": true/);
@@ -418,6 +425,23 @@ test("names are accepted only when they appear in the meeting", () => {
     { participants: [], selfName: "Rafaela" },
   );
   assert.equal(recorder.actionItems[0].owner, "Rafaela");
+
+  // A part of a known name comes back without the punctuation around it:
+  // "Entrevistador (Cod3rs)" and "Erick Santos | EVOUS" name "Cod3rs" and "EVOUS".
+  const punctuated = salesCall();
+  punctuated.decisions[0].by = "Entrevistador (Cod3rs)";
+  applyConsolidation(
+    punctuated,
+    {
+      actionItems: [
+        { keep: "A1", owner: "Cod3rs" },
+        { keep: "A2", owner: "evous" },
+      ],
+    },
+    { participants: ["Erick Santos | EVOUS"], selfName: "Gustavo" },
+  );
+  assert.equal(punctuated.actionItems[0].owner, "Cod3rs");
+  assert.equal(punctuated.actionItems[1].owner, "EVOUS");
 });
 
 test("classification and status must be valid values", () => {

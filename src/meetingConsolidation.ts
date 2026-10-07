@@ -168,14 +168,16 @@ export function buildConsolidationMessages(input: ConsolidationPromptInput): Cha
   const rules = [
     outputLanguageRule(input.outputLanguage ?? null),
     "Use só o resumo e as listas. Nunca invente códigos, textos, nomes, números ou datas.",
-    "Um item registrado na lista errada (um próximo passo entre as decisões, por exemplo) só sai se o mesmo conteúdo já estiver na lista certa; se não estiver, deixe-o onde está.",
+    "Um compromisso de verdade registrado na lista errada (um próximo passo entre as decisões, por exemplo) só sai se o mesmo conteúdo já estiver na lista certa; se não estiver, deixe-o onde está.",
     "Decisão é algo decidido na reunião: escolhido, aprovado, aceito, recusado ou combinado. Uma recusa também é decisão.",
     "Não é decisão: apresentação ou descrição (de um produto, serviço, pessoa ou método), opinião ou autoavaliação, intenção vaga, explicação de como algo funciona, combinado sobre a própria reunião (duração, formato, ordem da conversa), oferta ou proposta que ninguém respondeu, analogia, comparação ou piada.",
-    'Quando uma decisão foi revista ou trocada por outra na mesma reunião (um preço que baixou, um "sim" que virou "agora não"), fique só com a versão final.',
+    "Promessa que depende de algo que não aconteceu na reunião não é decisão nem próximo passo: o que um produto ou serviço faria se fosse contratado, quando a contratação não foi fechada, sai das duas listas.",
+    'Quando uma decisão foi revista ou trocada por outra na mesma reunião (um preço que baixou, um "sim" que virou "agora não"), fique só com a versão final. Uma proposta recusada ou substituída por outra também sai: fica a resposta final (a recusa, por exemplo).',
     'Próximo passo é um compromisso de fazer algo depois da reunião. Tire o que já aconteceu durante a própria reunião e a descrição do que um produto ou serviço inclui quando ninguém se comprometeu a fazer aquilo. Uma ideia só fica se valer a pena registrar, e com "isSpeculative": true.',
-    'Assuntos: junte os itens sobre o mesmo tema e deixe em "keep" o nome mais amplo. Fique com os temas principais (numa reunião longa, algo entre 3 e 12), cada um com o status final.',
+    'Assuntos: a lista final tem no máximo 12 temas (menos numa reunião curta). Junte num grupo os itens do mesmo tema, com o nome mais amplo em "keep" e os outros em "same"; um assunto menor pode sair. Cada tema fica com o status final.',
     "Pontos em aberto: tire as perguntas que foram respondidas depois (no resumo, numa decisão ou num item seguinte) e as perguntas de cortesia; junte as repetidas; fique só com o que de fato ficou em aberto.",
     'Itens repetidos: o mais completo vai em "keep" e os outros em "same". Cada código aparece uma vez só.',
+    'Item que fica sozinho e sem mudança: escreva só o código ("D2"). Use o objeto apenas para juntar repetidos ou mudar um campo.',
     '"classification": "finalized" quando a decisão foi fechada; "tentative" quando ficou a confirmar.',
     '"by" (quem decidiu) e "owner" (quem assumiu o próximo passo): só quando estiver claro, com o nome escrito como aparece na reunião. Sem certeza, não preencha o campo (o item continua).',
     '"status" de um assunto: "completed" (encerrado), "unresolved" (ficou sem conclusão) ou "active" (ainda em discussão quando a reunião acabou).',
@@ -227,10 +229,10 @@ Participantes detectados na reunião: ${participants.length > 0 ? participants.j
 
 Devolva um JSON com exatamente estas chaves (uma lista sem nada para manter volta vazia: []):
 {
-  "decisions": [{"keep": "D4", "same": ["D9"], "classification": "finalized|tentative", "by": "quem decidiu (opcional)"}],
-  "actionItems": [{"keep": "A3", "same": ["A10"], "owner": "responsável (opcional)", "isSpeculative": false}],
+  "decisions": ["D2", {"keep": "D4", "same": ["D9"], "classification": "finalized|tentative", "by": "quem decidiu (opcional)"}],
+  "actionItems": ["A1", {"keep": "A3", "same": ["A10"], "owner": "responsável (opcional)", "isSpeculative": false}],
   "topics": [{"keep": "T1", "same": ["T2", "T7"], "status": "active|completed|unresolved"}],
-  "openPoints": [{"keep": "P5", "same": []}]
+  "openPoints": ["P2", {"keep": "P5", "same": ["P8"]}]
 }`;
 
   return [
@@ -334,7 +336,11 @@ function knownNames(state: ConsolidationState, context: ConsolidationContext): M
     const words = name.split(" ");
     for (let i = 0; i < words.length; i += 1) {
       for (let j = i + 1; j <= words.length; j += 1) {
-        const part = words.slice(i, j).join(" ");
+        // Edges without punctuation: "Entrevistador (Cod3rs)" knows "Cod3rs", not "(Cod3rs)".
+        const part = words
+          .slice(i, j)
+          .join(" ")
+          .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
         const key = normalizeItemText(part);
         if (key.length >= 2 && !isPlaceholderName(part) && !known.has(key)) known.set(key, part);
       }

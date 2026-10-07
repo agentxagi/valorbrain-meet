@@ -151,7 +151,8 @@ test("the summary rules say what a decision, an action, a topic and an open ques
   assert.match(system.content, /só vira decisão quando é aceita, recusada ou combinada/);
   assert.match(system.content, /combinado sobre a própria reunião/);
   assert.match(system.content, /compromisso de fazer algo depois da reunião/);
-  assert.match(system.content, /nem o que um produto ou serviço oferece/);
+  assert.match(system.content, /o que um produto ou serviço oferece/);
+  assert.match(system.content, /nem o que alguém faria se algo ainda não fechado acontecer/);
   assert.match(system.content, /use exatamente o mesmo nome/);
   assert.match(system.content, /deixe de fora perguntas de cortesia/);
   assert.match(system.content, /nem com outras palavras/);
