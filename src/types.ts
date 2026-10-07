@@ -137,6 +137,12 @@ export interface State {
   participants: string[];
   initialParticipants: string[];
   lateJoiners: string[];
+  /**
+   * Everyone seen in the call during the recording, in order of arrival; it
+   * never shrinks (`participants` is who is in the call right now). A saved
+   * session carries this list as its `participants`.
+   */
+  attendees?: string[];
   timeline: TimelineEvent[];
   transcript: TranscriptEntry[];
   summaryItems: SummaryItem[];

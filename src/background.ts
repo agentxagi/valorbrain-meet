@@ -236,7 +236,7 @@ function emptyStats(): MeetingStats {
   return { chunksReceived: 0, chunksTranscribed: 0, chunksFiltered: 0, chunksFailed: 0 };
 }
 
-const state: State = {
+const state: State & { attendees: string[] } = {
   isActive: false,
   meetingId: null,
   meetingUrl: null,
@@ -254,6 +254,7 @@ const state: State = {
   participants: [],
   initialParticipants: [],
   lateJoiners: [],
+  attendees: [],
   timeline: [],
   transcript: [],
   summaryItems: [],
@@ -402,6 +403,7 @@ async function hydrateState() {
             "participants",
             "initialParticipants",
             "lateJoiners",
+            "attendees",
             "summaryItems",
           ] as const;
           for (const key of arrayKeys) {
@@ -513,6 +515,7 @@ interface PerTabParticipantState {
   participants: string[];
   initialParticipants: string[];
   lateJoiners: string[];
+  attendees: string[];
   participantCount: number;
 }
 
@@ -544,6 +547,19 @@ function sanitizeParticipantName(value: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Adds to `attendees` the names it does not have yet, in order of arrival.
+ * Meet's "You"/"Você" placeholders are not names and never enter.
+ */
+function addAttendees(attendees: string[], names: string[]) {
+  for (const raw of names) {
+    const name = sanitizeParticipantName(raw);
+    if (name && !SELF_PLACEHOLDER.test(name) && !findParticipant(name, attendees)) {
+      attendees.push(name);
+    }
+  }
+}
+
 function resetState() {
   languageLock = EMPTY_LANGUAGE_LOCK;
   state.isActive = false;
@@ -564,6 +580,7 @@ function resetState() {
   state.participants = [];
   state.initialParticipants = [];
   state.lateJoiners = [];
+  state.attendees = [];
   state.timeline = [];
   state.transcript = [];
   state.audioActive = false;
@@ -623,6 +640,7 @@ function snapshot(): State {
     participants: state.participants,
     initialParticipants: state.initialParticipants,
     lateJoiners: state.lateJoiners,
+    attendees: state.attendees,
     timeline: state.timeline,
     transcript: state.transcript,
     audioActive: state.audioActive,
@@ -659,6 +677,7 @@ const UI_ARRAY_KEYS = [
   "participants",
   "initialParticipants",
   "lateJoiners",
+  "attendees",
 ] as const;
 
 function uiSnapshot() {
@@ -781,6 +800,7 @@ async function loadTabState(tabId: number) {
   state.participants = tabState.participants ?? [];
   state.initialParticipants = tabState.initialParticipants ?? [];
   state.lateJoiners = tabState.lateJoiners ?? [];
+  state.attendees = tabState.attendees ?? [];
   state.timeline = tabState.timeline ?? [];
   state.transcript = tabState.transcript ?? [];
   state.audioActive = tabState.audioActive ?? false;
@@ -1048,7 +1068,7 @@ function getTranscriptionPrompt(
     .join(" ");
   return buildTranscriptionPrompt({
     vocabulary,
-    names: [...selfNameCandidates(settings), ...state.participants],
+    names: [...selfNameCandidates(settings), ...state.attendees],
     recentText: recent,
   });
 }
@@ -1386,7 +1406,7 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     previousSummary: state.summary,
     transcriptLines: window.lines,
     features,
-    participants: [...selfNameCandidates(settings), ...state.participants],
+    participants: [...selfNameCandidates(settings), ...state.attendees],
     known: { decisions: state.decisions, actionItems: state.actionItems, topics: state.topics },
     isFinal,
     vocabulary: reviewVocabularyFrom(settings),
@@ -1486,7 +1506,7 @@ async function correctTranscriptTerms(): Promise<void> {
 
   const settings = (await getSettings()) as PipelineSettings;
   const vocabulary = reviewVocabularyFrom(settings);
-  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const participants = [...selfNameCandidates(settings), ...state.attendees];
   const lines = state.transcript.map(
     (entry) =>
       `[${entry.timestampLabel || formatTimestampLabel(entry.timestamp || 0)}] ${sanitizePromptText(entry.speaker, 100)}: ${sanitizePromptText(entry.text)}`,
@@ -1590,7 +1610,7 @@ async function loadGraphVocabulary(): Promise<void> {
   const vbSettings = normalizeVbSettings(settings);
   if (!isVbConfigured(vbSettings)) return;
 
-  const participants = [...selfNameCandidates(settings), ...state.participants];
+  const participants = [...selfNameCandidates(settings), ...state.attendees];
   const key = participantsKey(participants);
   if (state.graphVocabulary && state.graphVocabulary.participantsKey === key) return;
 
@@ -1649,7 +1669,7 @@ function applyLearnedCorrections(
   const learned = state.graphVocabulary?.corrections ?? [];
   if (!text || learned.length === 0) return noop;
   // Any part of a participant's name ("Diego" of "Diego Braga") is off limits.
-  const names = nameVariants([...selfNameCandidates(settings), ...state.participants]);
+  const names = nameVariants([...selfNameCandidates(settings), ...state.attendees]);
   const usable = learned.filter((c) => !names.has(squashTerm(c.from)));
   const { text: fixed, counts } = applyKnownCorrections(text, usable);
   if (counts.size === 0) return noop;
@@ -1700,7 +1720,13 @@ async function teachCorrectionsToValorBrain(session: StoredSession, vbSettings: 
 function detectNewJoiners(currentList: string[], tabId: number): string[] {
   let tabState = perTabParticipants.get(tabId);
   if (!tabState) {
-    tabState = { participants: [], initialParticipants: [], lateJoiners: [], participantCount: 0 };
+    tabState = {
+      participants: [],
+      initialParticipants: [],
+      lateJoiners: [],
+      attendees: [],
+      participantCount: 0,
+    };
     perTabParticipants.set(tabId, tabState);
   }
 
@@ -2122,11 +2148,14 @@ async function startAudioCapture(
     state.targetTabId = tabId;
     selfParticipantName = keptSelfName;
     if (keptParticipants) Object.assign(state, keptParticipants);
+    // Whoever is in the call when the recording starts attends it.
+    addAttendees(state.attendees, state.participants);
     if (keptParticipants) {
       perTabParticipants.set(tabId, {
         participants: [...keptParticipants.participants],
         initialParticipants: [...keptParticipants.initialParticipants],
         lateJoiners: [...keptParticipants.lateJoiners],
+        attendees: [...state.attendees],
         participantCount: keptParticipants.participantCount,
       });
     }
@@ -2274,6 +2303,8 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
         delete snap.graphVocabulary;
         const session: StoredSession = {
           ...snap,
+          // Everyone who attended, also whoever left before the end.
+          participants: [...state.attendees],
           id: crypto.randomUUID(),
           savedAt: Date.now(),
           isActive: false,
@@ -2629,6 +2660,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             participants: [...state.participants],
             initialParticipants: [...state.initialParticipants],
             lateJoiners: [...state.lateJoiners],
+            attendees: [...state.attendees],
             participantCount: state.participantCount ?? 0,
           });
         }
@@ -2638,9 +2670,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (tabId === state.targetTabId) {
           const tabState = perTabParticipants.get(tabId);
           if (tabState) {
+            // `participants` is who is in the call now (an empty page once the
+            // user hangs up); `attendees` keeps everyone for the saved meeting.
+            addAttendees(tabState.attendees, tabState.participants);
             state.participants = tabState.participants;
             state.initialParticipants = tabState.initialParticipants;
             state.lateJoiners = tabState.lateJoiners;
+            state.attendees = tabState.attendees;
             state.participantCount = tabState.participantCount;
           }
         }
