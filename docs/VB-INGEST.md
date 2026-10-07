@@ -74,7 +74,8 @@ X-Tenant-ID: <tenant>        (só se configurado)
 ```
 
 O título usa o primeiro assunto identificado pelo resumo; sem assunto, o código da reunião.
-Seções sem conteúdo (Assuntos, Pontos em aberto, Participantes) são omitidas.
+Seções sem conteúdo (Assuntos, Pontos em aberto, Participantes) são omitidas. **Participantes**
+lista todo mundo que apareceu na chamada durante a gravação, mesmo quem saiu antes do fim.
 
 Em **Detalhes**, `Grafia revisada na transcrição: gbrain (4), Replit` lista só a grafia certa dos
 termos corrigidos. As formas erradas ("D-Brain") não vão para a memória: o ValorBrain extrai
