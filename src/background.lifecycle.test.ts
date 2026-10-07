@@ -597,7 +597,7 @@ test("the microphone is the user, echoes are dropped and misheard terms are fixe
       c.url.endsWith("/chat/completions") && /motor de inteligência/.test(chatSystemPrompt(c.init)),
   )!;
   const summaryUser = JSON.parse(String(summaryCall.init.body)).messages[1].content;
-  assert.match(summaryUser, /Quem gravou a reunião: Gustavo\./);
+  assert.match(summaryUser, /Quem gravou a reunião: Gustavo\.\n<\/participantes>/);
   assert.match(summaryUser, /Gustavo: Olha, o gbrain já resolve/);
 
   const store = await waitFor(
@@ -700,10 +700,10 @@ test("everyone who attended is saved, even after they left or the user hung up",
         )!.init.body,
       ),
     ).messages[1].content as string;
-  assert.match(chatUser(/revisa a grafia/), /\nParticipantes: .*Ana, Bruno\n/);
+  assert.match(chatUser(/revisa a grafia/), /\n<participantes>\n.*Ana, Bruno\n<\/participantes>/);
   assert.match(
     chatUser(/motor de inteligência/),
-    /Participantes detectados na reunião: .*Ana, Bruno\./,
+    /\n<participantes>\nParticipantes detectados na reunião: .*Ana, Bruno\./,
   );
 });
 
@@ -840,7 +840,7 @@ test("the record is reviewed by the model, checked and merged before it is saved
     assert.equal(body.max_tokens, 6000);
     assert.deepEqual(body.response_format, { type: "json_object" });
     assert.match(body.messages[1].content, /\nD3 Gustavo decide não aderir agora — por: Gustavo/);
-    assert.match(body.messages[1].content, /Quem gravou a reunião: Gustavo\./);
+    assert.match(body.messages[1].content, /Quem gravou a reunião: Gustavo\.\n<\/participantes>/);
 
     // The document sent to ValorBrain carries the reviewed record and nothing about the review.
     const store = await waitFor(
