@@ -429,16 +429,21 @@ function rebuild<T>(items: T[], groups: Group[], shown: number, merge: (group: G
   return [...byIndex.keys()].sort((a, b) => a - b).map((i) => byIndex.get(i) as T);
 }
 
-function clampPrompted(prompted: PromptedItems, state: ConsolidationState): PromptedItems {
-  const fit = (value: number, length: number) =>
-    Number.isInteger(value) && value > 0 ? Math.min(value, length) : 0;
-  return {
-    decisions: fit(prompted.decisions, state.decisions.length),
-    actionItems: fit(prompted.actionItems, state.actionItems.length),
-    topics: fit(prompted.topics, state.topics.length),
-    unresolvedDiscussions: fit(prompted.unresolvedDiscussions, state.unresolvedDiscussions.length),
-    questionsRaised: fit(prompted.questionsRaised, state.questionsRaised.length),
-  };
+/**
+ * True when every list still holds the items the prompt showed. Lists only
+ * grow during the request; one that shrank means the ids would now point at
+ * other items.
+ */
+function stillShown(prompted: PromptedItems, state: ConsolidationState): boolean {
+  const fits = (shown: number, length: number) =>
+    Number.isInteger(shown) && shown >= 0 && shown <= length;
+  return (
+    fits(prompted.decisions, state.decisions.length) &&
+    fits(prompted.actionItems, state.actionItems.length) &&
+    fits(prompted.topics, state.topics.length) &&
+    fits(prompted.unresolvedDiscussions, state.unresolvedDiscussions.length) &&
+    fits(prompted.questionsRaised, state.questionsRaised.length)
+  );
 }
 
 /**
@@ -454,7 +459,8 @@ function clampPrompted(prompted: PromptedItems, state: ConsolidationState): Prom
  * - the order is the meeting's, not the model's; open points go back to the
  *   list they came from; items not shown stay as they are;
  * - a kind missing from the answer stays as it is, and an answer whose lists
- *   all come back empty is refused when there were more than 3 items.
+ *   all come back empty is refused when there were more than 3 items (so is
+ *   any answer once a list lost items it showed).
  */
 export function applyConsolidation(
   state: ConsolidationState,
@@ -464,11 +470,12 @@ export function applyConsolidation(
   const before = countRecord(state);
   const refused: ConsolidationResult = {
     applied: false,
-    report: { mode: "model", before, after: before, at: Date.now() },
+    report: { mode: "model", before, after: { ...before }, at: Date.now() },
   };
   if (!parsed || typeof parsed !== "object") return refused;
 
-  const prompted = clampPrompted(context.prompted ?? promptedItems(state), state);
+  const prompted = context.prompted ?? promptedItems(state);
+  if (!stillShown(prompted, state)) return refused;
   const shownOpen = prompted.unresolvedDiscussions + prompted.questionsRaised;
   const groupsOf = (key: string, prefix: string, shown: number) => {
     const raw = parsed[key];

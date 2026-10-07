@@ -530,6 +530,19 @@ test("ids keep pointing at the items shown even if the lists grew during the req
   applyConsolidation(state, { openPoints: [{ keep: "P3" }] }, { ...CONTEXT, prompted });
   assert.deepEqual(state.unresolvedDiscussions, ["Bônus de indicação"]);
   assert.deepEqual(state.questionsRaised, ["Qual é o valor do serviço?", "Tem certificado?"]);
+
+  // A list that lost items since the prompt: the ids cannot be trusted.
+  const shrunk = salesCall();
+  const before = promptedItems(shrunk);
+  shrunk.decisions.pop();
+  const result = applyConsolidation(
+    shrunk,
+    { decisions: [{ keep: "D1" }], topics: [{ keep: "T1" }] },
+    { ...CONTEXT, prompted: before },
+  );
+  assert.equal(result.applied, false);
+  assert.equal(shrunk.decisions.length, 4);
+  assert.equal(shrunk.topics.length, 3);
 });
 
 // ---------------------------------------------------------------------------
