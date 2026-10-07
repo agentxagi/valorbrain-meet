@@ -32,6 +32,23 @@ export interface TermCorrectionRecord {
   source?: "graph";
 }
 
+/** Items of each kind in a meeting record (open points: unresolved discussions and open questions). */
+export interface RecordCounts {
+  decisions: number;
+  actionItems: number;
+  topics: number;
+  openPoints: number;
+}
+
+/** The review of the record when the meeting ends (repeats merged, what does not belong removed). */
+export interface ConsolidationReport {
+  /** "model": the summary model chose what stays (checked by the extension); "local": repeats merged only. */
+  mode: "model" | "local";
+  before: RecordCounts;
+  after: RecordCounts;
+  at: number;
+}
+
 /** Vocabulary the ValorBrain graph suggested for the current recording. */
 export interface GraphVocabulary {
   /** Terms in the engine's order (participants excluded: the prompt names them). */
