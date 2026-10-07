@@ -167,10 +167,14 @@ const STOP_TRANSCRIPTION_TIMEOUT_MS = 150_000;
 const STOP_CORRECTION_TIMEOUT_MS = 75_000;
 /** Upper bound for the final summary pass after "stop". */
 const STOP_SUMMARY_TIMEOUT_MS = 90_000;
-/** Upper bound for the review of the record (decisions, next steps…) after "stop". */
-const STOP_CONSOLIDATION_TIMEOUT_MS = 100_000;
+/**
+ * Upper bound for the review of the record (decisions, next steps…) after
+ * "stop". GLM took 50–75 s on the records of two real meetings (55 min and
+ * 1h49, up to 270 items), reasoning included.
+ */
+const STOP_CONSOLIDATION_TIMEOUT_MS = 125_000;
 /** The model's share of it: past this the local review runs instead, still in time. */
-const CONSOLIDATION_MODEL_TIMEOUT_MS = 95_000;
+const CONSOLIDATION_MODEL_TIMEOUT_MS = 120_000;
 /** The answer is short (ids), but GLM may reason inside the same budget. */
 const CONSOLIDATION_MAX_TOKENS = 6000;
 /** Active-speaker changes kept for attributing tab segments (well above any segment). */
@@ -1682,7 +1686,7 @@ async function reviewRecordWithModel(
           maxTokens: CONSOLIDATION_MAX_TOKENS,
           temperature: 0,
           json: true,
-          timeoutMs: Math.min(90_000, left),
+          timeoutMs: left,
         });
       }),
       CONSOLIDATION_MODEL_TIMEOUT_MS,
