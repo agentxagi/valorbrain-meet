@@ -215,10 +215,10 @@ test("the review prompt states the rules, the security fence and the meeting lan
     system.content,
     /como a conversa ou a resposta vai ser, por exemplo "responder só sim ou não"\)/,
   );
-  // A negotiation's offers and conditions are not decisions: only its outcome is.
+  // A negotiation's offers and conditions are not decisions: its outcome is, with the terms accepted.
   assert.match(
     system.content,
-    /Numa negociação, ofertas e condições \(preço, desconto, parcelas, juros\) não são decisões: decisão é só o resultado \(o que foi aceito, recusado ou deixado para depois\)\./,
+    /Numa negociação, ofertas e condições \(preço, desconto, parcelas, juros\) não são decisões; decisão é o resultado: o que foi aceito \(com os termos aceitos, como preço e parcelas\), recusado ou deixado para depois\./,
   );
   assert.match(system.content, /oferta ou proposta que ninguém respondeu/);
   assert.match(system.content, /fique só com a versão final/);

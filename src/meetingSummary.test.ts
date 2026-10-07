@@ -181,7 +181,7 @@ test("the summary rules say what a decision, an action, a topic and an open ques
   );
   assert.match(
     system.content,
-    /Numa negociação, ofertas e condições \(preço, desconto, parcelas, juros\) não são decisões: decisão é só o resultado \(o que foi aceito, recusado ou deixado para depois\)\./,
+    /Numa negociação, ofertas e condições \(preço, desconto, parcelas, juros\) não são decisões; decisão é o resultado: o que foi aceito \(com os termos aceitos, como preço e parcelas\), recusado ou deixado para depois\./,
   );
   assert.match(system.content, /compromisso de fazer algo depois da reunião/);
   assert.match(system.content, /o que um produto ou serviço oferece/);
