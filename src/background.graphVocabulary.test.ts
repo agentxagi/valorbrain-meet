@@ -386,7 +386,10 @@ test("the graph vocabulary, the chat notice and the learned fixes work together"
   const reviewCall = fetchCalls.find(
     (c) => c.url.endsWith("/chat/completions") && /revisa a grafia/.test(chatSystemPrompt(c.init)),
   )!;
-  assert.match(JSON.parse(String(reviewCall.init.body)).messages[1].content, /Supabase/);
+  assert.match(
+    JSON.parse(String(reviewCall.init.body)).messages[1].content,
+    /<termos_da_empresa>\n[^<]*Supabase[^<]*\n<\/termos_da_empresa>/,
+  );
 
   // After the delivery: only this meeting's fix is taught back.
   const aliasesCall = await waitFor(
