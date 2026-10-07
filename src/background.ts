@@ -2173,6 +2173,22 @@ interface LastSessionResult {
   vb?: VbDeliveryStatus | { status: "pending"; at: number };
 }
 
+let savedSessionsLock: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs a change of the saved meetings or of the popup's last-meeting card
+ * after the ones before it. Each change reads, then writes back, in steps:
+ * two that overlap (an undo and the result of a delivery, two meetings saved
+ * at once) would lose one of them. Only reads and writes go in, never a
+ * network request, and nothing inside takes the lock again. A task that fails
+ * rejects for its caller and lets the next one run.
+ */
+function withSavedSessions<T>(task: () => Promise<T>): Promise<T> {
+  const run = savedSessionsLock.then(task);
+  savedSessionsLock = run.catch(() => undefined);
+  return run;
+}
+
 async function recordLastSession(result: LastSessionResult) {
   try {
     await chrome.storage.local.set({ [LAST_SESSION_KEY]: result });
@@ -2195,7 +2211,10 @@ function sessionTitle(session: State): string {
   return topic || session.meetingId || `Reunião no ${platformLabelForUrl(session.meetingUrl)}`;
 }
 
-/** Saves a session record, evicting the oldest saved session on quota errors. */
+/**
+ * Saves a session record, evicting the oldest saved session on quota errors.
+ * Callers hold withSavedSessions.
+ */
 async function saveSessionRecord(session: StoredSession): Promise<StoredSession> {
   try {
     return await persistMeetingSession(chrome.storage.local, session);
@@ -2241,10 +2260,13 @@ async function deliverSessionToValorBrain(
     : { status: "failed", at: Date.now(), error: result.error };
 
   // Re-persist only if the session still exists (the user may have deleted it).
-  const stillSaved = await getSavedMeetingSession(chrome.storage.local, session.id);
-  const delivered = stillSaved ? deliveredStatus(vb, session, stillSaved) : vb;
-  if (stillSaved) await saveSessionRecord({ ...stillSaved, vb: delivered });
-  await patchLastSession(session.id, { vb: delivered });
+  const delivered = await withSavedSessions(async () => {
+    const stillSaved = await getSavedMeetingSession(chrome.storage.local, session.id);
+    const status = stillSaved ? deliveredStatus(vb, session, stillSaved) : vb;
+    if (stillSaved) await saveSessionRecord({ ...stillSaved, vb: status });
+    await patchLastSession(session.id, { vb: status });
+    return status;
+  });
 
   if (!result.ok) {
     console.warn(`${LOG_PREFIX} ValorBrain delivery failed:`, result.error);
@@ -2256,9 +2278,11 @@ async function autoSendSavedSessionToValorBrain(session: StoredSession) {
   try {
     const vbSettings = await getVbSettings();
     if (!isVbConfigured(vbSettings)) {
-      await patchLastSession(session.id, {
-        vb: { status: "skipped", at: Date.now(), error: "ValorBrain não conectado" },
-      });
+      await withSavedSessions(() =>
+        patchLastSession(session.id, {
+          vb: { status: "skipped", at: Date.now(), error: "ValorBrain não conectado" },
+        }),
+      );
       notify(
         "saved",
         "Reunião salva neste navegador",
@@ -2267,13 +2291,17 @@ async function autoSendSavedSessionToValorBrain(session: StoredSession) {
       return;
     }
     if (!resolveAutoSend(vbSettings)) {
-      await patchLastSession(session.id, {
-        vb: { status: "skipped", at: Date.now(), error: "Envio automático desligado" },
-      });
+      await withSavedSessions(() =>
+        patchLastSession(session.id, {
+          vb: { status: "skipped", at: Date.now(), error: "Envio automático desligado" },
+        }),
+      );
       notify("saved", "Reunião salva", "Envie ao ValorBrain pelo histórico quando quiser.");
       return;
     }
-    await patchLastSession(session.id, { vb: { status: "pending", at: Date.now() } });
+    await withSavedSessions(() =>
+      patchLastSession(session.id, { vb: { status: "pending", at: Date.now() } }),
+    );
     const vb = await deliverSessionToValorBrain(session, vbSettings);
     // It reached ValorBrain, even when the review was undone meanwhile ("stale").
     if (vb.status !== "failed") void teachCorrectionsToValorBrain(session, vbSettings);
@@ -2306,7 +2334,9 @@ async function persistLegacyPendingSession(): Promise<StoredSession | null> {
   if (isProcessingSession) return null;
   isProcessingSession = true;
   try {
-    const session = await persistPendingMeetingSession(chrome.storage.local);
+    const session = await withSavedSessions(() =>
+      persistPendingMeetingSession(chrome.storage.local),
+    );
     void autoSendSavedSessionToValorBrain(session);
     return session;
   } catch {
@@ -2570,14 +2600,17 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           ...(appVersion ? { appVersion } : {}),
         };
         try {
-          savedSession = await saveSessionRecord(session);
-          await recordLastSession({
-            sessionId: savedSession.id,
-            savedAt: savedSession.savedAt,
-            title: sessionTitle(savedSession),
-            duration: savedSession.duration ?? 0,
-            transcriptEntries: savedSession.transcript.length,
-            empty: false,
+          savedSession = await withSavedSessions(async () => {
+            const saved = await saveSessionRecord(session);
+            await recordLastSession({
+              sessionId: saved.id,
+              savedAt: saved.savedAt,
+              title: sessionTitle(saved),
+              duration: saved.duration ?? 0,
+              transcriptEntries: saved.transcript.length,
+              empty: false,
+            });
+            return saved;
           });
         } catch (err) {
           console.error(`${LOG_PREFIX} Failed to save the session:`, err);
@@ -2588,14 +2621,16 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           );
         }
       } else {
-        await recordLastSession({
-          sessionId: null,
-          savedAt: Date.now(),
-          title: state.meetingId || "Reunião",
-          duration: getDuration(),
-          transcriptEntries: 0,
-          empty: true,
-        });
+        await withSavedSessions(() =>
+          recordLastSession({
+            sessionId: null,
+            savedAt: Date.now(),
+            title: state.meetingId || "Reunião",
+            duration: getDuration(),
+            transcriptEntries: 0,
+            empty: true,
+          }),
+        );
         notify(
           "empty",
           "Nada foi transcrito nesta gravação",
@@ -3072,23 +3107,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case "DISCARD_SESSION": {
-        if (typeof message.sessionId === "string" && message.sessionId) {
-          await deleteSavedMeetingSession(chrome.storage.local, message.sessionId);
-          const stored = (await chrome.storage.local.get(LAST_SESSION_KEY))[LAST_SESSION_KEY] as
-            | LastSessionResult
-            | undefined;
-          if (stored?.sessionId === message.sessionId) {
-            await chrome.storage.local.remove?.(LAST_SESSION_KEY);
+        await withSavedSessions(async () => {
+          if (typeof message.sessionId === "string" && message.sessionId) {
+            await deleteSavedMeetingSession(chrome.storage.local, message.sessionId);
+            const stored = (await chrome.storage.local.get(LAST_SESSION_KEY))[LAST_SESSION_KEY] as
+              | LastSessionResult
+              | undefined;
+            if (stored?.sessionId === message.sessionId) {
+              await chrome.storage.local.remove?.(LAST_SESSION_KEY);
+            }
+          } else {
+            await discardPendingMeetingSession(chrome.storage.local);
           }
-        } else {
-          await discardPendingMeetingSession(chrome.storage.local);
-        }
+        });
         sendResponse({ success: true });
         return;
       }
 
       case "CLEAR_LAST_SESSION": {
-        await chrome.storage.local.remove?.(LAST_SESSION_KEY);
+        await withSavedSessions(async () => chrome.storage.local.remove?.(LAST_SESSION_KEY));
         sendResponse({ success: true });
         return;
       }
@@ -3108,7 +3145,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       case "DELETE_SAVED_SESSION": {
-        await deleteSavedMeetingSession(chrome.storage.local, message.sessionId);
+        await withSavedSessions(() =>
+          deleteSavedMeetingSession(chrome.storage.local, message.sessionId),
+        );
         sendResponse({ success: true });
         return;
       }
@@ -3139,10 +3178,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ? { status: "sent", at: Date.now(), docRef: result.docRef }
           : { status: "failed", at: Date.now(), error: result.error };
         // Read it again: during the request it may have been deleted or had its review undone.
-        const latest = await getSavedMeetingSession(chrome.storage.local, session.id);
-        const delivered = latest ? deliveredStatus(vb, session, latest) : vb;
-        if (latest) await saveSessionRecord({ ...latest, vb: delivered });
-        await patchLastSession(session.id, { vb: delivered });
+        await withSavedSessions(async () => {
+          const latest = await getSavedMeetingSession(chrome.storage.local, session.id);
+          const delivered = latest ? deliveredStatus(vb, session, latest) : vb;
+          if (latest) await saveSessionRecord({ ...latest, vb: delivered });
+          await patchLastSession(session.id, { vb: delivered });
+        });
         if (result.ok) void teachCorrectionsToValorBrain(session, vbSettings);
         sendResponse(result);
         return;
@@ -3153,31 +3194,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // saved meeting. ValorBrain gets them when the user sends it again:
         // until then a meeting already sent is "stale" there (and nothing
         // resends it by itself).
-        const session =
-          typeof message.sessionId === "string"
-            ? await getSavedMeetingSession(chrome.storage.local, message.sessionId)
-            : null;
-        const report = readConsolidationReport(session?.consolidation);
-        if (!session || !report?.original) {
-          sendResponse({ success: false, error: "Esta reunião não tem revisão para desfazer." });
-          return;
-        }
-        const { original, ...review } = report;
-        const restored = await saveSessionRecord({
-          ...session,
-          ...original,
-          consolidation: { ...review, undone: true },
-          ...(session.vb?.status === "sent"
-            ? { vb: { ...session.vb, status: "stale" as const, at: Date.now() } }
-            : {}),
+        const restored = await withSavedSessions(async () => {
+          const session =
+            typeof message.sessionId === "string"
+              ? await getSavedMeetingSession(chrome.storage.local, message.sessionId)
+              : null;
+          const report = readConsolidationReport(session?.consolidation);
+          if (!session || !report?.original) return null;
+          const { original, ...review } = report;
+          const saved = await saveSessionRecord({
+            ...session,
+            ...original,
+            consolidation: { ...review, undone: true },
+            ...(session.vb?.status === "sent"
+              ? { vb: { ...session.vb, status: "stale" as const, at: Date.now() } }
+              : {}),
+          });
+          // The title comes from the first topic, which the review may have dropped;
+          // the popup's card also says when ValorBrain holds the reviewed copy.
+          await patchLastSession(saved.id, {
+            title: sessionTitle(saved),
+            ...(saved.vb ? { vb: saved.vb } : {}),
+          });
+          return saved;
         });
-        // The title comes from the first topic, which the review may have dropped;
-        // the popup's card also says when ValorBrain holds the reviewed copy.
-        await patchLastSession(restored.id, {
-          title: sessionTitle(restored),
-          ...(restored.vb ? { vb: restored.vb } : {}),
-        });
-        sendResponse({ success: true, session: restored });
+        sendResponse(
+          restored
+            ? { success: true, session: restored }
+            : { success: false, error: "Esta reunião não tem revisão para desfazer." },
+        );
         return;
       }
 

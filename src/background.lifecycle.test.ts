@@ -54,12 +54,25 @@ function toKeyList(keys: string | string[] | AnyRecord | null | undefined, store
   return Object.keys(keys ?? store);
 }
 
+/**
+ * While set, a read of a saved meeting takes its copy at once and returns it
+ * only when this settles, as when two changes overlap.
+ */
+let savedReadGate: Promise<void> | null = null;
+let heldSavedReads = 0;
+
 function createStorageArea(store: AnyRecord) {
   return {
     async get(keys?: string | string[] | AnyRecord | null) {
       const out: AnyRecord = {};
-      for (const key of toKeyList(keys, store)) {
+      const list = toKeyList(keys, store);
+      for (const key of list) {
         if (key in store) out[key] = structuredClone(store[key]);
+      }
+      if (savedReadGate && list.some((key) => key.startsWith("savedSession:"))) {
+        heldSavedReads += 1;
+        await savedReadGate;
+        heldSavedReads -= 1;
       }
       return out;
     },
@@ -1140,6 +1153,55 @@ test("a review undone during the automatic upload leaves the meeting out of date
   } finally {
     storeGate = null;
     release();
+    summaryResponse = DEFAULT_SUMMARY;
+    consolidationContent = "{}";
+  }
+});
+
+test("an undo and a delivery's save that overlap both stay on the meeting", async () => {
+  summaryResponse = SALES_CALL_SUMMARY;
+  consolidationContent = JSON.stringify({
+    decisions: [{ keep: "D3" }],
+    topics: [{ keep: "T1", same: ["T2"] }],
+  });
+  let releaseUpload = () => {};
+  let releaseReads = () => {};
+  storeGate = new Promise((resolve) => (releaseUpload = resolve));
+  try {
+    const saved = await savedAfter(await recordAndStop("stream-14"));
+    await waitFor(
+      () => fetchCalls.some((c) => c.url.endsWith("/api/v1/memory/store")),
+      "upload under way",
+    );
+    // The upload ends: the delivery reads the meeting again to save its result…
+    savedReadGate = new Promise((resolve) => (releaseReads = resolve));
+    storeGate = null;
+    releaseUpload();
+    await waitFor(() => heldSavedReads === 1, "the delivery reading the meeting");
+    // …while the side panel undoes the review of the same meeting.
+    const undo = sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    savedReadGate = null;
+    releaseReads();
+    assert.equal((await undo).success, true);
+    await waitFor(
+      () => localStore.lastSessionResult?.vb?.status === "stale",
+      "both changes recorded",
+    );
+
+    // Neither change lost the other: the lists are back and the delivery is recorded.
+    const stored = localStore[`savedSession:${saved.id}`];
+    assert.equal(stored.consolidation.undone, true);
+    assert.equal(stored.decisions.length, 3);
+    assert.equal(stored.vb.status, "stale");
+    const listed = (localStore.savedSessionIndex as AnyRecord[]).find((s) => s.id === saved.id)!;
+    assert.equal(listed.decisions.length, 3);
+    assert.equal(listed.vb.status, "stale");
+  } finally {
+    savedReadGate = null;
+    releaseReads();
+    storeGate = null;
+    releaseUpload();
     summaryResponse = DEFAULT_SUMMARY;
     consolidationContent = "{}";
   }
