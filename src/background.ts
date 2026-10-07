@@ -2209,6 +2209,21 @@ async function saveSessionRecord(session: StoredSession): Promise<StoredSession>
   }
 }
 
+/**
+ * The delivery status to store once `sent` reached ValorBrain, given the
+ * session as it is now (`latest`): a review undone during the request leaves
+ * the memory with the reviewed record, so it is out of date ("stale") at once.
+ */
+function deliveredStatus(
+  vb: VbDeliveryStatus,
+  sent: StoredSession,
+  latest: StoredSession,
+): VbDeliveryStatus {
+  return vb.status === "sent" && latest.consolidation?.undone && !sent.consolidation?.undone
+    ? { ...vb, status: "stale" }
+    : vb;
+}
+
 /** Sends a saved session to ValorBrain and records the outcome everywhere. */
 async function deliverSessionToValorBrain(
   session: StoredSession,
@@ -2223,7 +2238,9 @@ async function deliverSessionToValorBrain(
 
   // Re-persist only if the session still exists (the user may have deleted it).
   const stillSaved = await getSavedMeetingSession(chrome.storage.local, session.id);
-  if (stillSaved) await saveSessionRecord({ ...stillSaved, vb });
+  if (stillSaved) {
+    await saveSessionRecord({ ...stillSaved, vb: deliveredStatus(vb, session, stillSaved) });
+  }
   await patchLastSession(session.id, { vb });
 
   if (!result.ok) {
@@ -3113,7 +3130,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           : { status: "failed", at: Date.now(), error: result.error };
         // Read it again: during the request it may have been deleted or had its review undone.
         const latest = await getSavedMeetingSession(chrome.storage.local, session.id);
-        if (latest) await saveSessionRecord({ ...latest, vb });
+        if (latest)
+          await saveSessionRecord({ ...latest, vb: deliveredStatus(vb, session, latest) });
         await patchLastSession(session.id, { vb });
         if (result.ok) void teachCorrectionsToValorBrain(session, vbSettings);
         sendResponse(result);
@@ -3122,7 +3140,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       case "UNDO_RECORD_REVIEW": {
         // The side panel puts back the lists the model's review changed in a
-        // saved meeting. ValorBrain gets them when the user sends it again.
+        // saved meeting. ValorBrain gets them when the user sends it again:
+        // until then a meeting already sent is "stale" there (and nothing
+        // resends it by itself).
         const session =
           typeof message.sessionId === "string"
             ? await getSavedMeetingSession(chrome.storage.local, message.sessionId)
@@ -3137,6 +3157,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ...session,
           ...original,
           consolidation: { ...review, undone: true },
+          ...(session.vb?.status === "sent"
+            ? { vb: { ...session.vb, status: "stale" as const, at: Date.now() } }
+            : {}),
         });
         // The title comes from the first topic, which the review may have dropped.
         await patchLastSession(restored.id, { title: sessionTitle(restored) });

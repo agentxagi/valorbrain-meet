@@ -616,6 +616,8 @@ function vbChip(session: State): string {
     return `<span class="vb-chip vb-chip--success">${icon("checkCircle")}No ValorBrain</span>`;
   if (vb?.status === "failed")
     return `<span class="vb-chip vb-chip--error">${icon("alertCircle")}Envio falhou</span>`;
+  if (vb?.status === "stale")
+    return `<span class="vb-chip vb-chip--warning">${icon("alertTriangle")}Desatualizado no ValorBrain</span>`;
   return `<span class="vb-chip vb-chip--neutral">Só neste navegador</span>`;
 }
 
@@ -644,6 +646,8 @@ async function renderHistory() {
         plural(session.actionItems?.length ?? 0, "ação", "ações"),
       ].filter(Boolean);
       const sent = session.vb?.status === "sent";
+      // Sent before, even if out of date since: the button sends it again.
+      const resend = sent || session.vb?.status === "stale";
       return `<article class="vb-card db-session" data-session="${escapeHtml(session.id || "")}">
         <div class="db-session-head">
           <div>
@@ -656,7 +660,7 @@ async function renderHistory() {
         ${session.vb?.status === "failed" && session.vb.error ? `<p class="db-session-error">${escapeHtml(session.vb.error)}</p>` : ""}
         <div class="db-session-actions">
           <button type="button" class="vb-btn vb-btn--sm" data-act="open">${icon("fileText")}Abrir</button>
-          <button type="button" class="vb-btn vb-btn--sm${sent ? "" : " vb-btn--primary"}" data-act="send">${icon("cloudUpload")}${sent ? "Reenviar" : "Enviar ao ValorBrain"}</button>
+          <button type="button" class="vb-btn vb-btn--sm${sent ? "" : " vb-btn--primary"}" data-act="send">${icon("cloudUpload")}${resend ? "Reenviar" : "Enviar ao ValorBrain"}</button>
           <button type="button" class="vb-btn vb-btn--sm" data-act="download">${icon("download")}.md</button>
           <button type="button" class="vb-btn vb-btn--sm vb-btn--ghost" data-act="delete" aria-label="Excluir esta reunião">${icon("trash")}</button>
         </div>
@@ -740,8 +744,9 @@ async function undoRecordReview(button: HTMLButtonElement) {
     if (viewed?.id === sessionId) viewed = result.session as State;
     renderAll();
     // The memory has the reviewed record until the meeting is sent again.
+    const sentBefore = ["sent", "stale"].includes(result.session.vb?.status);
     toast(
-      `Use ${result.session.vb?.status === "sent" ? "Reenviar" : "Enviar ao ValorBrain"} no Histórico para atualizar a memória.`,
+      `Use ${sentBefore ? "Reenviar" : "Enviar ao ValorBrain"} no Histórico para atualizar a memória.`,
     );
   } catch (err) {
     toast(`Não consegui desfazer a revisão: ${(err as Error)?.message || err}`, "error");
@@ -978,10 +983,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     viewed = null;
     renderAll();
   });
-  $<HTMLButtonElement>("db-undo-review").addEventListener(
-    "click",
-    (event) => void undoRecordReview(event.currentTarget as HTMLButtonElement),
-  );
+  $<HTMLButtonElement>("db-undo-review").addEventListener("click", (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    // A dialog of the page, as for deleting a meeting.
+    const dialog = $<HTMLDialogElement>("db-undo-dialog");
+    dialog.returnValue = "";
+    dialog.showModal();
+    dialog.addEventListener(
+      "close",
+      () => {
+        if (dialog.returnValue === "confirm") void undoRecordReview(button);
+      },
+      { once: true },
+    );
+  });
   $("db-copy-summary").addEventListener("click", () => {
     const summary = current()?.summary?.trim();
     if (summary) void copyText(summary);

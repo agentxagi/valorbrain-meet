@@ -321,6 +321,19 @@
       </form>
     </dialog>
 
+    <dialog id="db-undo-dialog" class="db-dialog" aria-labelledby="db-undo-title">
+      <form method="dialog">
+        <h2 id="db-undo-title" class="db-dialog-title">Desfazer a revisão do registro?</h2>
+        <p class="vb-muted">As listas voltam a ter os itens de antes da revisão.</p>
+        <div class="db-dialog-actions">
+          <button class="vb-btn" value="cancel" type="submit">Cancelar</button>
+          <button class="vb-btn vb-btn--primary" value="confirm" type="submit">
+            Desfazer revisão
+          </button>
+        </div>
+      </form>
+    </dialog>
+
     <div id="db-toast" class="vb-toast" role="status" aria-live="polite"></div>
     <script type="module" src="dashboard.ts"></script>
   </body>

@@ -146,7 +146,8 @@ export interface MeetingStats {
 
 /** Outcome of delivering a saved session to ValorBrain. */
 export interface VbDeliveryStatus {
-  status: "sent" | "failed" | "skipped";
+  /** "stale": it was sent, but its record review was undone afterwards. */
+  status: "sent" | "failed" | "skipped" | "stale";
   at: number;
   docRef?: string | null;
   error?: string;

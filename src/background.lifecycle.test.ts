@@ -1018,6 +1018,9 @@ test("the record is reviewed by the model, checked and merged before it is saved
     await waitFor(() => deliveries().length > sentBefore, "resend under way");
     const undo = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
     assert.equal(undo.success, true, JSON.stringify(undo));
+    // It was sent: the memory now has an outdated copy, which nothing sends again by itself.
+    assert.equal(undo.session.vb.status, "stale");
+    assert.equal(undo.session.vb.docRef, "meetings/reuniao.md");
     storeGate = null;
     release();
     assert.equal((await resend).ok, true);
@@ -1034,9 +1037,18 @@ test("the record is reviewed by the model, checked and merged before it is saved
     assert.equal(restored.consolidation.undone, true);
     assert.equal(restored.consolidation.original, undefined);
     assert.deepEqual(restored.consolidation.after, saved.consolidation.after);
-    assert.equal(restored.vb.status, "sent");
+    // The resend under way carried the reviewed record: still out of date.
+    assert.equal(restored.vb.status, "stale");
     const listed = (localStore.savedSessionIndex as AnyRecord[]).find((s) => s.id === saved.id)!;
     assert.equal(listed.decisions.length, 3, "the history shows the lists put back");
+    assert.equal(listed.vb.status, "stale");
+    assert.equal(deliveries().length, sentBefore + 1, "nothing was sent by itself");
+
+    // Sent again by the user: the memory gets the lists put back and is up to date.
+    const sentAgain = await sendMessage({ type: "VB_SEND_SESSION", sessionId: saved.id });
+    assert.equal(sentAgain.ok, true);
+    assert.equal(localStore[key].vb.status, "sent");
+    assert.match(JSON.parse(String(deliveries().at(-1)!.init.body)).content, /metodologia/);
     // Nothing is left to undo.
     const again = await sendMessage({ type: "UNDO_RECORD_REVIEW", sessionId: saved.id });
     assert.equal(again.success, false);
