@@ -2519,12 +2519,13 @@ async function runUpdateCheck(force: boolean): Promise<void> {
       const status = await checkForUpdate({ currentVersion, now, previous: stored });
       if (!status.ok) console.debug(`${LOG_PREFIX} update check failed: ${status.error}`);
       await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: status });
-    } else if (
-      stored?.available &&
-      compareVersions(stored.latestVersion ?? "", currentVersion) <= 0
-    ) {
-      // Updated since the last check: the notice was about this very version.
-      await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: { ...stored, available: false } });
+    } else if (stored?.latestVersion) {
+      // The installed version may have changed since (an update, or going
+      // back): the flag follows it without asking the site again.
+      const available = compareVersions(stored.latestVersion, currentVersion) > 0;
+      if (available !== stored.available) {
+        await chrome.storage.local.set({ [UPDATE_STATUS_KEY]: { ...stored, available } });
+      }
     }
   } catch (err) {
     console.warn(`${LOG_PREFIX} update check skipped`, err);

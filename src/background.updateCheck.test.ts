@@ -225,3 +225,11 @@ test("after updating, the notice about the version just installed goes away", as
   assert.equal(latestCalls(), before, "a recent check is not repeated");
   assert.equal(localStore.updateStatus.latestVersion, "2.5.0");
 });
+
+test("going back to an older version brings the notice back", async () => {
+  installedVersion = "2.4.0";
+  const before = latestCalls();
+  for (const listener of installedListeners) await listener();
+  await waitFor(() => localStore.updateStatus?.available === true, "the flag set again");
+  assert.equal(latestCalls(), before, "from the stored result, without asking the site");
+});
