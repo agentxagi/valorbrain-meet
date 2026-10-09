@@ -10,6 +10,7 @@ import { probeChat, requestChatCompletion, type ChatRequest } from "./providerCl
 import {
   describeProviderError,
   isRetryableProviderError,
+  ProviderConfigError,
   ProviderHttpError,
   ProviderPayloadError,
   ProviderRefusalError,
@@ -221,6 +222,75 @@ test("a cut answer, a refusal and an empty answer are explained", async () => {
       !(err instanceof ProviderRefusalError) &&
       /resposta vazia/.test(err.message),
   );
+});
+
+test("a 2xx answer that is not from the Messages API is a payload error, never a TypeError", async () => {
+  const answering = (body: string, contentType: string) =>
+    (async () =>
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": contentType },
+      })) as typeof fetch;
+  for (const fetchImpl of [
+    // Another API at the base URL (an OpenAI-compatible one, say).
+    answering(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), "application/json"),
+    answering("<html>proxy error</html>", "application/json"),
+    answering("<html>proxy error</html>", "text/html"),
+  ]) {
+    const err = await requestClaudeMessage(CLAUDE, "sk-ant-test", chat(fetchImpl)).catch(
+      (e: unknown) => e,
+    );
+    assert.ok(err instanceof ProviderPayloadError, String(err));
+    assert.equal(
+      err.message,
+      "O provedor de resumo devolveu uma resposta que não é da API do Claude.",
+    );
+  }
+});
+
+test("without a key, a Claude request stops before reaching the API", async () => {
+  let called = false;
+  const fetchImpl = (async () => {
+    called = true;
+    return new Response(JSON.stringify(claudeAnswer()), {
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  // A custom block pointed at the Claude API does not ask for a key in Settings.
+  const custom: ProviderConfig = {
+    profile: "custom",
+    baseUrl: "https://api.anthropic.com/v1",
+    apiKey: "",
+    model: "claude-haiku-5-5",
+  };
+  for (const [config, key] of [
+    [CLAUDE, null],
+    [CLAUDE, ""],
+    [custom, null],
+  ] as const) {
+    const err = await requestChatCompletion(config, key, chat(fetchImpl)).catch((e: unknown) => e);
+    assert.ok(err instanceof ProviderConfigError, String(err));
+    assert.equal(
+      err.message,
+      "Falta a chave de API do Claude. Informe-a em Configurações → Resumo.",
+    );
+    assert.equal(describeProviderError("summary", err).kind, "config");
+  }
+  assert.equal(called, false);
+});
+
+test("the key typed in Settings is the only credential sent", async () => {
+  const before = process.env.ANTHROPIC_AUTH_TOKEN;
+  process.env.ANTHROPIC_AUTH_TOKEN = "token-from-the-environment";
+  try {
+    const calls: Call[] = [];
+    await requestClaudeMessage(CLAUDE, "sk-ant-test", chat(fakeFetch(200, claudeAnswer(), calls)));
+    assert.equal(calls[0].headers.get("x-api-key"), "sk-ant-test");
+    assert.equal(calls[0].headers.get("authorization"), null);
+  } finally {
+    if (before === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
+    else process.env.ANTHROPIC_AUTH_TOKEN = before;
+  }
 });
 
 test("API errors become the pipeline's own errors (status, code, retry)", async () => {

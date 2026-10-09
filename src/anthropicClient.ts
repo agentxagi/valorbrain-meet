@@ -12,7 +12,12 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { ProviderHttpError, ProviderPayloadError, ProviderRefusalError } from "./providerErrors";
+import {
+  ProviderConfigError,
+  ProviderHttpError,
+  ProviderPayloadError,
+  ProviderRefusalError,
+} from "./providerErrors";
 import type { ChatRequest, ChatResult } from "./providerClient";
 import { anySignal } from "./utils/abort";
 import type { ProviderConfig } from "./utils/providerSettings";
@@ -27,6 +32,9 @@ export const CLAUDE_MIN_MAX_TOKENS = 16_000;
 
 /** Server-side refusal fallback ("default" routing picks the fallback model). */
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+
+const NOT_A_CLAUDE_ANSWER =
+  "O provedor de resumo devolveu uma resposta que não é da API do Claude.";
 
 /** True for the Anthropic profile or any block pointed at api.anthropic.com. */
 export function isAnthropicProvider(config: Pick<ProviderConfig, "profile" | "baseUrl">): boolean {
@@ -77,6 +85,8 @@ function toProviderError(err: unknown, url: string, caller: AbortSignal | undefi
     timedOut.name = "TimeoutError";
     return timedOut;
   }
+  // A 2xx answer declared as JSON that is not JSON.
+  if (err instanceof SyntaxError) return new ProviderPayloadError(NOT_A_CLAUDE_ANSWER);
   // A network failure, as fetch reports it (retried by the queues).
   if (err instanceof Anthropic.APIConnectionError) return new TypeError(err.message);
   if (err instanceof Anthropic.APIError && typeof err.status === "number") {
@@ -94,12 +104,20 @@ export async function requestClaudeMessage(
   apiKey: string | null,
   request: ChatRequest,
 ): Promise<ChatResult> {
+  // A "custom" block pointed at api.anthropic.com does not ask for a key.
+  if (!apiKey) {
+    throw new ProviderConfigError(
+      "Falta a chave de API do Claude. Informe-a em Configurações → Resumo.",
+    );
+  }
   const baseURL = sdkBaseUrl(config.baseUrl);
   const url = `${baseURL}/v1/messages`;
   // Whole milliseconds: the SDK refuses any other timeout.
   const timeout = Math.max(1, Math.floor(request.timeoutMs ?? 60_000));
   const client = new Anthropic({
-    apiKey: apiKey ?? "",
+    apiKey,
+    // Only the key above: no credentials from the environment (ANTHROPIC_AUTH_TOKEN).
+    authToken: null,
     baseURL,
     // The key is the user's own, typed in Settings and kept in the extension.
     dangerouslyAllowBrowser: true,
@@ -149,6 +167,9 @@ export async function requestClaudeMessage(
     throw toProviderError(err, url, request.signal);
   }
 
+  // Whatever answered 2xx at the base URL may not be the Messages API: the
+  // SDK hands over any body as it came (text, or nothing at all).
+  if (!Array.isArray(response?.content)) throw new ProviderPayloadError(NOT_A_CLAUDE_ANSWER);
   if (response.stop_reason === "refusal") {
     const category = (response as { stop_details?: { category?: string | null } | null })
       .stop_details?.category;
