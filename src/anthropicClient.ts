@@ -36,14 +36,18 @@ const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const NOT_A_CLAUDE_ANSWER =
   "O provedor de resumo devolveu uma resposta que não é da API do Claude.";
 
-/** True for the Anthropic profile or any block pointed at api.anthropic.com. */
-export function isAnthropicProvider(config: Pick<ProviderConfig, "profile" | "baseUrl">): boolean {
-  if (config.profile === "anthropic") return true;
+/** True when `baseUrl` is the Claude API itself, not a proxy or a mock in front of it. */
+function isClaudeApi(baseUrl: string): boolean {
   try {
-    return new URL(config.baseUrl).host === "api.anthropic.com";
+    return new URL(baseUrl).host === "api.anthropic.com";
   } catch {
     return false;
   }
+}
+
+/** True for the Anthropic profile or any block pointed at api.anthropic.com. */
+export function isAnthropicProvider(config: Pick<ProviderConfig, "profile" | "baseUrl">): boolean {
+  return config.profile === "anthropic" || isClaudeApi(config.baseUrl);
 }
 
 /** Models that accept `fallbacks: "default"` on the Claude API. */
@@ -153,16 +157,18 @@ export async function requestClaudeMessage(
 
   let response: Anthropic.Message | Anthropic.Beta.BetaMessage;
   try {
-    response = acceptsFallback(config.model)
-      ? await client.beta.messages.create(
-          {
-            ...params,
-            betas: [FALLBACK_BETA],
-            fallbacks: "default",
-          } as Anthropic.Beta.MessageCreateParamsNonStreaming,
-          options,
-        )
-      : await client.messages.create(params, options);
+    // The fallback is the Claude API's own: elsewhere the beta may be refused.
+    response =
+      isClaudeApi(baseURL) && acceptsFallback(config.model)
+        ? await client.beta.messages.create(
+            {
+              ...params,
+              betas: [FALLBACK_BETA],
+              fallbacks: "default",
+            } as Anthropic.Beta.MessageCreateParamsNonStreaming,
+            options,
+          )
+        : await client.messages.create(params, options);
   } catch (err) {
     throw toProviderError(err, url, request.signal);
   }

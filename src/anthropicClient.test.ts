@@ -167,6 +167,19 @@ test("models without the refusal fallback or effort get neither", async () => {
   assert.equal("fallbacks" in older[0].body, false);
 });
 
+test("the refusal fallback is asked only of the Claude API itself", async () => {
+  const calls: Call[] = [];
+  await requestClaudeMessage(
+    { ...CLAUDE, baseUrl: "http://127.0.0.1:8080" },
+    "sk-ant-test",
+    chat(fakeFetch(200, claudeAnswer(), calls)),
+  );
+  assert.equal(calls[0].url, "http://127.0.0.1:8080/v1/messages");
+  assert.equal(calls[0].headers.get("anthropic-beta"), null);
+  assert.equal("fallbacks" in calls[0].body, false);
+  assert.deepEqual(calls[0].body.output_config, { effort: "low" });
+});
+
 test("a base URL ending in /v1 is not doubled", async () => {
   const calls: Call[] = [];
   await requestClaudeMessage(
