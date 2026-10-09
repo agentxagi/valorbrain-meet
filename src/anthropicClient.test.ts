@@ -341,6 +341,87 @@ test("a network failure and an abort keep their meaning", async () => {
   assert.equal(aborted.name, "AbortError");
 });
 
+/**
+ * A fetch that never finishes: it waits for the headers forever or, with
+ * `headers`, answers 200 at once and never sends the body. Like a real fetch,
+ * it fails once its signal aborts.
+ */
+function stalledFetch(headers: boolean, called: () => void = () => {}): typeof fetch {
+  return ((_input: RequestInfo | URL, init?: RequestInit) => {
+    called();
+    const signal = init!.signal!;
+    if (!headers) {
+      return new Promise<Response>((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+      );
+    }
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+      },
+    });
+    return Promise.resolve(
+      new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+    );
+  }) as typeof fetch;
+}
+
+/** Settles like `promise`, or with "still waiting" after `ms`. */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | "still waiting"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"still waiting">((resolve) => {
+    timer = setTimeout(resolve, ms, "still waiting");
+  });
+  try {
+    return await Promise.race([promise, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test("the timeout also covers reading the answer, not only its headers", async () => {
+  const started = Date.now();
+  const stalled = await within(
+    requestClaudeMessage(CLAUDE, "sk-ant-test", chat(stalledFetch(true), { timeoutMs: 200 })).catch(
+      (err: unknown) => err,
+    ),
+    3000,
+  );
+  assert.ok(stalled instanceof Error, String(stalled));
+  assert.equal(stalled.name, "TimeoutError");
+  assert.equal(isRetryableProviderError(stalled), true);
+  assert.ok(Date.now() - started < 2000, `${Date.now() - started} ms`);
+});
+
+test("the caller's abort while the request runs stays an abort, before or after the headers", async () => {
+  for (const headers of [false, true]) {
+    const caller = new AbortController();
+    let called!: () => void;
+    const fetchCalled = new Promise<void>((resolve) => (called = resolve));
+    const request = requestClaudeMessage(
+      CLAUDE,
+      "sk-ant-test",
+      chat(stalledFetch(headers, called), { signal: caller.signal }),
+    ).catch((err: unknown) => err);
+    await fetchCalled;
+    // Waiting for the headers, or reading the answer that never comes.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    caller.abort();
+    const aborted = await within(request, 3000);
+    assert.ok(aborted instanceof Error, `headers sent: ${headers}, ${String(aborted)}`);
+    assert.equal(aborted.name, "AbortError", `headers sent: ${headers}`);
+  }
+});
+
+test("a timeout with a fraction of a millisecond still works (the SDK takes whole ones)", async () => {
+  const result = await requestClaudeMessage(
+    CLAUDE,
+    "sk-ant-test",
+    chat(fakeFetch(200, claudeAnswer(), []), { timeoutMs: 1500.7 }),
+  );
+  assert.equal(result.content, '{"summary": "ok"}');
+});
+
 test("the pipeline's chat call and the connection test reach Claude", async () => {
   const calls: Call[] = [];
   const result = await requestChatCompletion(

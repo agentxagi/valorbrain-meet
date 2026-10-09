@@ -14,6 +14,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ProviderHttpError, ProviderPayloadError, ProviderRefusalError } from "./providerErrors";
 import type { ChatRequest, ChatResult } from "./providerClient";
+import { anySignal } from "./utils/abort";
 import type { ProviderConfig } from "./utils/providerSettings";
 
 export const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
@@ -55,14 +56,23 @@ function sdkBaseUrl(baseUrl: string): string {
   return (trimmed || ANTHROPIC_BASE_URL).replace(/\/v1$/, "");
 }
 
-/** Turns an SDK failure into the error types the service worker already handles. */
-function toProviderError(err: unknown, url: string): unknown {
-  if (err instanceof Anthropic.APIUserAbortError) {
+/**
+ * Turns an SDK failure into the error types the service worker already
+ * handles. `caller` is the request's own signal: only it makes a cut request
+ * an abort, anything else that cut it is the deadline.
+ */
+function toProviderError(err: unknown, url: string, caller: AbortSignal | undefined): unknown {
+  const cut =
+    err instanceof Anthropic.APIUserAbortError ||
+    err instanceof Anthropic.APIConnectionTimeoutError ||
+    // The SDK does not wrap an abort while the answer is read: it comes as fetch raised it.
+    (err instanceof Error && err.name === "AbortError");
+  if (cut && caller?.aborted) {
     const aborted = new Error("The Claude request was cut short");
     aborted.name = "AbortError";
     return aborted;
   }
-  if (err instanceof Anthropic.APIConnectionTimeoutError) {
+  if (cut) {
     const timedOut = new Error("The Claude request timed out");
     timedOut.name = "TimeoutError";
     return timedOut;
@@ -86,7 +96,8 @@ export async function requestClaudeMessage(
 ): Promise<ChatResult> {
   const baseURL = sdkBaseUrl(config.baseUrl);
   const url = `${baseURL}/v1/messages`;
-  const timeout = request.timeoutMs ?? 60_000;
+  // Whole milliseconds: the SDK refuses any other timeout.
+  const timeout = Math.max(1, Math.floor(request.timeoutMs ?? 60_000));
   const client = new Anthropic({
     apiKey: apiKey ?? "",
     baseURL,
@@ -115,7 +126,12 @@ export async function requestClaudeMessage(
     ...(system ? { system } : {}),
     ...(acceptsEffort(config.model) ? { output_config: { effort: request.effort ?? "low" } } : {}),
   };
-  const options = { timeout, ...(request.signal ? { signal: request.signal } : {}) };
+  // The SDK's own timeout ends when the headers arrive: this deadline also
+  // covers reading the answer, and the caller's signal still cuts it short.
+  const options = {
+    timeout,
+    signal: anySignal([...(request.signal ? [request.signal] : []), AbortSignal.timeout(timeout)]),
+  };
 
   let response: Anthropic.Message | Anthropic.Beta.BetaMessage;
   try {
@@ -130,7 +146,7 @@ export async function requestClaudeMessage(
         )
       : await client.messages.create(params, options);
   } catch (err) {
-    throw toProviderError(err, url);
+    throw toProviderError(err, url, request.signal);
   }
 
   if (response.stop_reason === "refusal") {
