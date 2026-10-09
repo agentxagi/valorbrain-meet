@@ -163,6 +163,9 @@ function send(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+/** The decision the mocked record review drops: gone from the delivery only if the review applied. */
+const DROPPED_DECISION = "Incluir o Replit e o Supabase na conta";
+
 // More than four items: the model reviews the record before it is saved.
 const SUMMARY = {
   summary:
@@ -172,7 +175,7 @@ const SUMMARY = {
   currentTopic: "Parceria com a Resend",
   decisions: [
     { text: "Conversar de novo com a Ana na semana que vem", classification: "finalized" },
-    { text: "Incluir o Replit e o Supabase na conta", classification: "tentative" },
+    { text: DROPPED_DECISION, classification: "tentative" },
   ],
   actionItems: [{ task: "Marcar a próxima conversa", owner: "Ana" }],
   sentiment: "positive",
@@ -185,9 +188,12 @@ const SUMMARY = {
 function modelAnswer(system, user) {
   if (/revisa a grafia/.test(system)) return { correcoes: [{ de: "Rapplet", para: "Replit" }] };
   if (!/revisa o registro/.test(system)) return SUMMARY;
-  // The record review keeps every item as it is.
+  // The record review keeps every item but the tentative decision.
   seen.reviews += 1;
-  const ids = (prefix) => user.match(new RegExp(`^${prefix}\\d+`, "gm")) ?? [];
+  const ids = (prefix) =>
+    [...user.matchAll(new RegExp(`^(${prefix}\\d+)(.*)$`, "gm"))]
+      .filter(([, , text]) => !text.includes(DROPPED_DECISION))
+      .map(([, id]) => id);
   return { decisions: ids("D"), actionItems: ids("A"), topics: ids("T"), openPoints: ids("P") };
 }
 
@@ -503,8 +509,10 @@ try {
     /Grafia revisada[^\n]*/.exec(stored)?.[0] ?? "",
   );
   check(
-    "Meet: the model reviewed the record once, before it was delivered",
-    seen.reviews === 1 && /## Decisões\n- Conversar de novo com a Ana/.test(stored),
+    "Meet: the model's review of the record was applied before delivery (one decision dropped)",
+    seen.reviews === 1 &&
+      /## Decisões\n- Conversar de novo com a Ana/.test(stored) &&
+      !stored.includes(DROPPED_DECISION),
     `${seen.reviews} review(s)`,
   );
   if (CLAUDE) {
