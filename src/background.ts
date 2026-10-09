@@ -99,6 +99,7 @@ import {
 } from "./vbClient";
 import {
   describeProviderError,
+  isAnthropicQuota,
   isRetryableProviderError,
   ProviderConfigError,
   ProviderHttpError,
@@ -336,7 +337,8 @@ let isProcessingSession = false;
 let summaryInFlight: Promise<void> | null = null;
 /**
  * Set when the summary provider says its quota is exhausted: no summary or
- * spelling request is sent to the same provider/key until it renews.
+ * spelling request is sent to the same provider/key until it renews (an
+ * Anthropic quota: 30 minutes at most).
  */
 let summaryQuotaPause: { until: number; provider: string } | null = null;
 /** The recording (by its start time) already told that the model refused a stretch. */
@@ -366,9 +368,12 @@ function summaryQuotaExhausted(config: ProviderConfig, apiKey: string | null): b
 function pauseSummaryOnQuota(err: unknown, config: ProviderConfig, apiKey: string | null) {
   if (!(err instanceof ProviderHttpError)) return;
   if (describeProviderError("summary", err).kind !== "quota") return;
-  const resetAt = quotaResetAt(err.providerMessage);
+  const soon = Date.now() + 30 * 60_000;
+  const resetAt = quotaResetAt(err.providerMessage)?.getTime() ?? soon;
   summaryQuotaPause = {
-    until: resetAt ? resetAt.getTime() : Date.now() + 30 * 60_000,
+    // Credit added or a limit raised in the Claude Console lifts Anthropic's at
+    // once, whatever date its message names: ask again within 30 minutes.
+    until: isAnthropicQuota(err) ? Math.min(resetAt, soon) : resetAt,
     provider: providerKey(config, apiKey),
   };
 }

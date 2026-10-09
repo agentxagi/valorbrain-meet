@@ -119,6 +119,8 @@ let consolidationHangs = false;
  * (when a test sets the Claude profile). None by default.
  */
 let claudeRefuses: (system: string, user: string) => boolean = () => false;
+/** An HTTP error Claude answers to summary passes instead (none by default). */
+let claudeSummaryError: { status: number; body: unknown } | null = null;
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -180,6 +182,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
     // Claude's Messages API, as the official SDK calls it.
     const request = JSON.parse(String(init.body));
     const system = String(request.system ?? "");
+    if (claudeSummaryError && /motor de inteligência/.test(system)) {
+      return jsonResponse(claudeSummaryError.status, claudeSummaryError.body);
+    }
     const refused = claudeRefuses(system, String(request.messages?.[0]?.content ?? ""));
     const answer = /revisa a grafia/.test(system) ? correctionResponse : summaryResponse;
     return jsonResponse(200, {
@@ -1301,6 +1306,14 @@ async function withClaude(body: () => Promise<void>): Promise<void> {
     await body();
   } finally {
     claudeRefuses = () => false;
+    // A test that failed half-way leaves no recording running into the next ones.
+    if ((await sendMessage({ type: "GET_STATE" })).audioActive) {
+      await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+      await waitFor(
+        async () => (await sendMessage({ type: "GET_STATE" })).audioActive === false,
+        "the recording stopped",
+      );
+    }
     localStore["provider.summary"] = before;
   }
 }
@@ -1406,6 +1419,56 @@ test("a stretch Claude refuses to summarize is skipped, and the user is told onc
 
     claudeRefuses = () => false;
     await stopAndDeliver(savedBefore);
+  });
+});
+
+test("an Anthropic quota pauses the summary for 30 minutes at most, whatever date it names", async () => {
+  await withClaude(async () => {
+    const realNow = Date.now;
+    claudeSummaryError = {
+      status: 429,
+      body: {
+        type: "error",
+        error: {
+          type: "rate_limit_error",
+          message:
+            "Your organization has reached its monthly spend limit. You will regain access on 2099-01-01 at 00:00 UTC.",
+          details: { error_code: "enforced_spend_limit_reached" },
+        },
+      },
+    };
+    try {
+      fetchCalls.length = 0;
+      const savedBefore = await startRecording("stream-14");
+      await say("A primeira parte da reunião.", 1);
+      await sendMessage({ type: "FORCE_SUMMARY" });
+      const capped = await waitFor(async () => {
+        const s = await sendMessage({ type: "GET_FULL_STATE" });
+        return /limite mensal de gastos/.test(s.notice?.message ?? "") ? s : null;
+      }, "the spend cap explained");
+      assert.equal(capped.notice.severity, "warning");
+      assert.equal(fetchCalls.filter(isClaudeSummaryCall).length, 1);
+
+      // Credit added in the Console meanwhile: still paused after 29 minutes...
+      claudeSummaryError = null;
+      await say("A segunda parte da reunião.", 2);
+      Date.now = () => realNow() + 29 * 60_000;
+      await sendMessage({ type: "FORCE_SUMMARY" });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(fetchCalls.filter(isClaudeSummaryCall).length, 1, "still paused");
+
+      // ...asked again after 30, not in 2099.
+      Date.now = () => realNow() + 31 * 60_000;
+      const resumed = await summarizeNow(2);
+      assert.equal(resumed.summary, DEFAULT_SUMMARY.summary);
+      assert.doesNotMatch(resumed.notice?.message ?? "", /limite mensal/);
+
+      Date.now = realNow;
+      await stopAndDeliver(savedBefore);
+    } finally {
+      Date.now = realNow;
+      claudeSummaryError = null;
+    }
   });
 });
 

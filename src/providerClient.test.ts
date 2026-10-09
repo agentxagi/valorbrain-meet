@@ -10,6 +10,7 @@ import {
 } from "./providerClient.ts";
 import {
   describeProviderError,
+  isAnthropicQuota,
   isRetryableProviderError,
   ProviderConfigError,
   ProviderHttpError,
@@ -264,6 +265,7 @@ test("Anthropic's spend cap, usage limit and missing credit are a quota, never r
   const spendCap = anthropic(429, capError);
   assert.equal(spendCap.code, "enforced_spend_limit_reached");
   assert.equal(isRetryableProviderError(spendCap), false);
+  assert.equal(isAnthropicQuota(spendCap), true);
   const capped = describeProviderError("summary", spendCap);
   assert.equal(capped.kind, "quota");
   assert.match(
@@ -308,6 +310,7 @@ test("Anthropic's spend cap, usage limit and missing credit are a quota, never r
     ],
   ] as const) {
     assert.equal(isRetryableProviderError(err), false, err.message);
+    assert.equal(isAnthropicQuota(err), true, err.message);
     assert.deepEqual(describeProviderError("summary", err), {
       kind: "quota",
       retryable: false,
@@ -319,12 +322,14 @@ test("Anthropic's spend cap, usage limit and missing credit are a quota, never r
   const busy = anthropic(429, { type: "rate_limit_error", message: "Number of requests exceeded" });
   assert.equal(isRetryableProviderError(busy), true);
   assert.equal(describeProviderError("summary", busy).kind, "rateLimit");
+  assert.equal(isAnthropicQuota(busy), false);
   const elsewhere = new ProviderHttpError(
     402,
     JSON.stringify({ error: { code: 402, message: "Insufficient credits" } }),
     "https://openrouter.ai/api/v1/chat/completions",
   );
   assert.doesNotMatch(describeProviderError("summary", elsewhere).message, /Anthropic/);
+  assert.equal(isAnthropicQuota(elsewhere), false);
 });
 
 test("makeSilentWav produces a valid RIFF/WAVE header", async () => {

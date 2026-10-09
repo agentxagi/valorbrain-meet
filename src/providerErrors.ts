@@ -158,6 +158,14 @@ function anthropicQuotaMessage(err: ProviderHttpError): string | null {
   return null;
 }
 
+/**
+ * True for Anthropic's spend cap, usage limits and missing credit: the user
+ * can lift them at any moment in the Claude Console.
+ */
+export function isAnthropicQuota(err: unknown): boolean {
+  return err instanceof ProviderHttpError && anthropicQuotaMessage(err) !== null;
+}
+
 /** True for failures worth retrying (network hiccups, 429, 5xx, cold start). */
 export function isRetryableProviderError(err: unknown): boolean {
   if (err instanceof ProviderHttpError) {
