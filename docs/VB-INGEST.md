@@ -19,10 +19,13 @@ Salvar a reunião é uma gravação. Sem `scope`, o engine registra o cliente s�
 token emitido recebe 403 `insufficient_scope` em todo envio. Foi o que aconteceu até a 2.5.0.
 Por isso:
 
-- um cliente guardado sem `scope` (registrado até a 2.5.0) é trocado por um novo, porque o
-  engine recusa pedir mais do que o registro (`invalid_scope`);
-- o token emitido nunca passa do token que aprovou: aprovar com um token só de leitura dá
-  um token só de leitura, e a extensão recusa salvá-lo como conectado.
+- um cliente guardado sem `scope` (registrado até a 2.5.0) ou registrado em outro engine é
+  trocado por um novo, porque o engine recusa pedir mais do que o registro (`invalid_scope`);
+- o token emitido nunca passa do token colado na página de autorização. Se esse token só lê,
+  o engine recusa a aprovação com uma página de erro `invalid_scope` (HTTP 400). O Chrome
+  então encerra o fluxo sozinho ("Authorization page could not be loaded"), e a extensão diz
+  para aprovar com um token de leitura e escrita;
+- se um engine emitir mesmo assim um token sem escrita, a extensão não o salva como conectado.
 
 A base padrão é `https://valorbrain-api.valor.digital`. O token `vbm_` resolve o tenant no
 servidor, então o Tenant ID não é necessário.
