@@ -18,7 +18,7 @@ que não leva nada da reunião (veja [Aviso de versão nova](#aviso-de-versão-n
 | Nenhum: só o pedido do arquivo `latest.json`                      | meet.valorbra.in                            | Uma vez por dia, se **Avisar quando houver uma versão nova** estiver ligado (vem ligado)                                   |
 
 Com o **Whisper local**, o áudio não sai do computador. Com o **Whisper remoto** ou a
-**OpenAI**, o áudio vai para esse servidor. Leia a política do provedor que usar.
+**OpenAI**, o áudio vai para esse servidor. Leia a política do provedor que usar. Com o **Claude**, o texto da transcrição vai para a Anthropic (`api.anthropic.com`); pelos Termos Comerciais da Anthropic, ela não treina modelos com o conteúdo enviado pela API. A chave do Claude fica só neste navegador e só vai para `api.anthropic.com`.
 
 A captura só começa depois de um clique no ícone ou do atalho de gravação: o Chrome não
 deixa uma extensão gravar uma aba por conta própria. Enquanto grava, o ícone mostra **REC**
@@ -57,20 +57,20 @@ Apagar no navegador não apaga o que já foi para o ValorBrain.
 
 ## Permissões do Chrome
 
-| Permissão                                                                             | Para quê                                                           |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `tabCapture`, `offscreen`                                                             | Capturar e processar o áudio da aba da reunião                     |
-| Microfone (pedido uma vez, na página de configurações)                                | Incluir a sua voz na gravação                                      |
-| `tabs`                                                                                | Encontrar a aba da reunião e perceber quando você sai dela         |
-| `storage`, `unlimitedStorage`                                                         | Guardar reuniões e configurações neste navegador                   |
-| `sidePanel`                                                                           | Painel da reunião                                                  |
-| `notifications`                                                                       | Avisar quando a reunião foi salva, enviada ou deu erro             |
-| `contextMenus`                                                                        | "Gravar esta aba com o ValorBrain Meet" no menu do botão direito   |
-| `identity`                                                                            | Login do "Conectar com ValorBrain" (OAuth)                         |
-| Hosts `meet.google.com`, `api.openai.com`, `api.z.ai`, `*.valor.digital`, `localhost` | Página do Meet e provedores padrão                                 |
-| Host `meet.valorbra.in`                                                               | Ler o `latest.json` do aviso de versão nova                        |
-| Páginas `*.zoom.us/wc/*` e do Teams web (script de conteúdo, sem permissão de host)   | Ler nomes, quem fala e o microfone nas reuniões do Zoom e do Teams |
-| Outros hosts (opcional)                                                               | Pedidos ao salvar, só se você configurar outro endereço            |
+| Permissão                                                                                                  | Para quê                                                           |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `tabCapture`, `offscreen`                                                                                  | Capturar e processar o áudio da aba da reunião                     |
+| Microfone (pedido uma vez, na página de configurações)                                                     | Incluir a sua voz na gravação                                      |
+| `tabs`                                                                                                     | Encontrar a aba da reunião e perceber quando você sai dela         |
+| `storage`, `unlimitedStorage`                                                                              | Guardar reuniões e configurações neste navegador                   |
+| `sidePanel`                                                                                                | Painel da reunião                                                  |
+| `notifications`                                                                                            | Avisar quando a reunião foi salva, enviada ou deu erro             |
+| `contextMenus`                                                                                             | "Gravar esta aba com o ValorBrain Meet" no menu do botão direito   |
+| `identity`                                                                                                 | Login do "Conectar com ValorBrain" (OAuth)                         |
+| Hosts `meet.google.com`, `api.openai.com`, `api.z.ai`, `api.anthropic.com`, `*.valor.digital`, `localhost` | Página do Meet e provedores padrão                                 |
+| Host `meet.valorbra.in`                                                                                    | Ler o `latest.json` do aviso de versão nova                        |
+| Páginas `*.zoom.us/wc/*` e do Teams web (script de conteúdo, sem permissão de host)                        | Ler nomes, quem fala e o microfone nas reuniões do Zoom e do Teams |
+| Outros hosts (opcional)                                                                                    | Pedidos ao salvar, só se você configurar outro endereço            |
 
 ## Consentimento
 

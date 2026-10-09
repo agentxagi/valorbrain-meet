@@ -65,7 +65,10 @@ Use **Testar transcrição**, **Testar resumo** e **Testar conexão** para confi
 | OpenAI                                 | Transcrição e resumo | `https://api.openai.com/v1` (`whisper-1`, `gpt-4o-mini`) | Chave da OpenAI          |
 | Z.ai GLM (GLM Coding Plan)             | Resumo               | `https://api.z.ai/api/coding/paas/v4` (`glm-5.3-flash`)  | Chave do GLM Coding Plan |
 | Z.ai GLM (API pré-paga)                | Resumo               | `https://api.z.ai/api/paas/v4`                           | Chave com saldo pré-pago |
+| Claude (API da Anthropic)              | Resumo               | `https://api.anthropic.com` (`claude-opus-5-5`)          | Chave do Claude Console  |
 | Personalizado                          | Qualquer um          | Qualquer API compatível com a OpenAI                     | Opcional                 |
+
+O **Claude** usa uma chave de API criada no [Claude Console](https://console.anthropic.com), cobrada por uso. A assinatura Claude Pro/Max não serve: a Anthropic só permite usá-la no próprio Claude e no Claude Code. O padrão é `claude-opus-5-5`; para gastar menos, troque o modelo para `claude-sonnet-5-5` ou `claude-haiku-5-5`.
 
 O **Whisper local** só funciona quando o servidor roda no mesmo computador que o Chrome. No Mac e no Windows, use o **Whisper remoto** (a chave Bearer é fornecida pela Valor) ou a OpenAI.
 
