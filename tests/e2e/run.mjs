@@ -140,7 +140,15 @@ const STT_LINES = [
   "O Rapplet e o Supabase também entram nessa conta.",
   "Vamos marcar a próxima conversa com a Ana na semana que vem.",
 ];
-const seen = { sttPrompts: [], vocabulary: [], aliases: [], stores: [], chats: 0, claude: [] };
+const seen = {
+  sttPrompts: [],
+  vocabulary: [],
+  aliases: [],
+  stores: [],
+  chats: 0,
+  claude: [],
+  reviews: 0,
+};
 
 function readBody(req) {
   return new Promise((resolveBody) => {
@@ -155,19 +163,33 @@ function send(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+// More than four items: the model reviews the record before it is saved.
 const SUMMARY = {
   summary:
     "A Resend usa o gbrain e o Replit com os agentes; a próxima conversa fica para a semana que vem.",
   summaryItems: [],
   topics: [{ name: "Parceria com a Resend", status: "active" }],
   currentTopic: "Parceria com a Resend",
-  decisions: [],
+  decisions: [
+    { text: "Conversar de novo com a Ana na semana que vem", classification: "finalized" },
+    { text: "Incluir o Replit e o Supabase na conta", classification: "tentative" },
+  ],
   actionItems: [{ task: "Marcar a próxima conversa", owner: "Ana" }],
   sentiment: "positive",
   keyInsights: [],
   contradictions: [],
-  questionsRaised: [],
+  questionsRaised: ["Quando a Ana pode conversar?"],
 };
+
+/** What the mocked model answers, by its instructions: spelling fixes, the record review or a summary. */
+function modelAnswer(system, user) {
+  if (/revisa a grafia/.test(system)) return { correcoes: [{ de: "Rapplet", para: "Replit" }] };
+  if (!/revisa o registro/.test(system)) return SUMMARY;
+  // The record review keeps every item as it is.
+  seen.reviews += 1;
+  const ids = (prefix) => user.match(new RegExp(`^${prefix}\\d+`, "gm")) ?? [];
+  return { decisions: ids("D"), actionItems: ids("A"), topics: ids("T"), openPoints: ids("P") };
+}
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
@@ -191,11 +213,13 @@ const server = createServer(async (req, res) => {
     seen.claude.push({
       key: req.headers["x-api-key"],
       browser: req.headers["anthropic-dangerous-direct-browser-access"],
+      beta: req.headers["anthropic-beta"],
       request,
     });
-    const content = /revisa a grafia/.test(String(request.system ?? ""))
-      ? { correcoes: [{ de: "Rapplet", para: "Replit" }] }
-      : SUMMARY;
+    const content = modelAnswer(
+      String(request.system ?? ""),
+      String(request.messages?.[0]?.content ?? ""),
+    );
     return send(res, 200, {
       id: `msg_e2e_${seen.claude.length}`,
       type: "message",
@@ -210,10 +234,10 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/v1/chat/completions") {
     seen.chats += 1;
     const request = JSON.parse(body.toString("utf8") || "{}");
-    const system = String(request.messages?.[0]?.content ?? "");
-    const content = /revisa a grafia/.test(system)
-      ? { correcoes: [{ de: "Rapplet", para: "Replit" }] }
-      : SUMMARY;
+    const content = modelAnswer(
+      String(request.messages?.[0]?.content ?? ""),
+      String(request.messages?.[1]?.content ?? ""),
+    );
     return send(res, 200, {
       choices: [{ finish_reason: "stop", message: { content: JSON.stringify(content) } }],
       usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
@@ -478,6 +502,11 @@ try {
       !/Rapplet|D-Brain/.test(stored),
     /Grafia revisada[^\n]*/.exec(stored)?.[0] ?? "",
   );
+  check(
+    "Meet: the model reviewed the record once, before it was delivered",
+    seen.reviews === 1 && /## Decisões\n- Conversar de novo com a Ana/.test(stored),
+    `${seen.reviews} review(s)`,
+  );
   if (CLAUDE) {
     const first = seen.claude[0];
     check(
@@ -497,6 +526,17 @@ try {
           ["low", "medium"].includes(c.request.output_config?.effort),
       ),
       JSON.stringify(seen.claude.map((c) => c.request.output_config?.effort)),
+    );
+    const medium = seen.claude.filter((c) => c.request.output_config?.effort === "medium");
+    check(
+      'Claude: the record review, and only it, thinks more (effort "medium")',
+      medium.length === 1 && /revisa o registro/.test(String(medium[0].request.system ?? "")),
+      `${medium.length} of ${seen.claude.length} requests`,
+    );
+    check(
+      "Claude: no refusal-fallback beta for a host that is not api.anthropic.com",
+      seen.claude.every((c) => c.beta === undefined && !("fallbacks" in c.request)),
+      JSON.stringify(seen.claude.map((c) => c.beta ?? null)),
     );
   }
   await waitUntil(() => seen.aliases.length > 0, "aliases taught", 20_000);
