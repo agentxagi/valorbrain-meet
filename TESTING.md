@@ -283,6 +283,11 @@ XKEY_PYTHON=/path/to/python-with-python-xlib \
 xvfb-run -a -s "-screen 0 1280x900x24" npm run test:e2e
 ```
 
+`E2E_SUMMARY=claude` runs the same flow with the summary provider set to the Claude profile:
+the mock answers Claude's Messages API (`/v1/messages`), and the run also checks that the
+service worker reached it with the key, without sampling parameters, with room to think and an
+effort level.
+
 Requirements: Chrome for Testing (branded Chrome ignores `--load-extension`), Xvfb,
 `espeak-ng` and `ffmpeg` (the meeting audio is synthesized), `playwright-core` and a Python
 with `python-xlib==0.33`.

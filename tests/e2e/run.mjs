@@ -31,6 +31,9 @@ const EXTENSION_DIR = resolve(here, "../../dist");
 const CHROME_PATH = process.env.CHROME_PATH;
 const PLAYWRIGHT_CORE = process.env.PLAYWRIGHT_CORE || "playwright-core";
 const XKEY_PYTHON = process.env.XKEY_PYTHON || "python3";
+// E2E_SUMMARY=claude: the summary provider is the Claude profile (Messages API,
+// served by the mock below) instead of an OpenAI-compatible one.
+const CLAUDE = process.env.E2E_SUMMARY === "claude";
 if (!CHROME_PATH) {
   console.error(
     "CHROME_PATH is required (Chrome for Testing: branded Chrome ignores --load-extension).",
@@ -137,7 +140,7 @@ const STT_LINES = [
   "O Rapplet e o Supabase também entram nessa conta.",
   "Vamos marcar a próxima conversa com a Ana na semana que vem.",
 ];
-const seen = { sttPrompts: [], vocabulary: [], aliases: [], stores: [] };
+const seen = { sttPrompts: [], vocabulary: [], aliases: [], stores: [], chats: 0, claude: [] };
 
 function readBody(req) {
   return new Promise((resolveBody) => {
@@ -182,7 +185,30 @@ const server = createServer(async (req, res) => {
         : [],
     });
   }
+  if (url.pathname === "/v1/messages") {
+    // Claude's Messages API, as the official SDK calls it from the extension.
+    const request = JSON.parse(body.toString("utf8") || "{}");
+    seen.claude.push({
+      key: req.headers["x-api-key"],
+      browser: req.headers["anthropic-dangerous-direct-browser-access"],
+      request,
+    });
+    const content = /revisa a grafia/.test(String(request.system ?? ""))
+      ? { correcoes: [{ de: "Rapplet", para: "Replit" }] }
+      : SUMMARY;
+    return send(res, 200, {
+      id: `msg_e2e_${seen.claude.length}`,
+      type: "message",
+      role: "assistant",
+      model: request.model,
+      content: [{ type: "text", text: JSON.stringify(content) }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 100, output_tokens: 50 },
+    });
+  }
   if (url.pathname === "/v1/chat/completions") {
+    seen.chats += 1;
     const request = JSON.parse(body.toString("utf8") || "{}");
     const system = String(request.messages?.[0]?.content ?? "");
     const content = /revisa a grafia/.test(system)
@@ -323,31 +349,31 @@ try {
 
   const ext = await context.newPage();
   await ext.goto(`chrome-extension://${extensionId}/src/options.html`);
-  await ext.evaluate(async (mock) => {
-    await chrome.storage.local.set({
-      onboardingCompleted: true,
-      settings: {
+  await ext.evaluate(
+    async ([mock, claude]) => {
+      await chrome.storage.local.set({
         onboardingCompleted: true,
-        selfName: "Gus Teste",
-        transcriptionLanguage: "pt",
-        recordingChatNotice: true,
-        "vb.baseUrl": mock,
-        "vb.apiToken": "vbm_e2e_token",
-      },
-      "provider.transcription": {
-        profile: "custom",
-        baseUrl: `${mock}/v1`,
-        apiKey: "",
-        model: "whisper-1",
-      },
-      "provider.summary": {
-        profile: "custom",
-        baseUrl: `${mock}/v1`,
-        apiKey: "",
-        model: "mock-llm",
-      },
-    });
-  }, MOCK);
+        settings: {
+          onboardingCompleted: true,
+          selfName: "Gus Teste",
+          transcriptionLanguage: "pt",
+          recordingChatNotice: true,
+          "vb.baseUrl": mock,
+          "vb.apiToken": "vbm_e2e_token",
+        },
+        "provider.transcription": {
+          profile: "custom",
+          baseUrl: `${mock}/v1`,
+          apiKey: "",
+          model: "whisper-1",
+        },
+        "provider.summary": claude
+          ? { profile: "anthropic", baseUrl: mock, apiKey: "sk-ant-e2e", model: "claude-opus-5-5" }
+          : { profile: "custom", baseUrl: `${mock}/v1`, apiKey: "", model: "mock-llm" },
+      });
+    },
+    [MOCK, CLAUDE],
+  );
 
   const sw = (message) => ext.evaluate((m) => chrome.runtime.sendMessage(m), message);
   const waitUntil = async (probe, label, timeoutMs = 30_000) => {
@@ -452,6 +478,27 @@ try {
       !/Rapplet|D-Brain/.test(stored),
     /Grafia revisada[^\n]*/.exec(stored)?.[0] ?? "",
   );
+  if (CLAUDE) {
+    const first = seen.claude[0];
+    check(
+      "Claude: the service worker summarized through the Messages API, with the key",
+      seen.claude.length > 0 &&
+        seen.chats === 0 &&
+        first?.key === "sk-ant-e2e" &&
+        first?.browser === "true",
+      `${seen.claude.length} requests to /v1/messages, ${seen.chats} to /v1/chat/completions`,
+    );
+    check(
+      "Claude: no sampling parameters, room to think, effort set",
+      seen.claude.every(
+        (c) =>
+          !("temperature" in c.request) &&
+          c.request.max_tokens >= 16000 &&
+          ["low", "medium"].includes(c.request.output_config?.effort),
+      ),
+      JSON.stringify(seen.claude.map((c) => c.request.output_config?.effort)),
+    );
+  }
   await waitUntil(() => seen.aliases.length > 0, "aliases taught", 20_000);
   check(
     "Meet: only the review's fix taught back to the graph",
