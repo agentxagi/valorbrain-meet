@@ -18,7 +18,7 @@ que não leva nada da reunião (veja [Aviso de versão nova](#aviso-de-versão-n
 | Nenhum: só o pedido do arquivo `latest.json`                      | meet.valorbra.in                            | Uma vez por dia, se **Avisar quando houver uma versão nova** estiver ligado (vem ligado)                                   |
 
 Com o **Whisper local**, o áudio não sai do computador. Com o **Whisper remoto** ou a
-**OpenAI**, o áudio vai para esse servidor. Leia a política do provedor que usar. Com o **Claude**, o texto da transcrição vai para a Anthropic (`api.anthropic.com`); pelos Termos Comerciais da Anthropic, ela não treina modelos com o conteúdo enviado pela API. A chave do Claude fica só neste navegador e só vai para `api.anthropic.com`.
+**OpenAI**, o áudio vai para esse servidor. Leia a política do provedor que usar. Com o **Claude**, o texto da transcrição vai para a Anthropic (`api.anthropic.com`); pelos Termos Comerciais da Anthropic, ela não treina modelos com o conteúdo enviado pela API. A chave do Claude fica só neste navegador e só vai para o endereço configurado (por padrão, `api.anthropic.com`).
 
 A captura só começa depois de um clique no ícone ou do atalho de gravação: o Chrome não
 deixa uma extensão gravar uma aba por conta própria. Enquanto grava, o ícone mostra **REC**
