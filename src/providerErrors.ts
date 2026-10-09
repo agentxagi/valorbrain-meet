@@ -58,7 +58,7 @@ export class ProviderConfigError extends Error {
   }
 }
 
-/** Extracts `{code, message}` from OpenAI / Z.ai style error bodies. */
+/** Extracts `{code, message}` from OpenAI / Z.ai / Anthropic style error bodies. */
 export function parseProviderErrorBody(body: string): {
   code: string | null;
   message: string | null;
@@ -66,7 +66,9 @@ export function parseProviderErrorBody(body: string): {
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>;
     const error = (parsed?.error ?? parsed) as Record<string, unknown>;
-    const code = error?.code ?? error?.type;
+    // Anthropic narrows a broad type ("rate_limit_error") down in details.error_code.
+    const details = error?.details as Record<string, unknown> | null | undefined;
+    const code = details?.error_code ?? error?.code ?? error?.type;
     const message = error?.message ?? error?.detail ?? parsed?.message;
     return {
       code: code === undefined || code === null ? null : String(code),
@@ -102,13 +104,17 @@ function roleNoun(role: ProviderRoleLabel): string {
 const QUOTA_CODES = new Set(["1113", "1308"]);
 
 /**
- * Z.ai reports when a usage window resets ("Your limit will reset at
- * 2026-09-30 04:55:58", China Standard Time). Returns that instant or null.
+ * When a quota renews, as the provider wrote it: Z.ai in China Standard Time
+ * ("Your limit will reset at 2026-09-30 04:55:58"), Anthropic in UTC ("You
+ * will regain access on 2026-11-01 at 00:00 UTC"). Returns that instant or null.
  */
 export function quotaResetAt(message: string | null | undefined): Date | null {
-  const match = /(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/.exec(String(message ?? ""));
+  const match = /(\d{4}-\d{2}-\d{2})(?:[ T]| at )(\d{2}:\d{2}(?::\d{2})?)( UTC)?/.exec(
+    String(message ?? ""),
+  );
   if (!match) return null;
-  const date = new Date(`${match[1]}T${match[2].length === 5 ? `${match[2]}:00` : match[2]}+08:00`);
+  const time = match[2].length === 5 ? `${match[2]}:00` : match[2];
+  const date = new Date(`${match[1]}T${time}${match[3] ? "Z" : "+08:00"}`);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -116,10 +122,38 @@ function isUsageWindowExhausted(err: ProviderHttpError): boolean {
   return err.code === "1308" || /usage limit reached|使用上限/i.test(err.providerMessage ?? "");
 }
 
+/**
+ * Explains an Anthropic refusal that no retry fixes (the organization's
+ * monthly spend cap, the usage limit set on the account, no credit left), or
+ * returns null for any other failure.
+ */
+function anthropicQuotaMessage(err: ProviderHttpError): string | null {
+  const message = err.providerMessage ?? "";
+  if (err.code === "enforced_spend_limit_reached") {
+    const resetAt = quotaResetAt(message);
+    const when = resetAt
+      ? ` O acesso volta em ${resetAt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} às ${resetAt.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}.`
+      : "";
+    return `O limite mensal de gastos da sua organização na Anthropic foi atingido.${when}`;
+  }
+  const noCredit =
+    // Anthropic's type: another provider's 402 is not about an Anthropic account.
+    (err.status === 402 && err.code === "billing_error") ||
+    (err.status === 400 && /credit balance is too low/i.test(message));
+  if (noCredit) {
+    return "A conta da Anthropic está sem créditos. Adicione créditos em console.anthropic.com.";
+  }
+  if (err.status === 400 && /reached your specified API usage limits/i.test(message)) {
+    return "O limite de uso definido na sua conta da Anthropic foi atingido. Ajuste em console.anthropic.com.";
+  }
+  return null;
+}
+
 /** True for failures worth retrying (network hiccups, 429, 5xx, cold start). */
 export function isRetryableProviderError(err: unknown): boolean {
   if (err instanceof ProviderHttpError) {
     // An exhausted quota never heals by retrying within minutes.
+    if (anthropicQuotaMessage(err)) return false;
     if (err.status === 429) return !QUOTA_CODES.has(err.code ?? "") && !isUsageWindowExhausted(err);
     return err.status >= 500 || err.status === 408;
   }
@@ -155,6 +189,14 @@ export function describeProviderError(
         retryable: false,
         message:
           "A Z.ai recusou por falta de saldo neste endpoint. Se a sua chave é do GLM Coding Plan, use o perfil “Z.ai GLM (GLM Coding Plan)”.",
+      };
+    }
+    const anthropicQuota = anthropicQuotaMessage(err);
+    if (anthropicQuota) {
+      return {
+        kind: "quota",
+        retryable: false,
+        message: `${anthropicQuota} A transcrição continua normalmente.`,
       };
     }
     if (err.status === 429 && isUsageWindowExhausted(err)) {

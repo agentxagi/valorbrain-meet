@@ -246,6 +246,79 @@ test("describeProviderError explains the common failures in PT-BR", () => {
   assert.equal(isRetryableProviderError(new ProviderHttpError(503, "", "u")), true);
 });
 
+test("Anthropic's spend cap, usage limit and missing credit are a quota, never retried", () => {
+  const anthropic = (status: number, error: Record<string, unknown>) =>
+    new ProviderHttpError(
+      status,
+      JSON.stringify({ type: "error", error }),
+      "https://api.anthropic.com/v1/messages",
+    );
+
+  // The organization's monthly spend cap: a 429 that only details.error_code tells apart.
+  const capError = {
+    type: "rate_limit_error",
+    message:
+      "Your organization has reached its monthly spend limit. You will regain access on 2026-11-01 at 00:00 UTC.",
+    details: { error_code: "enforced_spend_limit_reached" },
+  };
+  const spendCap = anthropic(429, capError);
+  assert.equal(spendCap.code, "enforced_spend_limit_reached");
+  assert.equal(isRetryableProviderError(spendCap), false);
+  const capped = describeProviderError("summary", spendCap);
+  assert.equal(capped.kind, "quota");
+  assert.match(
+    capped.message,
+    /^O limite mensal de gastos da sua organização na Anthropic foi atingido\. O acesso volta em \d{2}\/\d{2} às \d{2}:\d{2}\. A transcrição continua normalmente\.$/,
+  );
+  // Anthropic writes the time in UTC; Z.ai's has no zone and is China's (above).
+  assert.equal(quotaResetAt(spendCap.providerMessage)?.toISOString(), "2026-11-01T00:00:00.000Z");
+  assert.equal(
+    describeProviderError("summary", anthropic(429, { ...capError, message: "Spend limit." }))
+      .message,
+    "O limite mensal de gastos da sua organização na Anthropic foi atingido. A transcrição continua normalmente.",
+  );
+
+  const noCredit =
+    "A conta da Anthropic está sem créditos. Adicione créditos em console.anthropic.com. A transcrição continua normalmente.";
+  for (const [err, message] of [
+    [anthropic(402, { type: "billing_error", message: "Payment required." }), noCredit],
+    [
+      anthropic(400, {
+        type: "invalid_request_error",
+        message:
+          "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+      }),
+      noCredit,
+    ],
+    [
+      anthropic(400, {
+        type: "invalid_request_error",
+        message:
+          "You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+      }),
+      "O limite de uso definido na sua conta da Anthropic foi atingido. Ajuste em console.anthropic.com. A transcrição continua normalmente.",
+    ],
+  ] as const) {
+    assert.equal(isRetryableProviderError(err), false, err.message);
+    assert.deepEqual(describeProviderError("summary", err), {
+      kind: "quota",
+      retryable: false,
+      message,
+    });
+  }
+
+  // A plain rate limit is still retried, and another provider's 402 is not about Anthropic.
+  const busy = anthropic(429, { type: "rate_limit_error", message: "Number of requests exceeded" });
+  assert.equal(isRetryableProviderError(busy), true);
+  assert.equal(describeProviderError("summary", busy).kind, "rateLimit");
+  const elsewhere = new ProviderHttpError(
+    402,
+    JSON.stringify({ error: { code: 402, message: "Insufficient credits" } }),
+    "https://openrouter.ai/api/v1/chat/completions",
+  );
+  assert.doesNotMatch(describeProviderError("summary", elsewhere).message, /Anthropic/);
+});
+
 test("makeSilentWav produces a valid RIFF/WAVE header", async () => {
   const wav = makeSilentWav(1, 16000);
   assert.equal(wav.size, 44 + 32000);

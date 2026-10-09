@@ -8,9 +8,11 @@ import {
 } from "./anthropicClient";
 import { probeChat, requestChatCompletion, type ChatRequest } from "./providerClient";
 import {
+  describeProviderError,
   isRetryableProviderError,
   ProviderHttpError,
   ProviderPayloadError,
+  quotaResetAt,
 } from "./providerErrors";
 import type { ProviderConfig } from "./utils/providerSettings";
 
@@ -265,6 +267,52 @@ test("API errors become the pipeline's own errors (status, code, retry)", async 
   ).catch((err: unknown) => err);
   assert.ok(overloaded instanceof ProviderHttpError);
   assert.equal(isRetryableProviderError(overloaded), true);
+});
+
+test("the spend cap, no credit and the account's usage limit are a quota, not retried", async () => {
+  const failure = (status: number, error: Record<string, unknown>) =>
+    requestClaudeMessage(
+      CLAUDE,
+      "sk-ant-test",
+      chat(fakeFetch(status, { type: "error", error, request_id: "req_test" }, [])),
+    ).catch((err: unknown) => err);
+
+  const capped = await failure(429, {
+    type: "rate_limit_error",
+    message:
+      "Your organization has reached its monthly spend limit. You will regain access on 2026-11-01 at 00:00 UTC.",
+    details: { error_code: "enforced_spend_limit_reached" },
+  });
+  assert.ok(capped instanceof ProviderHttpError);
+  assert.equal(capped.code, "enforced_spend_limit_reached");
+  assert.equal(isRetryableProviderError(capped), false);
+  assert.equal(describeProviderError("summary", capped).kind, "quota");
+  assert.equal(quotaResetAt(capped.providerMessage)?.toISOString(), "2026-11-01T00:00:00.000Z");
+
+  for (const [status, error] of [
+    [402, { type: "billing_error", message: "Payment required." }],
+    [
+      400,
+      {
+        type: "invalid_request_error",
+        message: "Your credit balance is too low to access the Anthropic API.",
+      },
+    ],
+    [
+      400,
+      {
+        type: "invalid_request_error",
+        message:
+          "You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+      },
+    ],
+  ] as const) {
+    const err = await failure(status, error);
+    assert.ok(err instanceof ProviderHttpError, String(err));
+    assert.equal(err.status, status);
+    assert.equal(isRetryableProviderError(err), false, error.message);
+    assert.equal(describeProviderError("summary", err).kind, "quota", error.message);
+  }
 });
 
 test("a network failure and an abort keep their meaning", async () => {
