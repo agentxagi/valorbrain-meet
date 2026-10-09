@@ -114,8 +114,11 @@ let consolidationError: { status: number; body: unknown } | null = null;
 let storeGate: Promise<void> | null = null;
 /** When true, the review of the record never answers: only its signal ends the request. */
 let consolidationHangs = false;
-/** When true, Claude refuses summary passes (when a test sets the Claude profile). */
-let claudeRefuses = false;
+/**
+ * Which requests Claude refuses, by their system prompt and user message
+ * (when a test sets the Claude profile). None by default.
+ */
+let claudeRefuses: (system: string, user: string) => boolean = () => false;
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -175,8 +178,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
   }
   if (url.startsWith("https://api.anthropic.com/v1/messages")) {
     // Claude's Messages API, as the official SDK calls it.
-    const system = claudeSystemPrompt(init);
-    const refused = claudeRefuses && /motor de inteligência/.test(system);
+    const request = JSON.parse(String(init.body));
+    const system = String(request.system ?? "");
+    const refused = claudeRefuses(system, String(request.messages?.[0]?.content ?? ""));
     const answer = /revisa a grafia/.test(system) ? correctionResponse : summaryResponse;
     return jsonResponse(200, {
       id: "msg_test",
@@ -1270,7 +1274,22 @@ test("asking for a new recording while the last one is saved cuts its record rev
   }
 });
 
-test("a stretch Claude refuses to summarize is skipped, and the user is told once per recording", async () => {
+// ---------------------------------------------------------------------------
+// Claude as the summary provider
+// ---------------------------------------------------------------------------
+
+/** Claude refuses the live and final summary passes, nothing else. */
+const refusesSummaries = (system: string) => /motor de inteligência/.test(system);
+
+function isClaudeSummaryCall(c: { url: string; init: RequestInit }): boolean {
+  return (
+    c.url.startsWith("https://api.anthropic.com/v1/messages") &&
+    /motor de inteligência/.test(claudeSystemPrompt(c.init))
+  );
+}
+
+/** Runs `body` with Claude as the summary provider, then puts the previous one back. */
+async function withClaude(body: () => Promise<void>): Promise<void> {
   const before = localStore["provider.summary"];
   localStore["provider.summary"] = {
     profile: "anthropic",
@@ -1278,55 +1297,89 @@ test("a stretch Claude refuses to summarize is skipped, and the user is told onc
     apiKey: "sk-ant-test",
     model: "claude-opus-5-5",
   };
+  try {
+    await body();
+  } finally {
+    claudeRefuses = () => false;
+    localStore["provider.summary"] = before;
+  }
+}
+
+/** Starts a recording; returns how many meetings were saved before it. */
+async function startRecording(streamId: string): Promise<number> {
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId,
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+  return savedBefore;
+}
+
+/** One line said and transcribed, after which the transcript has `lines` lines. */
+async function say(text: string, lines: number): Promise<void> {
+  sttResponses.push({
+    text,
+    duration: 5,
+    segments: [{ text: ` ${text}`, no_speech_prob: 0.02, avg_logprob: -0.2 }],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    startedAt: Date.now() - 5000,
+    endedAt: Date.now(),
+  });
+  await waitFor(
+    async () => (await sendMessage({ type: "GET_FULL_STATE" })).transcript.length === lines,
+    `${lines} lines transcribed`,
+  );
+}
+
+/** A summary pass asked for (the catch-up shortcut); the state once it covered `lines` lines. */
+async function summarizeNow(lines: number): Promise<AnyRecord> {
+  const calls = fetchCalls.filter(isClaudeSummaryCall).length;
+  await sendMessage({ type: "FORCE_SUMMARY" });
+  return waitFor(async () => {
+    const s = await sendMessage({ type: "GET_FULL_STATE" });
+    return fetchCalls.filter(isClaudeSummaryCall).length === calls + 1 &&
+      s.lastSummarizedIndex === lines
+      ? s
+      : null;
+  }, `summary pass over ${lines} lines`);
+}
+
+async function sayAndSummarize(text: string, lines: number): Promise<AnyRecord> {
+  await say(text, lines);
+  return summarizeNow(lines);
+}
+
+/** Stops the recording; the saved meeting, once the stop flow delivered it. */
+async function stopAndDeliver(savedBefore: number): Promise<AnyRecord> {
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  const saved = await savedAfter(savedBefore);
+  await waitFor(
+    () =>
+      localStore.lastSessionResult?.sessionId === saved.id &&
+      localStore.lastSessionResult.vb?.status === "sent",
+    "the stop flow finished",
+  );
+  return saved;
+}
+
+test("a stretch Claude refuses to summarize is skipped, and the user is told once per recording", async () => {
   const refusedNotice =
     "O Claude recusou resumir um trecho da reunião; ele fica só na transcrição.";
   const told = () => notifications.filter((n) => n.message === refusedNotice).length;
-  const summaryCalls = () =>
-    fetchCalls.filter(
-      (c) =>
-        c.url.startsWith("https://api.anthropic.com/v1/messages") &&
-        /motor de inteligência/.test(claudeSystemPrompt(c.init)),
-    );
-  /** One line said and transcribed, then a summary pass asked for (the catch-up shortcut). */
-  const sayAndSummarize = async (text: string, lines: number) => {
-    sttResponses.push({
-      text,
-      duration: 5,
-      segments: [{ text: ` ${text}`, no_speech_prob: 0.02, avg_logprob: -0.2 }],
-    });
-    await sendMessage({
-      type: "OFFSCREEN_AUDIO_CHUNK",
-      audioBase64: fakeChunk(),
-      mimeType: "audio/webm;codecs=opus",
-      startedAt: Date.now() - 5000,
-      endedAt: Date.now(),
-    });
-    await waitFor(
-      async () => (await sendMessage({ type: "GET_FULL_STATE" })).transcript.length === lines,
-      `${lines} lines transcribed`,
-    );
-    const calls = summaryCalls().length;
-    await sendMessage({ type: "FORCE_SUMMARY" });
-    return waitFor(async () => {
-      const s = await sendMessage({ type: "GET_FULL_STATE" });
-      return summaryCalls().length === calls + 1 && s.lastSummarizedIndex === lines ? s : null;
-    }, `summary pass over ${lines} lines`);
-  };
-
-  claudeRefuses = true;
-  try {
+  await withClaude(async () => {
     fetchCalls.length = 0;
-    const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
-    const start = await sendMessage({
-      type: "MANUAL_START_AUDIO",
-      tabId: TAB_ID,
-      meetingId: "abc-defg-hij",
-      meetingUrl: MEET_URL,
-      streamId: "stream-13",
-    });
-    assert.equal(start.success, true, JSON.stringify(start));
+    const savedBefore = await startRecording("stream-13");
 
     // Refused: the stretch is skipped at the usual pace, not asked for again in a minute.
+    claudeRefuses = refusesSummaries;
     const asked = Date.now();
     const refused = await sayAndSummarize("Vamos falar da vulnerabilidade no servidor.", 1);
     assert.equal(refused.lastSummarizedIndex, 1);
@@ -1339,31 +1392,21 @@ test("a stretch Claude refuses to summarize is skipped, and the user is told onc
     assert.equal(told(), 1);
 
     // The next pass goes on after the refused stretch, and clears the notice.
-    claudeRefuses = false;
+    claudeRefuses = () => false;
     const summarized = await sayAndSummarize("Combinado, o lançamento fica para sexta.", 2);
     assert.equal(summarized.summary, DEFAULT_SUMMARY.summary);
     assert.notEqual(summarized.notice?.message, refusedNotice);
 
     // Refused again in the same recording: skipped without telling the user again.
-    claudeRefuses = true;
+    claudeRefuses = refusesSummaries;
     const again = await sayAndSummarize("E a senha do banco é aquela de sempre.", 3);
     assert.equal(again.lastSummarizedIndex, 3);
     assert.notEqual(again.notice?.message, refusedNotice);
     assert.equal(told(), 1);
 
-    claudeRefuses = false;
-    await sendMessage({ type: "MANUAL_STOP_AUDIO" });
-    const saved = await savedAfter(savedBefore);
-    await waitFor(
-      () =>
-        localStore.lastSessionResult?.sessionId === saved.id &&
-        localStore.lastSessionResult.vb?.status === "sent",
-      "the stop flow finished",
-    );
-  } finally {
-    claudeRefuses = false;
-    localStore["provider.summary"] = before;
-  }
+    claudeRefuses = () => false;
+    await stopAndDeliver(savedBefore);
+  });
 });
 
 // Keep last: the quota pause lasts for the rest of this process.
