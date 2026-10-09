@@ -1631,6 +1631,11 @@ async function correctTranscriptTerms(): Promise<void> {
         }),
       );
     } catch (err) {
+      // A refused stretch keeps its spelling; the other stretches are still reviewed.
+      if (err instanceof ProviderRefusalError) {
+        console.warn(`${LOG_PREFIX} Spelling review refused, stretch skipped:`, err);
+        continue;
+      }
       pauseSummaryOnQuota(err, config, apiKey);
       throw err;
     }

@@ -1472,6 +1472,35 @@ test("an Anthropic quota pauses the summary for 30 minutes at most, whatever dat
   });
 });
 
+test("a stretch Claude refuses to review for spelling keeps its text, the others get their fixes", async () => {
+  /** A line over 2,000 characters: twelve of them make two spelling requests. */
+  const longLine = (n: number, start = "") =>
+    start + Array.from({ length: 330 }, (_, i) => `l${n}p${i}`).join(" ");
+  await withClaude(async () => {
+    claudeRefuses = (system, user) => /revisa a grafia/.test(system) && user.includes("l1p0 ");
+    correctionResponse = { correcoes: [{ de: "Rapplet", para: "Replit" }] };
+    try {
+      fetchCalls.length = 0;
+      const savedBefore = await startRecording("stream-15");
+      for (let n = 1; n <= 12; n += 1) {
+        await say(longLine(n, n === 12 ? "O Rapplet entra na conta. " : ""), n);
+      }
+      const saved = await stopAndDeliver(savedBefore);
+
+      const spelling = fetchCalls.filter(
+        (c) =>
+          c.url.startsWith("https://api.anthropic.com/v1/messages") &&
+          /revisa a grafia/.test(claudeSystemPrompt(c.init)),
+      );
+      assert.equal(spelling.length, 2, "the first stretch refused, the second answered");
+      assert.match(saved.transcript[11].text, /^O Replit entra na conta\. l12p0 /);
+      assert.deepEqual(saved.termCorrections, [{ from: "Rapplet", to: "Replit", count: 1 }]);
+    } finally {
+      correctionResponse = { correcoes: [] };
+    }
+  });
+});
+
 // Keep last: the quota pause lasts for the rest of this process.
 test("a quota error on the review pauses the provider and the record is reviewed locally", async () => {
   summaryResponse = SALES_CALL_SUMMARY;
