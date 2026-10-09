@@ -72,7 +72,7 @@ function card(label: string, data: WindowStats): string {
 
 function buildDashboardHTML(stats: Record<string, DayStats>): string {
   const footnote =
-    '<p class="ud-muted">O custo só é estimado para modelos da OpenAI (tabela pública). Whisper local e Z.ai GLM aparecem sem custo.</p>';
+    '<p class="ud-muted">O custo só é estimado para modelos da OpenAI e do Claude (tabelas públicas). Whisper local e Z.ai GLM aparecem sem custo.</p>';
   if (Object.keys(stats).length === 0) {
     return `<div class="ud">
         <p class="ud-muted">Nenhum uso registrado ainda. Os números aparecem depois da primeira reunião gravada.</p>
