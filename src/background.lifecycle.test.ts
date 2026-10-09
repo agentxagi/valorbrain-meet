@@ -114,6 +114,8 @@ let consolidationError: { status: number; body: unknown } | null = null;
 let storeGate: Promise<void> | null = null;
 /** When true, the review of the record never answers: only its signal ends the request. */
 let consolidationHangs = false;
+/** When true, Claude refuses summary passes (when a test sets the Claude profile). */
+let claudeRefuses = false;
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -124,6 +126,10 @@ function jsonResponse(status: number, body: unknown) {
 
 function chatSystemPrompt(init: RequestInit): string {
   return String(JSON.parse(String(init.body)).messages?.[0]?.content ?? "");
+}
+
+function claudeSystemPrompt(init: RequestInit): string {
+  return String(JSON.parse(String(init.body)).system ?? "");
 }
 
 globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -165,6 +171,23 @@ globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => 
     return jsonResponse(200, {
       choices: [{ finish_reason: "stop", message: { content: JSON.stringify(summaryResponse) } }],
       usage: { prompt_tokens: 900, completion_tokens: 120, total_tokens: 1020 },
+    });
+  }
+  if (url.startsWith("https://api.anthropic.com/v1/messages")) {
+    // Claude's Messages API, as the official SDK calls it.
+    const system = claudeSystemPrompt(init);
+    const refused = claudeRefuses && /motor de inteligência/.test(system);
+    const answer = /revisa a grafia/.test(system) ? correctionResponse : summaryResponse;
+    return jsonResponse(200, {
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      model: "claude-opus-5-5",
+      content: refused ? [] : [{ type: "text", text: JSON.stringify(answer) }],
+      stop_reason: refused ? "refusal" : "end_turn",
+      stop_details: refused ? { type: "refusal", category: "cyber", explanation: "x" } : null,
+      stop_sequence: null,
+      usage: { input_tokens: 900, output_tokens: 120 },
     });
   }
   if (url === "https://valorbrain-api.valor.digital/api/v1/memory/store") {
@@ -1244,6 +1267,102 @@ test("asking for a new recording while the last one is saved cuts its record rev
   } finally {
     consolidationHangs = false;
     summaryResponse = DEFAULT_SUMMARY;
+  }
+});
+
+test("a stretch Claude refuses to summarize is skipped, and the user is told once per recording", async () => {
+  const before = localStore["provider.summary"];
+  localStore["provider.summary"] = {
+    profile: "anthropic",
+    baseUrl: "https://api.anthropic.com",
+    apiKey: "sk-ant-test",
+    model: "claude-opus-5-5",
+  };
+  const refusedNotice =
+    "O Claude recusou resumir um trecho da reunião; ele fica só na transcrição.";
+  const told = () => notifications.filter((n) => n.message === refusedNotice).length;
+  const summaryCalls = () =>
+    fetchCalls.filter(
+      (c) =>
+        c.url.startsWith("https://api.anthropic.com/v1/messages") &&
+        /motor de inteligência/.test(claudeSystemPrompt(c.init)),
+    );
+  /** One line said and transcribed, then a summary pass asked for (the catch-up shortcut). */
+  const sayAndSummarize = async (text: string, lines: number) => {
+    sttResponses.push({
+      text,
+      duration: 5,
+      segments: [{ text: ` ${text}`, no_speech_prob: 0.02, avg_logprob: -0.2 }],
+    });
+    await sendMessage({
+      type: "OFFSCREEN_AUDIO_CHUNK",
+      audioBase64: fakeChunk(),
+      mimeType: "audio/webm;codecs=opus",
+      startedAt: Date.now() - 5000,
+      endedAt: Date.now(),
+    });
+    await waitFor(
+      async () => (await sendMessage({ type: "GET_FULL_STATE" })).transcript.length === lines,
+      `${lines} lines transcribed`,
+    );
+    const calls = summaryCalls().length;
+    await sendMessage({ type: "FORCE_SUMMARY" });
+    return waitFor(async () => {
+      const s = await sendMessage({ type: "GET_FULL_STATE" });
+      return summaryCalls().length === calls + 1 && s.lastSummarizedIndex === lines ? s : null;
+    }, `summary pass over ${lines} lines`);
+  };
+
+  claudeRefuses = true;
+  try {
+    fetchCalls.length = 0;
+    const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+    const start = await sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: TAB_ID,
+      meetingId: "abc-defg-hij",
+      meetingUrl: MEET_URL,
+      streamId: "stream-13",
+    });
+    assert.equal(start.success, true, JSON.stringify(start));
+
+    // Refused: the stretch is skipped at the usual pace, not asked for again in a minute.
+    const asked = Date.now();
+    const refused = await sayAndSummarize("Vamos falar da vulnerabilidade no servidor.", 1);
+    assert.equal(refused.lastSummarizedIndex, 1);
+    assert.ok(refused.lastSummarizedAt >= asked, "the next pass waits the usual interval");
+    assert.deepEqual(
+      { scope: refused.notice?.scope, severity: refused.notice?.severity },
+      { scope: "summary", severity: "warning" },
+    );
+    assert.equal(refused.notice.message, refusedNotice);
+    assert.equal(told(), 1);
+
+    // The next pass goes on after the refused stretch, and clears the notice.
+    claudeRefuses = false;
+    const summarized = await sayAndSummarize("Combinado, o lançamento fica para sexta.", 2);
+    assert.equal(summarized.summary, DEFAULT_SUMMARY.summary);
+    assert.notEqual(summarized.notice?.message, refusedNotice);
+
+    // Refused again in the same recording: skipped without telling the user again.
+    claudeRefuses = true;
+    const again = await sayAndSummarize("E a senha do banco é aquela de sempre.", 3);
+    assert.equal(again.lastSummarizedIndex, 3);
+    assert.notEqual(again.notice?.message, refusedNotice);
+    assert.equal(told(), 1);
+
+    claudeRefuses = false;
+    await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+    const saved = await savedAfter(savedBefore);
+    await waitFor(
+      () =>
+        localStore.lastSessionResult?.sessionId === saved.id &&
+        localStore.lastSessionResult.vb?.status === "sent",
+      "the stop flow finished",
+    );
+  } finally {
+    claudeRefuses = false;
+    localStore["provider.summary"] = before;
   }
 });
 

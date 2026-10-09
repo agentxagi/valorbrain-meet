@@ -103,6 +103,7 @@ import {
   ProviderConfigError,
   ProviderHttpError,
   ProviderPayloadError,
+  ProviderRefusalError,
   quotaResetAt,
 } from "./providerErrors";
 import { anySignal, requestChatCompletion, requestTranscription } from "./providerClient";
@@ -338,6 +339,8 @@ let summaryInFlight: Promise<void> | null = null;
  * spelling request is sent to the same provider/key until it renews.
  */
 let summaryQuotaPause: { until: number; provider: string } | null = null;
+/** The recording (by its start time) already told that the model refused a stretch. */
+let refusalNoticeFor: number | null = null;
 /** Graph vocabulary requests made for the current recording (reset by a new start time). */
 let vocabularyRequests = { startTime: 0, count: 0, lastAt: 0, inFlight: false, stale: false };
 let vocabularyRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1523,17 +1526,32 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     clearNotice("summary");
   } catch (err) {
     if (state.startTime !== startTimeAtCall) return;
-    console.warn(`${LOG_PREFIX} Summarization failed:`, err);
-    const described = describeProviderError("summary", err, config.baseUrl);
-    pauseSummaryOnQuota(err, config, apiKey);
-    setNotice(
-      "summary",
-      described.kind === "rateLimit" || described.kind === "quota" ? "warning" : "error",
-      described.message,
-    );
-    const intervalMs = summaryIntervalSeconds(settings) * 1000;
-    state.lastSummarizedAt = Date.now() - intervalMs + SUMMARY_RETRY_MS;
-    notify("summary-error", "ValorBrain Meet: resumo com problema", described.message, true);
+    if (err instanceof ProviderRefusalError) {
+      // Asked again, the model refuses again: the stretch stays only in the
+      // transcript, and the next pass starts after it, at the usual pace.
+      console.warn(`${LOG_PREFIX} Summary refused, stretch skipped:`, err);
+      state.lastSummarizedAt = Date.now();
+      state.lastSummarizedIndex = window.endIndex;
+      if (refusalNoticeFor !== startTimeAtCall) {
+        refusalNoticeFor = startTimeAtCall;
+        const message =
+          "O Claude recusou resumir um trecho da reunião; ele fica só na transcrição.";
+        setNotice("summary", "warning", message);
+        notify("summary-refused", "ValorBrain Meet: resumo com problema", message);
+      }
+    } else {
+      console.warn(`${LOG_PREFIX} Summarization failed:`, err);
+      const described = describeProviderError("summary", err, config.baseUrl);
+      pauseSummaryOnQuota(err, config, apiKey);
+      setNotice(
+        "summary",
+        described.kind === "rateLimit" || described.kind === "quota" ? "warning" : "error",
+        described.message,
+      );
+      const intervalMs = summaryIntervalSeconds(settings) * 1000;
+      state.lastSummarizedAt = Date.now() - intervalMs + SUMMARY_RETRY_MS;
+      notify("summary-error", "ValorBrain Meet: resumo com problema", described.message, true);
+    }
   }
   await broadcastStateUpdate();
 }

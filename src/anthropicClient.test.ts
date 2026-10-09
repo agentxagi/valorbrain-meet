@@ -12,6 +12,7 @@ import {
   isRetryableProviderError,
   ProviderHttpError,
   ProviderPayloadError,
+  ProviderRefusalError,
   quotaResetAt,
 } from "./providerErrors";
 import type { ProviderConfig } from "./utils/providerSettings";
@@ -199,7 +200,8 @@ test("a cut answer, a refusal and an empty answer are explained", async () => {
         ),
       ),
     ),
-    (err: unknown) => err instanceof ProviderPayloadError && /recusou.*\(cyber\)/.test(err.message),
+    // Its own type: the service worker skips a refused stretch instead of asking again.
+    (err: unknown) => err instanceof ProviderRefusalError && /recusou.*\(cyber\)/.test(err.message),
   );
 
   await assert.rejects(
@@ -214,7 +216,10 @@ test("a cut answer, a refusal and an empty answer are explained", async () => {
         ),
       ),
     ),
-    (err: unknown) => err instanceof ProviderPayloadError && /resposta vazia/.test(err.message),
+    (err: unknown) =>
+      err instanceof ProviderPayloadError &&
+      !(err instanceof ProviderRefusalError) &&
+      /resposta vazia/.test(err.message),
   );
 });
 

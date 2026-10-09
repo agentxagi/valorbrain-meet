@@ -50,6 +50,14 @@ export class ProviderPayloadError extends Error {
   }
 }
 
+/** Raised when the model declined to answer (Claude's "refusal"): asking again gets the same. */
+export class ProviderRefusalError extends ProviderPayloadError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderRefusalError";
+  }
+}
+
 /** Raised before any request when the provider block cannot work as configured. */
 export class ProviderConfigError extends Error {
   constructor(message: string) {

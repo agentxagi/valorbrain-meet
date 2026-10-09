@@ -12,7 +12,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { ProviderHttpError, ProviderPayloadError } from "./providerErrors";
+import { ProviderHttpError, ProviderPayloadError, ProviderRefusalError } from "./providerErrors";
 import type { ChatRequest, ChatResult } from "./providerClient";
 import type { ProviderConfig } from "./utils/providerSettings";
 
@@ -136,7 +136,7 @@ export async function requestClaudeMessage(
   if (response.stop_reason === "refusal") {
     const category = (response as { stop_details?: { category?: string | null } | null })
       .stop_details?.category;
-    throw new ProviderPayloadError(
+    throw new ProviderRefusalError(
       `O Claude recusou responder a este trecho${category ? ` (${category})` : ""}.`,
     );
   }
