@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-10-09
+
+O envio ao ValorBrain volta a funcionar para quem conectou pelo botão **Conectar com ValorBrain**.
+
+### 🐛 Bug Fixes
+
+- **Reuniões recusadas com erro 403.** O botão **Conectar com ValorBrain** pedia só permissão de leitura, mas salvar a reunião é uma gravação. Por isso todo envio voltava "Credenciais rejeitadas pelo ValorBrain (HTTP 403)". Agora a conexão pede leitura e escrita, e a página de autorização mostra `Scope: read write`. Quem conectou até a 2.5.0 precisa fazer duas coisas, uma vez só: clicar em **Reconectar** em **Configurações → ValorBrain** e reenviar pelo **Histórico** as reuniões que falharam
+- A página de autorização do ValorBrain pede um token seu, e esse token precisa ter permissão de leitura e escrita. Com um token só de leitura, o ValorBrain recusa a aprovação. A extensão mostrava "Authorization page could not be loaded" e agora explica o motivo
+- **Testar conexão** agora confere também a gravação. Um token só de leitura não passa mais como "token válido", e o teste não salva nada no ValorBrain
+- Um erro 403 agora diz o motivo: token só de leitura, com o que fazer, ou Tenant ID de outra empresa
+- Trocar o **Endereço da API** e reconectar registra a extensão de novo naquele servidor, em vez de falhar
+
+### 🔧 Interno
+
+- O ValorBrain simulado do teste de ponta a ponta recusa o que o servidor de verdade recusa
+
+### Não verificado
+
+- A aprovação com um token real e a troca do código pelo token no servidor. O registro e a página de autorização foram conferidos no staging, que roda o mesmo código da produção, sem usar credenciais. O fluxo inteiro, inclusive a aprovação recusada, foi testado no Chrome contra um servidor simulado.
+
 ## [2.5.0] - 2026-10-09
 
 O Claude passa a resumir as reuniões, com uma chave de API da Anthropic.

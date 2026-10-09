@@ -7,10 +7,12 @@
  * S256 PKCE, issuing `vbm_*` tokens bound to the approving tenant. This module
  * is the extension-side client:
  *
- *   1. registerClient()  — POST /oauth/register (dynamic client registration)
+ *   1. registerClient()  — POST /oauth/register (dynamic client registration,
+ *      scope "read write")
  *   2. connectValorBrain() — chrome.identity.launchWebAuthFlow over
- *      /oauth/authorize (S256 PKCE + state); the user logs in and approves at
- *      the ValorBrain consent page
+ *      /oauth/authorize (S256 PKCE + state + scope); the user approves at the
+ *      ValorBrain consent page with a token of their own, whose scope caps
+ *      the one issued
  *   3. exchangeCode() — POST /oauth/token → { access_token: "vbm_…" }
  *
  * The resulting `vbm_` token resolves to the tenant server-side, so the
@@ -22,9 +24,20 @@ import { VB_STORE_PATH } from "./vbClient";
 /** Production ValorBrain engine API (default Base URL for new connections). */
 export const VB_API_BASE_URL = "https://valorbrain-api.valor.digital";
 
+/**
+ * What the Meet asks for. Saving a meeting is a write: a client registered
+ * without a scope gets `read` only (the engine's default), and every send
+ * then answers 403 insufficient_scope.
+ */
+export const VB_OAUTH_SCOPE = "read write";
+
 export interface OAuthClient {
   clientId: string;
   redirectUri: string;
+  /** Scope the client was registered with (none for clients registered before 2.5.1). */
+  scope?: string;
+  /** Engine the client was registered on (none before 2.5.1). */
+  baseUrl?: string;
 }
 
 export interface ConnectResult {
@@ -54,7 +67,17 @@ export function buildRegistrationBody(redirectUri: string): Record<string, unkno
     grant_types: ["authorization_code"],
     response_types: ["code"],
     token_endpoint_auth_method: "none",
+    scope: VB_OAUTH_SCOPE,
   };
+}
+
+/**
+ * True when a granted OAuth scope lets the token save meetings: the scopes the
+ * engine's REST guard accepts for a write to the memory routes.
+ */
+export function grantsWrite(scope: string): boolean {
+  const writes = ["write", "*", "all", "admin", "memory", "memory:*", "memory:write"];
+  return scope.split(/\s+/).some((s) => writes.includes(s) || s.startsWith("memory_"));
 }
 
 /** Registers an OAuth client for this extension install and returns its id. */
@@ -90,6 +113,7 @@ export function buildAuthorizeUrl(o: {
     state: o.state,
     code_challenge: o.challenge,
     code_challenge_method: "S256",
+    scope: VB_OAUTH_SCOPE,
   });
   return `${base}/oauth/authorize?${q.toString()}`;
 }
@@ -154,12 +178,22 @@ export async function connectValorBrain(baseUrl = VB_API_BASE_URL): Promise<Conn
   const redirectUri = chrome.identity.getRedirectURL();
   const stored = await chrome.storage.local.get(VB_OAUTH_CLIENT_KEY);
   const cached = stored[VB_OAUTH_CLIENT_KEY] as OAuthClient | undefined;
-  const clientId =
-    cached && cached.redirectUri === redirectUri
-      ? cached.clientId
-      : await registerClient(baseUrl, redirectUri);
+  const engine = baseUrl.replace(/\/+$/, "");
+  // A client lives on the engine that registered it, and the engine refuses a
+  // scope wider than the registration: a client from another engine, or one
+  // registered before the Meet asked for `write`, is replaced, not reused.
+  const reusable =
+    cached?.redirectUri === redirectUri &&
+    cached.scope === VB_OAUTH_SCOPE &&
+    cached.baseUrl === engine;
+  const clientId = reusable ? cached.clientId : await registerClient(baseUrl, redirectUri);
   await chrome.storage.local.set({
-    [VB_OAUTH_CLIENT_KEY]: { clientId, redirectUri } satisfies OAuthClient,
+    [VB_OAUTH_CLIENT_KEY]: {
+      clientId,
+      redirectUri,
+      scope: VB_OAUTH_SCOPE,
+      baseUrl: engine,
+    } satisfies OAuthClient,
   });
 
   const state = base64url(crypto.getRandomValues(new Uint8Array(16)).buffer);
@@ -180,6 +214,14 @@ export async function connectValorBrain(baseUrl = VB_API_BASE_URL): Promise<Conn
     redirectUri,
     verifier,
   });
+  // The engine refuses the approval itself (an invalid_scope page) when the
+  // token pasted there cannot write. This covers an engine that would issue a
+  // read-only token instead: saved as "Conectado", it would refuse every meeting.
+  if (scope && !grantsWrite(scope)) {
+    throw new Error(
+      "o ValorBrain autorizou só leitura, e o Meet precisa gravar as reuniões. Aprove de novo com um token que tenha permissão de escrita.",
+    );
+  }
   return { accessToken, scope, clientId };
 }
 

@@ -9,9 +9,23 @@ Tudo vem de **Configurações → ValorBrain**.
 **Conectar com ValorBrain** (recomendado) roda o fluxo OAuth 2.1 com PKCE (S256) contra o
 servidor de autorização do engine (`src/vbConnect.ts`):
 
-1. `POST {base}/oauth/register`: registro dinâmico do cliente desta instalação.
-2. `chrome.identity.launchWebAuthFlow` em `{base}/oauth/authorize`: a pessoa entra e aprova.
+1. `POST {base}/oauth/register`: registro dinâmico do cliente desta instalação, com
+   `scope: "read write"`.
+2. `chrome.identity.launchWebAuthFlow` em `{base}/oauth/authorize` com `scope=read write`: a
+   página de autorização pede um token da própria pessoa e mostra `Scope: read write`.
 3. `POST {base}/oauth/token`: devolve um token `vbm_…` ligado ao tenant que aprovou.
+
+Salvar a reunião é uma gravação. Sem `scope`, o engine registra o cliente só com `read`, e o
+token emitido recebe 403 `insufficient_scope` em todo envio. Foi o que aconteceu até a 2.5.0.
+Por isso:
+
+- um cliente guardado sem `scope` (registrado até a 2.5.0) ou registrado em outro engine é
+  trocado por um novo, porque o engine recusa pedir mais do que o registro (`invalid_scope`);
+- o token emitido nunca passa do token colado na página de autorização. Se esse token só lê,
+  o engine recusa a aprovação com uma página de erro `invalid_scope` (HTTP 400). O Chrome
+  então encerra o fluxo sozinho ("Authorization page could not be loaded"), e a extensão diz
+  para aprovar com um token de leitura e escrita;
+- se um engine emitir mesmo assim um token sem escrita, a extensão não o salva como conectado.
 
 A base padrão é `https://valorbrain-api.valor.digital`. O token `vbm_` resolve o tenant no
 servidor, então o Tenant ID não é necessário.
@@ -93,6 +107,8 @@ A resposta deve trazer `path` ou `docid`; esse valor aparece como referência do
 | Situação             | Tratamento                                              |
 | -------------------- | ------------------------------------------------------- |
 | 401 / 403            | `auth`: token inválido ou expirado. Reconecte.          |
+| 403 de escopo        | `auth`: o token só lê. Reconecte ou cole um que grave.  |
+| 403 de tenant        | `auth`: o Tenant ID não é o do token. Apague o campo.   |
 | 429                  | Uma nova tentativa após 2 s; se persistir, `rateLimit`. |
 | Sem resposta em 30 s | `timeout`                                               |
 | Falha de rede        | `network`                                               |
@@ -105,6 +121,14 @@ As mensagens aparecem em português na notificação, no histórico e no painel.
 `GET {baseUrl}/api/v1/memory/working-context` com os mesmos cabeçalhos. A rota é autenticada:
 token inválido responde 401/403. O `/health` é público e respondia 200 até com token errado,
 por isso não serve como teste.
+
+Ler não basta: um token só de leitura passa nesse pedido e depois tem todo envio recusado.
+Então o teste também manda `POST {baseUrl}/api/v1/memory/store` com
+`{"type": "vbmeet-permission-check"}`, que o engine sempre recusa sem salvar nada. Ele confere
+o escopo do token antes do corpo:
+
+- `403 insufficient_scope`: o token só lê;
+- `400`: o token pode gravar, e o corpo foi recusado como esperado.
 
 ## Vocabulário da empresa (2.2)
 

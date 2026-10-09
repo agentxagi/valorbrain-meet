@@ -272,7 +272,14 @@ const server = createServer(async (req, res) => {
     return send(res, 201, { recorded: payload.aliases, skipped: [] });
   }
   if (url.pathname === "/api/v1/memory/store") {
-    seen.stores.push(JSON.parse(body.toString("utf8")));
+    const payload = JSON.parse(body.toString("utf8"));
+    // Like the engine: a body it cannot save is refused, never stored (the
+    // connection test's write probe relies on it).
+    const types = ["decision", "observation", "problem", "milestone", "handoff", "lesson", "note"];
+    if (!types.includes(payload.type ?? "note") || !(payload.title?.trim().length >= 5)) {
+      return send(res, 400, { error: "type must be one of: " + types.join(", ") });
+    }
+    seen.stores.push(payload);
     return send(res, 200, { ok: true, docid: "#e2e001", path: "meetings/observations/e2e.md" });
   }
   if (url.pathname === "/api/v1/memory/working-context" || url.pathname === "/health") {

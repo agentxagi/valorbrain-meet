@@ -296,9 +296,14 @@ async function connectVb() {
     setStatus(
       "vb-action-status",
       "error",
-      /cancel|closed|did not approve|user/i.test(message)
-        ? "A autorização foi fechada antes de concluir. Tente de novo."
-        : `Não foi possível conectar: ${message}`,
+      // Chrome ends the flow with "Authorization page could not be loaded" when
+      // the engine answers an error page: also when it refuses the approval
+      // because the token pasted there cannot write (invalid_scope).
+      /could not be loaded/i.test(message)
+        ? "A página de autorização do ValorBrain não abriu ou recusou a aprovação. Se você colou um token nela, ele precisa ter permissão de leitura e escrita. Se a página nem abriu, confira o Endereço da API em Configuração manual."
+        : /cancel|closed|did not approve|user/i.test(message)
+          ? "A autorização foi fechada antes de concluir. Tente de novo."
+          : `Não foi possível conectar: ${message}`,
     );
   } finally {
     button.disabled = false;
