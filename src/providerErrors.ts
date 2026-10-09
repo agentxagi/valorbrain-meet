@@ -151,7 +151,8 @@ function anthropicQuotaMessage(err: ProviderHttpError): string | null {
   if (noCredit) {
     return "A conta da Anthropic está sem créditos. Adicione créditos em console.anthropic.com.";
   }
-  if (err.status === 400 && /reached your specified API usage limits/i.test(message)) {
+  // The account's own limit, or its workspace's.
+  if (err.status === 400 && /reached your specified (workspace )?API usage limits/i.test(message)) {
     return "O limite de uso definido na sua conta da Anthropic foi atingido. Ajuste em console.anthropic.com.";
   }
   return null;

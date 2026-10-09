@@ -298,6 +298,14 @@ test("Anthropic's spend cap, usage limit and missing credit are a quota, never r
       }),
       "O limite de uso definido na sua conta da Anthropic foi atingido. Ajuste em console.anthropic.com. A transcrição continua normalmente.",
     ],
+    [
+      anthropic(400, {
+        type: "invalid_request_error",
+        message:
+          "You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+      }),
+      "O limite de uso definido na sua conta da Anthropic foi atingido. Ajuste em console.anthropic.com. A transcrição continua normalmente.",
+    ],
   ] as const) {
     assert.equal(isRetryableProviderError(err), false, err.message);
     assert.deepEqual(describeProviderError("summary", err), {
