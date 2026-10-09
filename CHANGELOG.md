@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-10-09
+
+O Claude passa a resumir as reuniões, com uma chave de API da Anthropic.
+
+### 🚀 Features
+
+- **Claude como provedor de resumo.** Novo perfil **Claude (API da Anthropic)** em **Configurações → Resumo**: o resumo ao vivo, a revisão de grafia e a revisão do registro rodam no Claude pela API oficial da Anthropic. Precisa de uma chave de API do [Claude Console](https://console.anthropic.com), cobrada por uso. A assinatura Claude Pro/Max não pode ser usada: a Anthropic não permite que outros apps entrem com a conta Claude.ai nem usem a assinatura. O padrão é `claude-opus-5-5`; `claude-sonnet-5-5` e `claude-haiku-5-5` custam menos. A chave fica só neste navegador
+- O painel de uso estima o custo das reuniões resumidas pelo Claude
+
+### 🐛 Bug Fixes
+
+- Limite de gastos, limite de uso da conta ou do workspace e falta de créditos na Anthropic pausam o resumo por até 30 minutos, com a explicação certa, em vez de tentar de novo a cada minuto. A transcrição continua
+- Quando o Claude recusa resumir um trecho, o trecho fica só na transcrição e o resumo segue com o próximo. Depois de 3 recusas seguidas, o resumo ao vivo para naquela reunião, e o resumo final usa o que já foi resumido. Na revisão de grafia, um trecho recusado não descarta as correções dos outros
+
+### 🔧 Interno
+
+- SDK oficial `@anthropic-ai/sdk` 0.128.0, com versão fixada. O zip traz `THIRD_PARTY_NOTICES.txt` com as licenças dos pacotes incluídos
+- Teste de ponta a ponta com o Claude (`E2E_SUMMARY=claude`). O teste agora também confere que a revisão do registro foi aplicada
+
+### Não verificado
+
+- Uma reunião real resumida pelo Claude: não havia chave de API da Anthropic neste ambiente, e os testes usam respostas simuladas. O teste de conexão com uma chave inválida chegou ao `api.anthropic.com` e recebeu 401.
+- O tempo de resposta do `claude-opus-5-5` numa reunião longa: os limites de tempo foram dimensionados para o GLM.
+- No teste de ponta a ponta, o atalho de gravação na página falsa do Zoom falha neste ambiente, também na 2.4.0. As verificações do Meet e do Claude passam.
+
 ## [2.4.0] - 2026-10-07
 
 Feita a partir das duas últimas reuniões reais salvas no ValorBrain (30/09 e 02/10). Numa conversa de vendas que não fechou, o registro saiu com 42 "decisões", próximos passos repetidos com outras palavras, 84 assuntos e 93 pontos em aberto, e a reunião foi salva sem a lista de participantes.
