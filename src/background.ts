@@ -1719,6 +1719,9 @@ async function reviewRecordWithModel(
             json: true,
             timeoutMs: left,
             signal,
+            // Judging what was decided across the whole meeting: more than the
+            // live passes, which run every few minutes ("low", the default).
+            effort: "medium",
           });
         } catch (err) {
           if (signal.aborted) throw new Error("The record review was cut short", { cause: err });

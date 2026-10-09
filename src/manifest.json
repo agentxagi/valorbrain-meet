@@ -19,6 +19,7 @@
     "https://meet.google.com/*",
     "https://api.openai.com/*",
     "https://api.z.ai/*",
+    "https://api.anthropic.com/*",
     "https://*.valor.digital/*",
     "https://meet.valorbra.in/*",
     "http://localhost/*",

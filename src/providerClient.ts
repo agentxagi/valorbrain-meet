@@ -1,11 +1,13 @@
 /**
  * @fileoverview OpenAI-wire-format requests shared by the service worker
- * (live pipeline) and the options page ("Testar conexão").
+ * (live pipeline) and the options page ("Testar conexão"). Claude speaks its
+ * own Messages API: chat requests for it go through anthropicClient.ts.
  *
  * No retries here: callers decide (the service worker wraps these calls in its
  * request queues). Every non-2xx answer throws {@link ProviderHttpError}.
  */
 
+import { isAnthropicProvider, requestClaudeMessage } from "./anthropicClient";
 import { ProviderHttpError, ProviderPayloadError } from "./providerErrors";
 import type { SttResponse } from "./transcriptFilter";
 import { isZaiProvider, joinProviderUrl, type ProviderConfig } from "./utils/providerSettings";
@@ -48,6 +50,11 @@ export interface ChatRequest {
   timeoutMs?: number;
   /** Cuts the request short, like the timeout (whichever comes first). */
   signal?: AbortSignal;
+  /**
+   * Claude only: how much the model thinks before answering (its thinking
+   * cannot be turned off). Default "low"; other providers ignore it.
+   */
+  effort?: "low" | "medium" | "high";
   fetchImpl?: typeof fetch;
 }
 
@@ -131,12 +138,13 @@ function buildChatBody(
   return body;
 }
 
-/** POST {baseUrl}/chat/completions. */
+/** POST {baseUrl}/chat/completions (Claude: the Messages API, see anthropicClient.ts). */
 export async function requestChatCompletion(
   config: ProviderConfig,
   apiKey: string | null,
   request: ChatRequest,
 ): Promise<ChatResult> {
+  if (isAnthropicProvider(config)) return requestClaudeMessage(config, apiKey, request);
   const url = joinProviderUrl(config.baseUrl, "/chat/completions");
   const doFetch = request.fetchImpl ?? fetch;
   // One deadline for the request and its retry below, cut short by the caller's signal.
