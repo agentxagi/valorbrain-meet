@@ -311,11 +311,12 @@ function sendMessage(message: AnyRecord, sender: AnyRecord = {}): Promise<AnyRec
 }
 
 async function waitFor<T>(probe: () => T | Promise<T>, label: string, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
+  // A steady clock: the wall clock may step (and a test may move Date.now).
+  const deadline = performance.now() + timeoutMs;
   for (;;) {
     const value = await probe();
     if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    if (performance.now() > deadline) throw new Error(`timed out waiting for ${label}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
@@ -1332,8 +1333,14 @@ async function startRecording(streamId: string): Promise<number> {
   return savedBefore;
 }
 
+/** When the last line was said: each line 6 s after it, whatever the wall clock does. */
+let lastLineAt = 0;
+
 /** One line said and transcribed, after which the transcript has `lines` lines. */
 async function say(text: string, lines: number): Promise<void> {
+  // The transcript is kept in the order lines were said: a clock that steps
+  // back must not put this line before the earlier ones.
+  lastLineAt = Math.max(lastLineAt + 6_000, Date.now());
   sttResponses.push({
     text,
     duration: 5,
@@ -1343,8 +1350,8 @@ async function say(text: string, lines: number): Promise<void> {
     type: "OFFSCREEN_AUDIO_CHUNK",
     audioBase64: fakeChunk(),
     mimeType: "audio/webm;codecs=opus",
-    startedAt: Date.now() - 5000,
-    endedAt: Date.now(),
+    startedAt: lastLineAt - 5000,
+    endedAt: lastLineAt,
   });
   await waitFor(
     async () => (await sendMessage({ type: "GET_FULL_STATE" })).transcript.length === lines,
@@ -1396,7 +1403,8 @@ test("a stretch Claude refuses to summarize is skipped, and the user is told onc
     const asked = Date.now();
     const refused = await sayAndSummarize("Vamos falar da vulnerabilidade no servidor.", 1);
     assert.equal(refused.lastSummarizedIndex, 1);
-    assert.ok(refused.lastSummarizedAt >= asked, "the next pass waits the usual interval");
+    // A failed pass would be set two minutes back, to come again in one.
+    assert.ok(refused.lastSummarizedAt > asked - 60_000, "the next pass waits the usual interval");
     assert.deepEqual(
       { scope: refused.notice?.scope, severity: refused.notice?.severity },
       { scope: "summary", severity: "warning" },

@@ -407,11 +407,12 @@ try {
 
   const sw = (message) => ext.evaluate((m) => chrome.runtime.sendMessage(m), message);
   const waitUntil = async (probe, label, timeoutMs = 30_000) => {
-    const deadline = Date.now() + timeoutMs;
+    // A steady clock: the wall clock may step while the run waits.
+    const deadline = performance.now() + timeoutMs;
     for (;;) {
       const value = await probe();
       if (value) return value;
-      if (Date.now() > deadline) throw new Error(`timed out: ${label}`);
+      if (performance.now() > deadline) throw new Error(`timed out: ${label}`);
       await new Promise((r) => setTimeout(r, 250));
     }
   };
