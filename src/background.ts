@@ -164,6 +164,8 @@ const LOG_PREFIX = "[ValorBrainMeet]";
 
 /** How long a failed summary waits before the next attempt. */
 const SUMMARY_RETRY_MS = 60_000;
+/** Refusals in a row after which the live summary stops for the recording. */
+const SUMMARY_REFUSALS_TO_STOP = 3;
 /** Upper bound for transcribing the tail of a meeting after "stop". */
 const STOP_TRANSCRIPTION_TIMEOUT_MS = 150_000;
 /** Upper bound for the final spelling pass over the transcript after "stop". */
@@ -341,8 +343,15 @@ let summaryInFlight: Promise<void> | null = null;
  * Anthropic quota: 30 minutes at most).
  */
 let summaryQuotaPause: { until: number; provider: string } | null = null;
-/** The recording (by its start time) already told that the model refused a stretch. */
-let refusalNoticeFor: number | null = null;
+/**
+ * The model's refusals of the live summary in the recording that started at
+ * `startTime`: how many in a row, and whether the user was told.
+ */
+let summaryRefusals: { startTime: number | null; inARow: number; told: boolean } = {
+  startTime: null,
+  inARow: 0,
+  told: false,
+};
 /** Graph vocabulary requests made for the current recording (reset by a new start time). */
 let vocabularyRequests = { startTime: 0, count: 0, lastAt: 0, inFlight: false, stale: false };
 let vocabularyRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1418,6 +1427,14 @@ function transcriptChars(): number {
   return state.transcript.reduce((total, entry) => total + (entry.text?.length ?? 0), 0);
 }
 
+/** True once the model refused this recording's live summary too many times in a row. */
+function summaryRefusedForRecording(): boolean {
+  return (
+    summaryRefusals.startTime === state.startTime &&
+    summaryRefusals.inARow >= SUMMARY_REFUSALS_TO_STOP
+  );
+}
+
 /**
  * Runs a summary pass when it is due. `force` skips the cadence checks (used
  * by the catch-up shortcut and by the final pass after stop).
@@ -1430,6 +1447,8 @@ async function summarizeTranscriptIfNeeded(
     await summaryInFlight.catch(() => undefined);
   }
   if (state.transcript.length === 0 || !state.startTime) return;
+  // The model refuses this meeting pass after pass: only the final pass still asks.
+  if (!options.final && summaryRefusedForRecording()) return;
 
   const fromIndex = Math.min(state.lastSummarizedIndex ?? 0, state.transcript.length);
   if (fromIndex >= state.transcript.length) return; // nothing new
@@ -1528,6 +1547,7 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     mergeSummaryResult(state, parsed, features);
     state.lastSummarizedAt = Date.now();
     state.lastSummarizedIndex = window.endIndex;
+    if (summaryRefusals.startTime === startTimeAtCall) summaryRefusals.inARow = 0;
     clearNotice("summary");
   } catch (err) {
     if (state.startTime !== startTimeAtCall) return;
@@ -1537,8 +1557,19 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
       console.warn(`${LOG_PREFIX} Summary refused, stretch skipped:`, err);
       state.lastSummarizedAt = Date.now();
       state.lastSummarizedIndex = window.endIndex;
-      if (refusalNoticeFor !== startTimeAtCall) {
-        refusalNoticeFor = startTimeAtCall;
+      if (summaryRefusals.startTime !== startTimeAtCall) {
+        summaryRefusals = { startTime: startTimeAtCall, inARow: 0, told: false };
+      }
+      summaryRefusals.inARow += 1;
+      if (summaryRefusals.inARow >= SUMMARY_REFUSALS_TO_STOP) {
+        // It is the meeting it refuses: no more live passes in this recording.
+        setNotice(
+          "summary",
+          "warning",
+          "O Claude recusou resumir esta reunião; a transcrição continua e o registro final usa o que já foi resumido.",
+        );
+      } else if (!summaryRefusals.told) {
+        summaryRefusals.told = true;
         const message =
           "O Claude recusou resumir um trecho da reunião; ele fica só na transcrição.";
         setNotice("summary", "warning", message);

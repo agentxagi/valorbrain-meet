@@ -1422,6 +1422,50 @@ test("a stretch Claude refuses to summarize is skipped, and the user is told onc
   });
 });
 
+test("after three refusals in a row the live summary stops for the recording, the final pass still runs", async () => {
+  const stopped =
+    "O Claude recusou resumir esta reunião; a transcrição continua e o registro final usa o que já foi resumido.";
+  await withClaude(async () => {
+    fetchCalls.length = 0;
+    const savedBefore = await startRecording("stream-16");
+
+    // Two refusals, then a summary: the count starts over.
+    claudeRefuses = refusesSummaries;
+    await sayAndSummarize("O primeiro trecho recusado.", 1);
+    await sayAndSummarize("O segundo trecho recusado.", 2);
+    claudeRefuses = () => false;
+    await sayAndSummarize("Um trecho resumido no meio.", 3);
+    claudeRefuses = refusesSummaries;
+    await sayAndSummarize("O terceiro trecho recusado.", 4);
+    const twice = await sayAndSummarize("O quarto trecho recusado.", 5);
+    assert.notEqual(twice.notice?.message, stopped, "two in a row: the live summary goes on");
+
+    // The third in a row: no more live passes in this recording, not even the shortcut's.
+    const thrice = await sayAndSummarize("O quinto trecho recusado.", 6);
+    assert.deepEqual(
+      { message: thrice.notice?.message, severity: thrice.notice?.severity },
+      { message: stopped, severity: "warning" },
+    );
+    const passes = fetchCalls.filter(isClaudeSummaryCall).length;
+    await say("Um trecho depois de parar.", 7);
+    await sendMessage({ type: "FORCE_SUMMARY" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(fetchCalls.filter(isClaudeSummaryCall).length, passes);
+    assert.equal((await sendMessage({ type: "GET_FULL_STATE" })).lastSummarizedIndex, 6);
+
+    // The final pass at stop still asks, once, for what came after.
+    claudeRefuses = () => false;
+    await stopAndDeliver(savedBefore);
+    const final = fetchCalls.filter(isClaudeSummaryCall).slice(passes);
+    assert.equal(final.length, 1);
+    assert.match(claudeSystemPrompt(final[0].init), /passagem final/);
+    assert.match(
+      String(JSON.parse(String(final[0].init.body)).messages[0].content),
+      /depois de parar/,
+    );
+  });
+});
+
 test("an Anthropic quota pauses the summary for 30 minutes at most, whatever date it names", async () => {
   await withClaude(async () => {
     const realNow = Date.now;
