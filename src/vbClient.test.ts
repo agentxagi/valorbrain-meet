@@ -338,6 +338,37 @@ test("sendToValorBrain says when the Tenant ID is not the token's company", asyn
   assert.match(result.ok ? "" : result.error, /Apague o Tenant ID/);
 });
 
+test("sendToValorBrain keeps the generic message for a 403 that is not JSON", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    new Response("<html>Forbidden</html>", {
+      status: 403,
+      headers: { "Content-Type": "text/html" },
+    });
+
+  const result = await sendToValorBrain(makeSession(), configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /HTTP 403/);
+});
+
+test("sendToValorBrain does not wait forever for the body of a refusal", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    new Response(new ReadableStream({ start() {} }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  const started = performance.now();
+  const result = await sendToValorBrain(makeSession(), configuredSettings(), {
+    fetchImpl,
+    timeoutMs: 50,
+  });
+
+  assert.ok(performance.now() - started < 2_000);
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /HTTP 403/);
+});
+
 test("sendToValorBrain retries once on 429 and then succeeds", async () => {
   const statuses = [429, 200];
   const urls: string[] = [];
@@ -462,6 +493,50 @@ test("testValorBrainConnection does not pass a store route that is missing", asy
 
   assert.equal(result.ok, false);
   assert.match(result.message, /404/);
+});
+
+test("testValorBrainConnection does not call a token refused on reading read-only", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    jsonResponse(403, {
+      error: "Forbidden: token has no usable scopes",
+      code: "insufficient_scope",
+    });
+
+  const result = await testValorBrainConnection(configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /não tem permissão para a memória/);
+  assert.doesNotMatch(result.message, /só tem permissão de leitura/);
+});
+
+test("testValorBrainConnection says when the Tenant ID is not the token's company", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    jsonResponse(403, {
+      error: "Tenant mismatch: X-Tenant-ID does not match the API token's tenant",
+    });
+
+  const result = await testValorBrainConnection(configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /Apague o Tenant ID/);
+});
+
+test("testValorBrainConnection: a write probe answered 2xx means the token writes", async () => {
+  const fetchImpl: typeof fetch = async () => jsonResponse(200, {});
+
+  const result = await testValorBrainConnection(configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, true);
+});
+
+test("testValorBrainConnection reports a write probe the server failed", async () => {
+  const fetchImpl: typeof fetch = async (_url, init) =>
+    init?.method === "POST" ? jsonResponse(500, {}) : jsonResponse(200, {});
+
+  const result = await testValorBrainConnection(configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /500/);
 });
 
 test("testValorBrainConnection reports the failure reason", async () => {

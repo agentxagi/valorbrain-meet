@@ -402,15 +402,16 @@ export function classifyVbResponse(response: Response): VbFailure | null {
   return classifyResponse(response);
 }
 
+/** A 401/403 the extension has no better words for. */
+function authFailure(status: number): VbFailure {
+  return failure(
+    "auth",
+    `Credenciais rejeitadas pelo ValorBrain (HTTP ${status}) — verifique o token em Configurações → ValorBrain`,
+  );
+}
+
 function classifyResponse(response: Response): VbFailure | null {
-  if (response.status === 401 || response.status === 403) {
-    return failure(
-      "auth",
-      "Credenciais rejeitadas pelo ValorBrain (HTTP " +
-        response.status +
-        ") — verifique o token em Configurações → ValorBrain",
-    );
-  }
+  if (response.status === 401 || response.status === 403) return authFailure(response.status);
   if (response.ok) return null;
   if (response.status === 429) {
     return failure("rateLimit", "ValorBrain atingiu o limite de requisições (HTTP 429)", true);
@@ -422,19 +423,34 @@ function classifyResponse(response: Response): VbFailure | null {
   );
 }
 
+/** How long the body of a refusal may take before the generic message is used. */
+const VB_REJECTION_BODY_MS = 5_000;
+
 /**
- * A 401/403 with the reason the engine gives in the body. The common one is a
- * token that only reads: "Conectar com ValorBrain" asked for `read` alone
- * until 2.5.1, and saving a meeting is a write.
+ * A 401/403 with the reason the engine gives in the body. `write` says whether
+ * the refused request was a write (a send, or the test's write probe): there
+ * the common reason is a token that only reads, since "Conectar com
+ * ValorBrain" asked for `read` alone until 2.5.1. The request timer ends with
+ * the headers, so the body gets its own deadline.
  */
-async function explainRejection(response: Response): Promise<VbFailure> {
-  const body = (await parseJsonBody(response)) as { error?: unknown; code?: unknown } | null;
+async function explainRejection(
+  response: Response,
+  write: boolean,
+  options: VbRequestOptions = {},
+): Promise<VbFailure> {
+  const bodyMs = Math.min(options.timeoutMs ?? VB_REJECTION_BODY_MS, VB_REJECTION_BODY_MS);
+  const body = (await readJsonWithin(response, bodyMs)) as {
+    error?: unknown;
+    code?: unknown;
+  } | null;
   const code = typeof body?.code === "string" ? body.code : "";
   const error = typeof body?.error === "string" ? body.error : "";
   if (response.status === 403 && code === "insufficient_scope") {
     return failure(
       "auth",
-      "O token do ValorBrain só tem permissão de leitura, e salvar a reunião é uma gravação. Em Configurações → ValorBrain, clique em Reconectar ou cole um token com permissão de escrita.",
+      write
+        ? "O token do ValorBrain só tem permissão de leitura, e salvar a reunião é uma gravação. Em Configurações → ValorBrain, clique em Reconectar ou cole um token com permissão de escrita."
+        : "O token do ValorBrain não tem permissão para a memória da empresa. Em Configurações → ValorBrain, clique em Reconectar ou cole outro token.",
     );
   }
   if (response.status === 403 && /tenant mismatch/i.test(error)) {
@@ -443,7 +459,20 @@ async function explainRejection(response: Response): Promise<VbFailure> {
       "O Tenant ID em Configurações → ValorBrain não é o da empresa do token. Apague o Tenant ID: o token já diz qual é a empresa.",
     );
   }
-  return classifyResponse(response)!;
+  return authFailure(response.status);
+}
+
+/** The JSON body, or null when it is not JSON or has not arrived within `ms`. */
+async function readJsonWithin(response: Response, ms: number): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  try {
+    return await Promise.race([parseJsonBody(response), late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function parseJsonBody(response: Response): Promise<unknown> {
@@ -512,7 +541,9 @@ export async function sendToValorBrain(
     outcome = await attemptRequest(url, init, options);
     verdict = outcome.failure ?? classifyResponse(outcome.response!);
   }
-  if (verdict?.kind === "auth" && outcome.response) return explainRejection(outcome.response);
+  if (verdict?.kind === "auth" && outcome.response) {
+    return explainRejection(outcome.response, true, options);
+  }
   if (verdict) return verdict;
 
   const body = await parseJsonBody(outcome.response!);
@@ -564,7 +595,10 @@ export async function testValorBrainConnection(
 
   const classified = classifyResponse(outcome.response!);
   if (classified?.kind === "auth") {
-    return { ok: false, message: (await explainRejection(outcome.response!)).error };
+    return {
+      ok: false,
+      message: (await explainRejection(outcome.response!, false, options)).error,
+    };
   }
   if (classified) return { ok: false, message: classified.error };
 
@@ -580,7 +614,7 @@ export async function testValorBrainConnection(
   if (probe.failure) return { ok: false, message: probe.failure.error };
   const refused = classifyResponse(probe.response!);
   if (refused?.kind === "auth") {
-    return { ok: false, message: (await explainRejection(probe.response!)).error };
+    return { ok: false, message: (await explainRejection(probe.response!, true, options)).error };
   }
   const bodyRefused = probe.response!.status === 400 || probe.response!.status === 422;
   if (refused && !bodyRefused) return { ok: false, message: refused.error };

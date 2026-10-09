@@ -36,6 +36,8 @@ export interface OAuthClient {
   redirectUri: string;
   /** Scope the client was registered with (none for clients registered before 2.5.1). */
   scope?: string;
+  /** Engine the client was registered on (none before 2.5.1). */
+  baseUrl?: string;
 }
 
 export interface ConnectResult {
@@ -69,9 +71,13 @@ export function buildRegistrationBody(redirectUri: string): Record<string, unkno
   };
 }
 
-/** True when a granted OAuth scope lets the token save meetings. */
+/**
+ * True when a granted OAuth scope lets the token save meetings: the scopes the
+ * engine's REST guard accepts for a write to the memory routes.
+ */
 export function grantsWrite(scope: string): boolean {
-  return scope.split(/\s+/).includes("write");
+  const writes = ["write", "*", "all", "admin", "memory", "memory:*", "memory:write"];
+  return scope.split(/\s+/).some((s) => writes.includes(s) || s.startsWith("memory_"));
 }
 
 /** Registers an OAuth client for this extension install and returns its id. */
@@ -172,14 +178,22 @@ export async function connectValorBrain(baseUrl = VB_API_BASE_URL): Promise<Conn
   const redirectUri = chrome.identity.getRedirectURL();
   const stored = await chrome.storage.local.get(VB_OAUTH_CLIENT_KEY);
   const cached = stored[VB_OAUTH_CLIENT_KEY] as OAuthClient | undefined;
-  // The engine refuses a scope wider than the registration: a client registered
-  // before the Meet asked for `write` is replaced, not reused.
-  const clientId =
-    cached && cached.redirectUri === redirectUri && cached.scope === VB_OAUTH_SCOPE
-      ? cached.clientId
-      : await registerClient(baseUrl, redirectUri);
+  const engine = baseUrl.replace(/\/+$/, "");
+  // A client lives on the engine that registered it, and the engine refuses a
+  // scope wider than the registration: a client from another engine, or one
+  // registered before the Meet asked for `write`, is replaced, not reused.
+  const reusable =
+    cached?.redirectUri === redirectUri &&
+    cached.scope === VB_OAUTH_SCOPE &&
+    cached.baseUrl === engine;
+  const clientId = reusable ? cached.clientId : await registerClient(baseUrl, redirectUri);
   await chrome.storage.local.set({
-    [VB_OAUTH_CLIENT_KEY]: { clientId, redirectUri, scope: VB_OAUTH_SCOPE } satisfies OAuthClient,
+    [VB_OAUTH_CLIENT_KEY]: {
+      clientId,
+      redirectUri,
+      scope: VB_OAUTH_SCOPE,
+      baseUrl: engine,
+    } satisfies OAuthClient,
   });
 
   const state = base64url(crypto.getRandomValues(new Uint8Array(16)).buffer);
@@ -200,8 +214,9 @@ export async function connectValorBrain(baseUrl = VB_API_BASE_URL): Promise<Conn
     redirectUri,
     verifier,
   });
-  // The token never gets more than the token that approved it. One that only
-  // reads would be saved as "Conectado" and then refuse every meeting.
+  // The engine refuses the approval itself (an invalid_scope page) when the
+  // token pasted there cannot write. This covers an engine that would issue a
+  // read-only token instead: saved as "Conectado", it would refuse every meeting.
   if (scope && !grantsWrite(scope)) {
     throw new Error(
       "o ValorBrain autorizou só leitura, e o Meet precisa gravar as reuniões. Aprove de novo com um token que tenha permissão de escrita.",

@@ -24,7 +24,7 @@ interface Harness {
  * chrome.identity and chrome.storage, and the engine's /oauth endpoints, as
  * far as the connect flow uses them. The token endpoint grants `grantedScope`.
  */
-function install(options: { cached?: unknown; grantedScope: string }): Harness {
+function install(options: { cached?: unknown; grantedScope?: string }): Harness {
   const harness: Harness = { storage: {}, registrations: [], authorizeUrls: [] };
   if (options.cached) harness.storage[VB_OAUTH_CLIENT_KEY] = options.cached;
   (globalThis as unknown as { chrome: unknown }).chrome = {
@@ -55,7 +55,7 @@ function install(options: { cached?: unknown; grantedScope: string }): Harness {
       return Response.json({
         access_token: "vbm_issued",
         token_type: "Bearer",
-        scope: options.grantedScope,
+        ...(options.grantedScope === undefined ? {} : { scope: options.grantedScope }),
       });
     }
     return new Response("not found", { status: 404 });
@@ -85,8 +85,11 @@ test("the registration and the authorization ask to write, not only to read", ()
 test("grantsWrite reads the scope the token endpoint granted", () => {
   assert.equal(grantsWrite("read write"), true);
   assert.equal(grantsWrite("write read"), true);
+  assert.equal(grantsWrite("memory:write"), true);
+  assert.equal(grantsWrite("*"), true);
   assert.equal(grantsWrite("read"), false);
   assert.equal(grantsWrite("readwrite"), false);
+  assert.equal(grantsWrite("secrets:write"), false);
 });
 
 test("a client registered before 2.5.1 (read only) is replaced by one that asks to write", async () => {
@@ -106,16 +109,17 @@ test("a client registered before 2.5.1 (read only) is replaced by one that asks 
     clientId: "new-client",
     redirectUri: REDIRECT,
     scope: VB_OAUTH_SCOPE,
+    baseUrl: BASE,
   });
 });
 
 test("a client already registered to write is reused", async () => {
   const harness = install({
-    cached: { clientId: "rw-client", redirectUri: REDIRECT, scope: VB_OAUTH_SCOPE },
+    cached: { clientId: "rw-client", redirectUri: REDIRECT, scope: VB_OAUTH_SCOPE, baseUrl: BASE },
     grantedScope: "read write",
   });
 
-  await connectValorBrain(BASE);
+  await connectValorBrain(`${BASE}/`);
 
   assert.equal(harness.registrations.length, 0);
   assert.equal(harness.authorizeUrls[0].searchParams.get("client_id"), "rw-client");
@@ -125,4 +129,29 @@ test("a token that only reads is refused instead of saved as connected", async (
   install({ grantedScope: "read" });
 
   await assert.rejects(connectValorBrain(BASE), /só leitura/);
+});
+
+test("a client registered on another engine is replaced", async () => {
+  const harness = install({
+    cached: {
+      clientId: "staging-client",
+      redirectUri: REDIRECT,
+      scope: VB_OAUTH_SCOPE,
+      baseUrl: "https://staging.example",
+    },
+    grantedScope: "read write",
+  });
+
+  await connectValorBrain(BASE);
+
+  assert.equal(harness.registrations.length, 1);
+  assert.equal(harness.authorizeUrls[0].searchParams.get("client_id"), "new-client");
+});
+
+test("a token response without a scope is the scope asked for (RFC 6749 §5.1)", async () => {
+  install({});
+
+  const result = await connectValorBrain(BASE);
+
+  assert.equal(result.accessToken, "vbm_issued");
 });
