@@ -31,6 +31,9 @@ const EXTENSION_DIR = resolve(here, "../../dist");
 const CHROME_PATH = process.env.CHROME_PATH;
 const PLAYWRIGHT_CORE = process.env.PLAYWRIGHT_CORE || "playwright-core";
 const XKEY_PYTHON = process.env.XKEY_PYTHON || "python3";
+// E2E_SUMMARY=claude: the summary provider is the Claude profile (Messages API,
+// served by the mock below) instead of an OpenAI-compatible one.
+const CLAUDE = process.env.E2E_SUMMARY === "claude";
 if (!CHROME_PATH) {
   console.error(
     "CHROME_PATH is required (Chrome for Testing: branded Chrome ignores --load-extension).",
@@ -137,7 +140,15 @@ const STT_LINES = [
   "O Rapplet e o Supabase também entram nessa conta.",
   "Vamos marcar a próxima conversa com a Ana na semana que vem.",
 ];
-const seen = { sttPrompts: [], vocabulary: [], aliases: [], stores: [] };
+const seen = {
+  sttPrompts: [],
+  vocabulary: [],
+  aliases: [],
+  stores: [],
+  chats: 0,
+  claude: [],
+  reviews: 0,
+};
 
 function readBody(req) {
   return new Promise((resolveBody) => {
@@ -152,19 +163,39 @@ function send(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+/** The decision the mocked record review drops: gone from the delivery only if the review applied. */
+const DROPPED_DECISION = "Incluir o Replit e o Supabase na conta";
+
+// More than four items: the model reviews the record before it is saved.
 const SUMMARY = {
   summary:
     "A Resend usa o gbrain e o Replit com os agentes; a próxima conversa fica para a semana que vem.",
   summaryItems: [],
   topics: [{ name: "Parceria com a Resend", status: "active" }],
   currentTopic: "Parceria com a Resend",
-  decisions: [],
+  decisions: [
+    { text: "Conversar de novo com a Ana na semana que vem", classification: "finalized" },
+    { text: DROPPED_DECISION, classification: "tentative" },
+  ],
   actionItems: [{ task: "Marcar a próxima conversa", owner: "Ana" }],
   sentiment: "positive",
   keyInsights: [],
   contradictions: [],
-  questionsRaised: [],
+  questionsRaised: ["Quando a Ana pode conversar?"],
 };
+
+/** What the mocked model answers, by its instructions: spelling fixes, the record review or a summary. */
+function modelAnswer(system, user) {
+  if (/revisa a grafia/.test(system)) return { correcoes: [{ de: "Rapplet", para: "Replit" }] };
+  if (!/revisa o registro/.test(system)) return SUMMARY;
+  // The record review keeps every item but the tentative decision.
+  seen.reviews += 1;
+  const ids = (prefix) =>
+    [...user.matchAll(new RegExp(`^(${prefix}\\d+)(.*)$`, "gm"))]
+      .filter(([, , text]) => !text.includes(DROPPED_DECISION))
+      .map(([, id]) => id);
+  return { decisions: ids("D"), actionItems: ids("A"), topics: ids("T"), openPoints: ids("P") };
+}
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
@@ -182,12 +213,37 @@ const server = createServer(async (req, res) => {
         : [],
     });
   }
-  if (url.pathname === "/v1/chat/completions") {
+  if (url.pathname === "/v1/messages") {
+    // Claude's Messages API, as the official SDK calls it from the extension.
     const request = JSON.parse(body.toString("utf8") || "{}");
-    const system = String(request.messages?.[0]?.content ?? "");
-    const content = /revisa a grafia/.test(system)
-      ? { correcoes: [{ de: "Rapplet", para: "Replit" }] }
-      : SUMMARY;
+    seen.claude.push({
+      key: req.headers["x-api-key"],
+      browser: req.headers["anthropic-dangerous-direct-browser-access"],
+      beta: req.headers["anthropic-beta"],
+      request,
+    });
+    const content = modelAnswer(
+      String(request.system ?? ""),
+      String(request.messages?.[0]?.content ?? ""),
+    );
+    return send(res, 200, {
+      id: `msg_e2e_${seen.claude.length}`,
+      type: "message",
+      role: "assistant",
+      model: request.model,
+      content: [{ type: "text", text: JSON.stringify(content) }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 100, output_tokens: 50 },
+    });
+  }
+  if (url.pathname === "/v1/chat/completions") {
+    seen.chats += 1;
+    const request = JSON.parse(body.toString("utf8") || "{}");
+    const content = modelAnswer(
+      String(request.messages?.[0]?.content ?? ""),
+      String(request.messages?.[1]?.content ?? ""),
+    );
     return send(res, 200, {
       choices: [{ finish_reason: "stop", message: { content: JSON.stringify(content) } }],
       usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
@@ -323,39 +379,40 @@ try {
 
   const ext = await context.newPage();
   await ext.goto(`chrome-extension://${extensionId}/src/options.html`);
-  await ext.evaluate(async (mock) => {
-    await chrome.storage.local.set({
-      onboardingCompleted: true,
-      settings: {
+  await ext.evaluate(
+    async ([mock, claude]) => {
+      await chrome.storage.local.set({
         onboardingCompleted: true,
-        selfName: "Gus Teste",
-        transcriptionLanguage: "pt",
-        recordingChatNotice: true,
-        "vb.baseUrl": mock,
-        "vb.apiToken": "vbm_e2e_token",
-      },
-      "provider.transcription": {
-        profile: "custom",
-        baseUrl: `${mock}/v1`,
-        apiKey: "",
-        model: "whisper-1",
-      },
-      "provider.summary": {
-        profile: "custom",
-        baseUrl: `${mock}/v1`,
-        apiKey: "",
-        model: "mock-llm",
-      },
-    });
-  }, MOCK);
+        settings: {
+          onboardingCompleted: true,
+          selfName: "Gus Teste",
+          transcriptionLanguage: "pt",
+          recordingChatNotice: true,
+          "vb.baseUrl": mock,
+          "vb.apiToken": "vbm_e2e_token",
+        },
+        "provider.transcription": {
+          profile: "custom",
+          baseUrl: `${mock}/v1`,
+          apiKey: "",
+          model: "whisper-1",
+        },
+        "provider.summary": claude
+          ? { profile: "anthropic", baseUrl: mock, apiKey: "sk-ant-e2e", model: "claude-opus-5-5" }
+          : { profile: "custom", baseUrl: `${mock}/v1`, apiKey: "", model: "mock-llm" },
+      });
+    },
+    [MOCK, CLAUDE],
+  );
 
   const sw = (message) => ext.evaluate((m) => chrome.runtime.sendMessage(m), message);
   const waitUntil = async (probe, label, timeoutMs = 30_000) => {
-    const deadline = Date.now() + timeoutMs;
+    // A steady clock: the wall clock may step while the run waits.
+    const deadline = performance.now() + timeoutMs;
     for (;;) {
       const value = await probe();
       if (value) return value;
-      if (Date.now() > deadline) throw new Error(`timed out: ${label}`);
+      if (performance.now() > deadline) throw new Error(`timed out: ${label}`);
       await new Promise((r) => setTimeout(r, 250));
     }
   };
@@ -452,6 +509,45 @@ try {
       !/Rapplet|D-Brain/.test(stored),
     /Grafia revisada[^\n]*/.exec(stored)?.[0] ?? "",
   );
+  check(
+    "Meet: the model's review of the record was applied before delivery (one decision dropped)",
+    seen.reviews === 1 &&
+      /## Decisões\n- Conversar de novo com a Ana/.test(stored) &&
+      !stored.includes(DROPPED_DECISION),
+    `${seen.reviews} review(s)`,
+  );
+  if (CLAUDE) {
+    const first = seen.claude[0];
+    check(
+      "Claude: the service worker summarized through the Messages API, with the key",
+      seen.claude.length > 0 &&
+        seen.chats === 0 &&
+        first?.key === "sk-ant-e2e" &&
+        first?.browser === "true",
+      `${seen.claude.length} requests to /v1/messages, ${seen.chats} to /v1/chat/completions`,
+    );
+    check(
+      "Claude: no sampling parameters, room to think, effort set",
+      seen.claude.every(
+        (c) =>
+          !("temperature" in c.request) &&
+          c.request.max_tokens >= 16000 &&
+          ["low", "medium"].includes(c.request.output_config?.effort),
+      ),
+      JSON.stringify(seen.claude.map((c) => c.request.output_config?.effort)),
+    );
+    const medium = seen.claude.filter((c) => c.request.output_config?.effort === "medium");
+    check(
+      'Claude: the record review, and only it, thinks more (effort "medium")',
+      medium.length === 1 && /revisa o registro/.test(String(medium[0].request.system ?? "")),
+      `${medium.length} of ${seen.claude.length} requests`,
+    );
+    check(
+      "Claude: no refusal-fallback beta for a host that is not api.anthropic.com",
+      seen.claude.every((c) => c.beta === undefined && !("fallbacks" in c.request)),
+      JSON.stringify(seen.claude.map((c) => c.beta ?? null)),
+    );
+  }
   await waitUntil(() => seen.aliases.length > 0, "aliases taught", 20_000);
   check(
     "Meet: only the review's fix taught back to the graph",

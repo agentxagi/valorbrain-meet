@@ -26,6 +26,7 @@ export type ProviderProfileId =
   | "zai-coding"
   | "zai"
   | "openai"
+  | "anthropic"
   | "custom";
 
 /** A ready-made provider preset offered in the options dropdown. */
@@ -105,6 +106,16 @@ export const PROVIDER_PROFILES: ProviderProfile[] = [
     baseUrl: "https://api.openai.com/v1",
     model: "whisper-1",
     models: { transcription: "whisper-1", summary: "gpt-4o-mini" },
+    requiresKey: true,
+  },
+  {
+    id: "anthropic",
+    label: "Claude (API da Anthropic)",
+    description:
+      "Resumo com o Claude, por uma chave de API do Claude Console (cobrada por uso, à parte da assinatura Claude Pro/Max). Modelos: claude-opus-5-5, claude-sonnet-5-5 ou claude-haiku-5-5.",
+    roles: ["summary"],
+    baseUrl: "https://api.anthropic.com",
+    model: "claude-opus-5-5",
     requiresKey: true,
   },
 ];

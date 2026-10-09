@@ -47,6 +47,7 @@ const input = (id: string) => $<HTMLInputElement>(id);
 const MANIFEST_HOSTS = [
   /^https:\/\/api\.openai\.com$/,
   /^https:\/\/api\.z\.ai$/,
+  /^https:\/\/api\.anthropic\.com$/,
   /^https:\/\/([a-z0-9-]+\.)*valor\.digital$/,
   /^http:\/\/localhost(:\d+)?$/,
   /^http:\/\/127\.0\.0\.1(:\d+)?$/,

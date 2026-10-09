@@ -84,8 +84,13 @@ test("built-in profiles carry the deployment defaults", () => {
   assert.equal(openai.baseUrl, "https://api.openai.com/v1");
   assert.equal(profileModel(openai, "transcription"), "whisper-1");
   assert.equal(profileModel(openai, "summary"), "gpt-4o-mini");
+  const anthropic = getProviderProfile("anthropic")!;
+  assert.equal(anthropic.baseUrl, "https://api.anthropic.com");
+  assert.equal(anthropic.model, "claude-opus-5-5");
+  assert.deepEqual(anthropic.roles, ["summary"], "Claude has no transcription API");
+  assert.equal(anthropic.requiresKey, true);
   assert.equal(getProviderProfile("custom"), null);
-  assert.equal(PROVIDER_PROFILES.length, 5);
+  assert.equal(PROVIDER_PROFILES.length, 6);
 });
 
 test("profiles are offered only for the roles they can drive", () => {
@@ -95,11 +100,12 @@ test("profiles are offered only for the roles they can drive", () => {
   );
   assert.deepEqual(
     profilesForRole("summary").map((p) => p.id),
-    ["zai-coding", "zai", "openai"],
+    ["zai-coding", "zai", "openai", "anthropic"],
   );
   assert.equal(requiresApiKey({ profile: "whisper-local" }), false);
   assert.equal(requiresApiKey({ profile: "custom" }), false);
   assert.equal(requiresApiKey({ profile: "zai-coding" }), true);
+  assert.equal(requiresApiKey({ profile: "anthropic" }), true);
 });
 
 test("a chat preset stored under transcription is kept as custom, not silently reset", () => {

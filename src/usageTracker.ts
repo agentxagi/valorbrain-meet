@@ -13,6 +13,23 @@ const OPENAI_PRICING: Record<string, { input: number; output: number }> = {
   "whisper-1": { input: 0, output: 0 },
 };
 
+/**
+ * Claude pricing per 1,000 tokens in USD (input / output), by model id prefix.
+ * The longest prefix that fits wins: claude-opus-5-5 is never claude-opus-5.
+ */
+const CLAUDE_PRICING: Record<string, { input: number; output: number }> = {
+  "claude-opus-5-5": { input: 0.004, output: 0.02 },
+  "claude-opus-5": { input: 0.005, output: 0.025 },
+  "claude-opus-4-8": { input: 0.005, output: 0.025 },
+  "claude-opus-4-7": { input: 0.005, output: 0.025 },
+  "claude-opus-4-6": { input: 0.005, output: 0.025 },
+  "claude-sonnet-5-5": { input: 0.002, output: 0.01 },
+  "claude-sonnet-5": { input: 0.002, output: 0.01 },
+  "claude-sonnet-4-6": { input: 0.003, output: 0.015 },
+  "claude-haiku-5-5": { input: 0.0001, output: 0.0005 },
+  "claude-haiku-4-5": { input: 0.001, output: 0.005 },
+};
+
 /** Whisper is billed at $0.006 per minute of audio. */
 const WHISPER_PRICE_PER_SECOND = 0.006 / 60;
 
@@ -44,13 +61,17 @@ export interface UsageDelta {
 }
 
 /**
- * Resolves the per-token pricing for a chat model. Only OpenAI models have a
- * published price table; unknown models (e.g. Z.ai GLM or custom deployments)
- * are treated as free until a provider price list is added.
+ * Resolves the per-token pricing for a chat model. Only OpenAI and Claude
+ * models have a published price table; unknown models (e.g. Z.ai GLM or custom
+ * deployments) are treated as free until a provider price list is added.
  */
 function pricingForModel(model: string | undefined): { input: number; output: number } | null {
   if (!model) return null;
-  return OPENAI_PRICING[model] ?? null;
+  // The longest prefix that fits; a Claude id may carry a suffix, such as a snapshot date.
+  const [claude] = Object.keys(CLAUDE_PRICING)
+    .filter((prefix) => model.startsWith(prefix))
+    .sort((a, b) => b.length - a.length);
+  return OPENAI_PRICING[model] ?? (claude ? CLAUDE_PRICING[claude] : null);
 }
 
 function chatCostFor(

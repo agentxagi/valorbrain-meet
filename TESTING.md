@@ -273,7 +273,8 @@ ValorBrain API. The tab capture, the offscreen recorder, the segmenter and the c
 script are real; the recording starts with the Alt+Shift+G shortcut pressed through the X
 server (`tests/e2e/xkey.py`), the same thing a person pressing it produces. It checks the
 recording notice in the call chat, the graph vocabulary in the Whisper prompt, the learned
-correction applied to each line, the delivered transcript and the aliases taught back.
+correction applied to each line, the model's review of the record, the delivered transcript
+and the aliases taught back.
 
 ```bash
 npm run build
@@ -282,6 +283,12 @@ PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
 XKEY_PYTHON=/path/to/python-with-python-xlib \
 xvfb-run -a -s "-screen 0 1280x900x24" npm run test:e2e
 ```
+
+`E2E_SUMMARY=claude` runs the same flow with the summary provider set to the Claude profile:
+the mock answers Claude's Messages API (`/v1/messages`), and the run also checks that the
+service worker reached it with the key, without sampling parameters, with room to think and an
+effort level ("medium" only for the record review), and without the refusal-fallback beta,
+which only goes to `api.anthropic.com`.
 
 Requirements: Chrome for Testing (branded Chrome ignores `--load-extension`), Xvfb,
 `espeak-ng` and `ffmpeg` (the meeting audio is synthesized), `playwright-core` and a Python

@@ -99,10 +99,12 @@ import {
 } from "./vbClient";
 import {
   describeProviderError,
+  isAnthropicQuota,
   isRetryableProviderError,
   ProviderConfigError,
   ProviderHttpError,
   ProviderPayloadError,
+  ProviderRefusalError,
   quotaResetAt,
 } from "./providerErrors";
 import { anySignal, requestChatCompletion, requestTranscription } from "./providerClient";
@@ -162,6 +164,8 @@ const LOG_PREFIX = "[ValorBrainMeet]";
 
 /** How long a failed summary waits before the next attempt. */
 const SUMMARY_RETRY_MS = 60_000;
+/** Refusals in a row after which the live summary stops for the recording. */
+const SUMMARY_REFUSALS_TO_STOP = 3;
 /** Upper bound for transcribing the tail of a meeting after "stop". */
 const STOP_TRANSCRIPTION_TIMEOUT_MS = 150_000;
 /** Upper bound for the final spelling pass over the transcript after "stop". */
@@ -335,9 +339,19 @@ let isProcessingSession = false;
 let summaryInFlight: Promise<void> | null = null;
 /**
  * Set when the summary provider says its quota is exhausted: no summary or
- * spelling request is sent to the same provider/key until it renews.
+ * spelling request is sent to the same provider/key until it renews (an
+ * Anthropic quota: 30 minutes at most).
  */
 let summaryQuotaPause: { until: number; provider: string } | null = null;
+/**
+ * The model's refusals of the live summary in the recording that started at
+ * `startTime`: how many in a row, and whether the user was told.
+ */
+let summaryRefusals: { startTime: number | null; inARow: number; told: boolean } = {
+  startTime: null,
+  inARow: 0,
+  told: false,
+};
 /** Graph vocabulary requests made for the current recording (reset by a new start time). */
 let vocabularyRequests = { startTime: 0, count: 0, lastAt: 0, inFlight: false, stale: false };
 let vocabularyRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -363,9 +377,12 @@ function summaryQuotaExhausted(config: ProviderConfig, apiKey: string | null): b
 function pauseSummaryOnQuota(err: unknown, config: ProviderConfig, apiKey: string | null) {
   if (!(err instanceof ProviderHttpError)) return;
   if (describeProviderError("summary", err).kind !== "quota") return;
-  const resetAt = quotaResetAt(err.providerMessage);
+  const soon = Date.now() + 30 * 60_000;
+  const resetAt = quotaResetAt(err.providerMessage)?.getTime() ?? soon;
   summaryQuotaPause = {
-    until: resetAt ? resetAt.getTime() : Date.now() + 30 * 60_000,
+    // Credit added or a limit raised in the Claude Console lifts Anthropic's at
+    // once, whatever date its message names: ask again within 30 minutes.
+    until: isAnthropicQuota(err) ? Math.min(resetAt, soon) : resetAt,
     provider: providerKey(config, apiKey),
   };
 }
@@ -1410,6 +1427,14 @@ function transcriptChars(): number {
   return state.transcript.reduce((total, entry) => total + (entry.text?.length ?? 0), 0);
 }
 
+/** True once the model refused this recording's live summary too many times in a row. */
+function summaryRefusedForRecording(): boolean {
+  return (
+    summaryRefusals.startTime === state.startTime &&
+    summaryRefusals.inARow >= SUMMARY_REFUSALS_TO_STOP
+  );
+}
+
 /**
  * Runs a summary pass when it is due. `force` skips the cadence checks (used
  * by the catch-up shortcut and by the final pass after stop).
@@ -1422,6 +1447,8 @@ async function summarizeTranscriptIfNeeded(
     await summaryInFlight.catch(() => undefined);
   }
   if (state.transcript.length === 0 || !state.startTime) return;
+  // The model refuses this meeting pass after pass: only the final pass still asks.
+  if (!options.final && summaryRefusedForRecording()) return;
 
   const fromIndex = Math.min(state.lastSummarizedIndex ?? 0, state.transcript.length);
   if (fromIndex >= state.transcript.length) return; // nothing new
@@ -1520,20 +1547,47 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
     mergeSummaryResult(state, parsed, features);
     state.lastSummarizedAt = Date.now();
     state.lastSummarizedIndex = window.endIndex;
+    if (summaryRefusals.startTime === startTimeAtCall) summaryRefusals.inARow = 0;
     clearNotice("summary");
   } catch (err) {
     if (state.startTime !== startTimeAtCall) return;
-    console.warn(`${LOG_PREFIX} Summarization failed:`, err);
-    const described = describeProviderError("summary", err, config.baseUrl);
-    pauseSummaryOnQuota(err, config, apiKey);
-    setNotice(
-      "summary",
-      described.kind === "rateLimit" || described.kind === "quota" ? "warning" : "error",
-      described.message,
-    );
-    const intervalMs = summaryIntervalSeconds(settings) * 1000;
-    state.lastSummarizedAt = Date.now() - intervalMs + SUMMARY_RETRY_MS;
-    notify("summary-error", "ValorBrain Meet: resumo com problema", described.message, true);
+    if (err instanceof ProviderRefusalError) {
+      // Asked again, the model refuses again: the stretch stays only in the
+      // transcript, and the next pass starts after it, at the usual pace.
+      console.warn(`${LOG_PREFIX} Summary refused, stretch skipped:`, err);
+      state.lastSummarizedAt = Date.now();
+      state.lastSummarizedIndex = window.endIndex;
+      if (summaryRefusals.startTime !== startTimeAtCall) {
+        summaryRefusals = { startTime: startTimeAtCall, inARow: 0, told: false };
+      }
+      summaryRefusals.inARow += 1;
+      if (summaryRefusals.inARow >= SUMMARY_REFUSALS_TO_STOP) {
+        // It is the meeting it refuses: no more live passes in this recording.
+        setNotice(
+          "summary",
+          "warning",
+          "O Claude recusou resumir esta reunião; a transcrição continua e o registro final usa o que já foi resumido.",
+        );
+      } else if (!summaryRefusals.told) {
+        summaryRefusals.told = true;
+        const message =
+          "O Claude recusou resumir um trecho da reunião; ele fica só na transcrição.";
+        setNotice("summary", "warning", message);
+        notify("summary-refused", "ValorBrain Meet: resumo com problema", message);
+      }
+    } else {
+      console.warn(`${LOG_PREFIX} Summarization failed:`, err);
+      const described = describeProviderError("summary", err, config.baseUrl);
+      pauseSummaryOnQuota(err, config, apiKey);
+      setNotice(
+        "summary",
+        described.kind === "rateLimit" || described.kind === "quota" ? "warning" : "error",
+        described.message,
+      );
+      const intervalMs = summaryIntervalSeconds(settings) * 1000;
+      state.lastSummarizedAt = Date.now() - intervalMs + SUMMARY_RETRY_MS;
+      notify("summary-error", "ValorBrain Meet: resumo com problema", described.message, true);
+    }
   }
   await broadcastStateUpdate();
 }
@@ -1608,6 +1662,11 @@ async function correctTranscriptTerms(): Promise<void> {
         }),
       );
     } catch (err) {
+      // A refused stretch keeps its spelling; the other stretches are still reviewed.
+      if (err instanceof ProviderRefusalError) {
+        console.warn(`${LOG_PREFIX} Spelling review refused, stretch skipped:`, err);
+        continue;
+      }
       pauseSummaryOnQuota(err, config, apiKey);
       throw err;
     }
@@ -1719,6 +1778,9 @@ async function reviewRecordWithModel(
             json: true,
             timeoutMs: left,
             signal,
+            // Judging what was decided across the whole meeting: more than the
+            // live passes, which run every few minutes ("low", the default).
+            effort: "medium",
           });
         } catch (err) {
           if (signal.aborted) throw new Error("The record review was cut short", { cause: err });
