@@ -20,6 +20,19 @@ test("Claude models have an estimated cost, by model", () => {
   near(millionEach("claude-opus-5-5-20261001"), 24);
 });
 
+test("earlier Claude models are priced too, and a longer id never gets a shorter one's price", () => {
+  near(millionEach("claude-opus-5"), 5 + 25);
+  for (const model of ["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6"]) {
+    near(millionEach(model), 5 + 25);
+  }
+  near(millionEach("claude-sonnet-5"), 2 + 10);
+  near(millionEach("claude-sonnet-4-6"), 3 + 15);
+  near(millionEach("claude-haiku-4-5"), 1 + 5);
+  near(millionEach("claude-haiku-4-5-20251001"), 1 + 5);
+  // claude-opus-5-5 starts with claude-opus-5, which costs more.
+  near(millionEach("claude-opus-5-5"), 4 + 20);
+});
+
 test("other models keep their price, or none", () => {
   near(millionEach("gpt-4o-mini"), 0.15 + 0.6);
   assert.equal(millionEach("glm-5.3-flash"), 0);
