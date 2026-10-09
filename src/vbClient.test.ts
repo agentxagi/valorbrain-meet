@@ -14,6 +14,7 @@ import {
   testValorBrainConnection,
   DEFAULT_VB_SETTINGS,
   VB_STORE_PATH,
+  VB_WRITE_PROBE_BODY,
   type VbSettings,
 } from "./vbClient.ts";
 import { State } from "./types.ts";
@@ -64,6 +65,12 @@ function jsonResponse(status: number, body: unknown = {}): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+/** The engine's answer to a store from a token without the `write` scope. */
+const READ_ONLY_REFUSAL = {
+  error: "Forbidden: token scopes do not permit POST /api/v1/memory/store",
+  code: "insufficient_scope",
+};
 
 // ---------------------------------------------------------------------------
 // Settings normalization
@@ -309,6 +316,28 @@ test("sendToValorBrain maps 401/403 to an auth failure without retrying", async 
   }
 });
 
+test("sendToValorBrain says when the token only reads (the OAuth token of 2.5.0 and before)", async () => {
+  const fetchImpl: typeof fetch = async () => jsonResponse(403, READ_ONLY_REFUSAL);
+
+  const result = await sendToValorBrain(makeSession(), configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.kind, "auth");
+  assert.match(result.ok ? "" : result.error, /só tem permissão de leitura.*Reconectar/);
+});
+
+test("sendToValorBrain says when the Tenant ID is not the token's company", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    jsonResponse(403, {
+      error: "Tenant mismatch: X-Tenant-ID does not match the MCP token's tenant",
+    });
+
+  const result = await sendToValorBrain(makeSession(), configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /Apague o Tenant ID/);
+});
+
 test("sendToValorBrain retries once on 429 and then succeeds", async () => {
   const statuses = [429, 200];
   const urls: string[] = [];
@@ -387,22 +416,52 @@ test("sendToValorBrain classifies other HTTP errors as server failures", async (
 // Connection test
 // ---------------------------------------------------------------------------
 
-test("testValorBrainConnection probes the authenticated working-context endpoint", async () => {
+test("testValorBrainConnection probes reading, then writing with a store the engine refuses", async () => {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fetchImpl: typeof fetch = async (url, init) => {
     calls.push({ url: String(url), init: init as RequestInit });
+    // Like the engine: the scope passed, then the body is refused.
+    if (init?.method === "POST") return jsonResponse(400, { error: "type must be one of: …" });
     return jsonResponse(200, { status: "ok" });
   };
 
   const result = await testValorBrainConnection(configuredSettings(), { fetchImpl });
 
   assert.equal(result.ok, true);
-  assert.match(result.message, /token válido/);
-  assert.equal(calls.length, 1);
+  assert.match(result.message, /pode salvar reuniões/);
+  assert.equal(calls.length, 2);
   assert.ok(calls[0].url.startsWith("https://memory.valor.digital/api/v1/memory/working-context"));
-  const headers = new Headers(calls[0].init.headers);
-  assert.equal(headers.get("Authorization"), "Bearer test-token");
-  assert.equal(headers.get("X-Tenant-ID"), "test-tenant");
+  assert.equal(calls[1].url, "https://memory.valor.digital" + VB_STORE_PATH);
+  assert.equal(calls[1].init.method, "POST");
+  const probe = JSON.parse(String(calls[1].init.body));
+  assert.equal(probe.title, undefined, "the probe carries nothing that could be saved");
+  assert.deepEqual(probe, VB_WRITE_PROBE_BODY);
+  for (const call of calls) {
+    const headers = new Headers(call.init.headers);
+    assert.equal(headers.get("Authorization"), "Bearer test-token");
+    assert.equal(headers.get("X-Tenant-ID"), "test-tenant");
+  }
+});
+
+test("testValorBrainConnection fails a token that only reads, and says what to do", async () => {
+  const fetchImpl: typeof fetch = async (_url, init) =>
+    init?.method === "POST" ? jsonResponse(403, READ_ONLY_REFUSAL) : jsonResponse(200, {});
+
+  const result = await testValorBrainConnection(configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /só tem permissão de leitura/);
+  assert.match(result.message, /Reconectar/);
+});
+
+test("testValorBrainConnection does not pass a store route that is missing", async () => {
+  const fetchImpl: typeof fetch = async (_url, init) =>
+    init?.method === "POST" ? jsonResponse(404, {}) : jsonResponse(200, {});
+
+  const result = await testValorBrainConnection(configuredSettings(), { fetchImpl });
+
+  assert.equal(result.ok, false);
+  assert.match(result.message, /404/);
 });
 
 test("testValorBrainConnection reports the failure reason", async () => {

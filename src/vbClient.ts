@@ -90,6 +90,12 @@ export const VB_STORE_PATH = "/api/v1/memory/store";
 export const VB_HEALTH_PATH = "/health";
 /** Endpoint autenticado e barato usado como probe de conexão real. */
 export const VB_PROBE_PATH = "/api/v1/memory/working-context";
+/**
+ * Body of the write probe: a store the engine always refuses (unknown type,
+ * no title, no content), so it can tell a token that writes (400, nothing
+ * saved) from one that only reads (403, checked before the body).
+ */
+export const VB_WRITE_PROBE_BODY = { type: "vbmeet-permission-check" } as const;
 
 export interface VbMemoryPayload {
   type: "observation";
@@ -416,6 +422,30 @@ function classifyResponse(response: Response): VbFailure | null {
   );
 }
 
+/**
+ * A 401/403 with the reason the engine gives in the body. The common one is a
+ * token that only reads: "Conectar com ValorBrain" asked for `read` alone
+ * until 2.5.1, and saving a meeting is a write.
+ */
+async function explainRejection(response: Response): Promise<VbFailure> {
+  const body = (await parseJsonBody(response)) as { error?: unknown; code?: unknown } | null;
+  const code = typeof body?.code === "string" ? body.code : "";
+  const error = typeof body?.error === "string" ? body.error : "";
+  if (response.status === 403 && code === "insufficient_scope") {
+    return failure(
+      "auth",
+      "O token do ValorBrain só tem permissão de leitura, e salvar a reunião é uma gravação. Em Configurações → ValorBrain, clique em Reconectar ou cole um token com permissão de escrita.",
+    );
+  }
+  if (response.status === 403 && /tenant mismatch/i.test(error)) {
+    return failure(
+      "auth",
+      "O Tenant ID em Configurações → ValorBrain não é o da empresa do token. Apague o Tenant ID: o token já diz qual é a empresa.",
+    );
+  }
+  return classifyResponse(response)!;
+}
+
 export async function parseJsonBody(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -429,7 +459,8 @@ export async function parseJsonBody(response: Response): Promise<unknown> {
  *
  * Error contract:
  * - missing config → `config` failure (no request is made)
- * - 401/403 → `auth` failure (invalid token/tenant)
+ * - 401/403 → `auth` failure (invalid token/tenant), saying so when the token
+ *   only reads or the Tenant ID is another company's
  * - 429 → one retry after `backoffMs`; persistent 429 → `rateLimit` failure
  * - abort after `timeoutMs` → `timeout` failure
  * - any other non-2xx → `server` failure
@@ -481,6 +512,7 @@ export async function sendToValorBrain(
     outcome = await attemptRequest(url, init, options);
     verdict = outcome.failure ?? classifyResponse(outcome.response!);
   }
+  if (verdict?.kind === "auth" && outcome.response) return explainRejection(outcome.response);
   if (verdict) return verdict;
 
   const body = await parseJsonBody(outcome.response!);
@@ -496,7 +528,8 @@ export interface VbTestResult {
  * Valida a conexão real com o tenant: faz GET `{baseUrl}/api/v1/memory/working-context`
  * (endpoint autenticado e barato) com as credenciais configuradas. Um token
  * inválido retorna 401/403 aqui — diferente de `/health`, que é público.
- * Retorna um resultado legível para a UI.
+ * Depois confere a gravação com {@link VB_WRITE_PROBE_BODY}, que o engine
+ * sempre recusa sem salvar nada. Retorna um resultado legível para a UI.
  */
 export async function testValorBrainConnection(
   settings: VbSettings,
@@ -530,9 +563,29 @@ export async function testValorBrainConnection(
   if (outcome.failure) return { ok: false, message: outcome.failure.error };
 
   const classified = classifyResponse(outcome.response!);
+  if (classified?.kind === "auth") {
+    return { ok: false, message: (await explainRejection(outcome.response!)).error };
+  }
   if (classified) return { ok: false, message: classified.error };
 
-  return { ok: true, message: `Conectado a ${settings.baseUrl} — token válido` };
+  // Reading is not enough: saving a meeting is a write, and a token that only
+  // reads passes the probe above. The engine checks the scope before the body,
+  // so a store it always refuses answers 403 for that token and 400, with
+  // nothing saved, for one that writes.
+  const probe = await attemptRequest(
+    new URL(VB_STORE_PATH, settings.baseUrl),
+    { method: "POST", headers, body: JSON.stringify(VB_WRITE_PROBE_BODY) },
+    options,
+  );
+  if (probe.failure) return { ok: false, message: probe.failure.error };
+  const refused = classifyResponse(probe.response!);
+  if (refused?.kind === "auth") {
+    return { ok: false, message: (await explainRejection(probe.response!)).error };
+  }
+  const bodyRefused = probe.response!.status === 400 || probe.response!.status === 422;
+  if (refused && !bodyRefused) return { ok: false, message: refused.error };
+
+  return { ok: true, message: `Conectado a ${settings.baseUrl} — o token pode salvar reuniões` };
 }
 
 // ---------------------------------------------------------------------------
