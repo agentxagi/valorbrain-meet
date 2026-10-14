@@ -17,7 +17,7 @@ memória do ValorBrain. Sem bot na chamada.
 ## O que a extensão faz
 
 - **Grava sem bot**: capta o áudio da aba do Meet (as outras pessoas) e o seu microfone (a sua voz), cada um transcrito separado. Tudo o que vem do microfone sai com o seu nome; com o microfone mudo no Meet, nada é gravado.
-- **Transcreve em português** com Whisper local, Whisper remoto ou OpenAI, cortando nas pausas da fala, e identifica quem falou na aba pelo indicador de fala do Meet (numa reunião a dois, a outra pessoa).
+- **Transcreve em português** com Whisper local, Whisper remoto ou OpenAI, cortando nas pausas da fala, e identifica quem falou na aba: pelas legendas do Meet (com o CC ligado, cada fala vem com o nome de quem falou), pelo indicador de fala quando a página o mostra e, numa reunião a dois, a outra pessoa. O que o Meet não nomeia sai como "Participante".
 - **Usa o vocabulário da sua empresa**: ao começar a gravar, busca no ValorBrain os nomes de pessoas, clientes, projetos e produtos que a empresa mais cita (quem está na reunião primeiro) e as correções já aprendidas, e a transcrição acerta esses nomes sem você digitar nada.
 - **Revisa os termos no fim**: nomes, marcas e termos em inglês que o reconhecimento errou são corrigidos na transcrição antes do resumo final (no painel, as trocas ficam em Detalhes; no ValorBrain vai só a grafia certa). As correções voltam para o ValorBrain, e a próxima reunião da empresa já sai certa.
 - **Avisa no chat que está gravando** (opcional): ao começar, publica no chat da reunião que ela está sendo gravada e transcrita pelo ValorBrain Meet, uma vez por reunião.
@@ -101,7 +101,7 @@ Os atalhos podem ser trocados em `chrome://extensions/shortcuts`. O rodapé do �
 
 Cada reunião vira uma memória do tipo `observation` na coleção `meetings`, com as seções Resumo, Decisões, Próximos passos, Assuntos, Pontos em aberto, Participantes, Detalhes e Transcrição. Participantes são todos que estiveram na chamada durante a gravação, mesmo quem saiu antes do fim, e Detalhes diz qual versão da extensão registrou a reunião. O envio é automático ao encerrar (pode ser desligado em **Configurações → ValorBrain**). Se falhar, a reunião continua salva no navegador: no **Histórico**, clique em **Enviar ao ValorBrain** nela.
 
-Junto com a reunião, as correções que a revisão final aceitou ("Rapplet" → "Replit") viram apelidos no ValorBrain, e o vocabulário das próximas reuniões já traz a grafia certa. O ValorBrain nunca junta pessoas nem troca um nome que já conhece por causa de uma correção. As duas coisas podem ser desligadas em **Configurações → ValorBrain**.
+Quem gravou aparece marcado em Participantes ("Gustavo (você)") e as falas do microfone dele levam o nome (do Meet ou de **Configurações → Transcrição → Seu nome nas transcrições**). Decisão ou próximo passo cuja fala de origem não tem falante identificado vai sem autor e marcado "_(não verificado: falante não identificado em [mm:ss])_" — o registro não atribui a ninguém o que o Meet não nomeou.
 
 Contrato da API e roteiro de teste manual: [`docs/VB-INGEST.md`](docs/VB-INGEST.md).
 

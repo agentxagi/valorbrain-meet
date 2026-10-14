@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import {
   MAX_PARTICIPANT_NAME_LEN,
   collectParticipantNames,
+  meetDisplayName,
   participantNameFromCandidate,
+  splitMeetNameMarker,
 } from "./participantDetection.ts";
 
 test("participant aria labels are converted into participant names", () => {
@@ -112,4 +114,45 @@ test("Meet icon ligatures and menu glyphs never end up in a name", () => {
   assert.equal(participantNameFromCandidate({ text: "keep_outline" }), null);
   // Real names with underscores are not Meet icons only when capitalised.
   assert.equal(participantNameFromCandidate({ text: "Maria_Silva" }), "Maria_Silva");
+});
+
+test("Meet's self and presentation markers are split from the name (FB-0201)", () => {
+  const cases: Array<[string, string, boolean]> = [
+    ["Gustavo Iucksh Santos (Your Presentation)", "Gustavo Iucksh Santos", true],
+    // What 2.5.0 wrote to the record of 09/10: "Presentation" dropped, "(Your )" left.
+    ["Gustavo Iucksh Santos (Your )", "Gustavo Iucksh Santos", true],
+    ["Gustavo Iucksh Santos (Sua apresentação)", "Gustavo Iucksh Santos", true],
+    ["Ana Souza (você)", "Ana Souza", true],
+    ["Ana Souza (You)", "Ana Souza", true],
+    ["Edgar Fonseca | EVOUS (Presentation)", "Edgar Fonseca | EVOUS", false],
+    ["Edgar Fonseca | EVOUS (Apresentação)", "Edgar Fonseca | EVOUS", false],
+    ["Edgar Fonseca | EVOUS", "Edgar Fonseca | EVOUS", false],
+  ];
+  for (const [raw, name, isSelf] of cases) {
+    assert.deepEqual(splitMeetNameMarker(raw), { name, isSelf }, raw);
+  }
+});
+
+test("a tile's text names the person once, and says when it is the user", () => {
+  assert.deepEqual(meetDisplayName("Gustavo Iucksh Santos (Your Presentation) more_vert"), {
+    name: "Gustavo Iucksh Santos",
+    isSelf: true,
+  });
+  assert.deepEqual(meetDisplayName("Gustavo Iucksh Santos (Your Presentation) Muted"), {
+    name: "Gustavo Iucksh Santos",
+    isSelf: true,
+  });
+  assert.deepEqual(meetDisplayName("Bruno Lima (Presentation) mic_off"), {
+    name: "Bruno Lima",
+    isSelf: false,
+  });
+  // The participant list never carries a marker (the 09/10 record listed the user twice).
+  assert.deepEqual(
+    collectParticipantNames([
+      { text: "Edgar Fonseca | EVOUS" },
+      { text: "Gustavo Iucksh Santos" },
+      { text: "Gustavo Iucksh Santos (Your Presentation)" },
+    ]),
+    ["Edgar Fonseca | EVOUS", "Gustavo Iucksh Santos"],
+  );
 });

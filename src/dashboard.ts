@@ -537,6 +537,9 @@ function renderActionsTab(s: State | null) {
             d.classification === "tentative"
               ? `<span class="vb-chip vb-chip--warning">${icon("alertTriangle")}A confirmar</span>`
               : "",
+            d.unverified
+              ? `<span class="vb-chip vb-chip--neutral">Falante não identificado</span>`
+              : "",
             tsButton(d.chunkId, d.timestampLabel || d.timestamp),
           ].filter(Boolean);
           return `<li class="db-item">
@@ -560,6 +563,9 @@ function renderActionsTab(s: State | null) {
             a.deadline ? `<span>${icon("clock")}${escapeHtml(a.deadline)}</span>` : "",
             a.isSpeculative
               ? `<span class="vb-chip vb-chip--neutral">Ideia, não confirmada</span>`
+              : "",
+            a.unverified
+              ? `<span class="vb-chip vb-chip--neutral">Falante não identificado</span>`
               : "",
             a.confidence && a.confidence !== "high"
               ? `<span class="vb-chip vb-chip--neutral">Confiança ${escapeHtml(confidenceLabel(a.confidence))}</span>`

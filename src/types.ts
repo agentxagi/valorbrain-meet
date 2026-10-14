@@ -102,6 +102,8 @@ export interface Decision {
   timestamp?: string;
   timestampLabel?: string;
   classification?: "tentative" | "finalized";
+  /** The line it came from has no identified speaker: no author, and the record says so (FB-0201). */
+  unverified?: boolean;
 }
 
 /** An action item extracted from the meeting, with optional owner, deadline, and confidence. */
@@ -114,6 +116,8 @@ export interface ActionItem {
   timestampLabel?: string;
   confidence?: "high" | "medium" | "low";
   isSpeculative?: boolean;
+  /** The line it came from has no identified speaker: no owner, and the record says so (FB-0201). */
+  unverified?: boolean;
 }
 
 /** A key insight surfaced from the meeting along with a confidence score. */
@@ -209,6 +213,11 @@ export interface State {
   endReason?: string;
   /** Version of the extension that recorded it, e.g. "2.4.0" (saved sessions only). */
   appVersion?: string;
+  /**
+   * The name the recording user's microphone lines carry (saved sessions
+   * only; absent when it was never known and those lines say "Você").
+   */
+  recordedBy?: string;
   /** Spelling fixes applied to the transcript (learned ones as lines arrive, the review at the end). */
   termCorrections?: TermCorrectionRecord[];
   /** The review of decisions, next steps, topics and open points when the meeting ended. */

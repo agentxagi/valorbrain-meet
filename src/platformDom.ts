@@ -33,6 +33,16 @@ export interface PlatformDom {
   /** The tile/row of one participant (for "who is speaking"). */
   participantTile: string[];
   activeSpeakerIndicators: string[];
+  /**
+   * The live-captions region, whose blocks name the speaker of each turn
+   * (meetCaptions.ts). Empty: the platform's captions are not read.
+   */
+  captionRegions: string[];
+  /**
+   * Where the page shows the signed-in user's name before joining (the
+   * lobby): the name of who records, when Settings does not give one.
+   */
+  lobbySelfName: string[];
   /** Button labels shown only after leaving the call. */
   postCallLabels: RegExp;
   /** Heading texts shown only after leaving the call. */
@@ -115,6 +125,24 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
       '[data-speaking="true"]',
       '[data-active-speaker="true"]',
     ],
+    // Meet keeps this region in the page while captions are off; it fills
+    // only with CC on. The labelled forms first; the bare form is the one the
+    // TranscripTonic extension reads (3.4.3, 09/2026).
+    captionRegions: [
+      'div[role="region"][aria-label="Captions" i]',
+      'div[role="region"][aria-label="Legendas" i]',
+      'div[role="region"][aria-label="Subtítulos" i]',
+      'div[role="region"][tabindex="0"]',
+    ],
+    // The Google account button ("Conta do Google: Nome (email)") and the
+    // lobby's name line (also read by TranscripTonic 3.4.3).
+    lobbySelfName: [
+      '[aria-label^="Conta do Google:" i]',
+      '[aria-label^="Google Account:" i]',
+      '[aria-label^="Cuenta de Google:" i]',
+      '[aria-label^="Compte Google" i]',
+      ".awLEm",
+    ],
     postCallLabels: MEET_POST_CALL_LABELS,
     postCallTexts: MEET_POST_CALL_TEXTS,
     inCallIndicators: [],
@@ -157,6 +185,8 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
       '[aria-label*="speaking" i]',
       '[aria-label*="falando" i]',
     ],
+    captionRegions: [],
+    lobbySelfName: [],
     postCallLabels: /^(rejoin|reingressar|entrar novamente|return to home|voltar ao início)$/i,
     postCallTexts:
       /(this meeting has been ended|the host has ended this meeting|you have left the meeting|you left the meeting|a reunião foi encerrada|o anfitrião encerrou|você saiu da reunião)/i,
@@ -213,6 +243,8 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
       '[aria-label*="speaking" i]',
       '[aria-label*="falando" i]',
     ],
+    captionRegions: [],
+    lobbySelfName: [],
     postCallLabels: /^(rejoin|reingressar|ingressar novamente|voltar a entrar)$/i,
     postCallTexts:
       /(you left the meeting|you've left the meeting|the meeting has ended|call ended|você saiu da reunião|a reunião terminou|a chamada terminou|chamada encerrada)/i,

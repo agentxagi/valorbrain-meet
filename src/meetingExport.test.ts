@@ -82,3 +82,30 @@ test("text and JSON exports carry the same content", () => {
   assert.deepEqual(data.participants, ["Ana", "Bruno"]);
   assert.equal(data.transcript.length, 2);
 });
+
+test("exports say when an item's speaker was not identified, with the line's time", () => {
+  const unverified = session({
+    decisions: [
+      { text: "Parceria confirmada (fechou)", timestampLabel: "01:09:25", unverified: true },
+    ],
+    actionItems: [{ task: "Assinar o contrato", timestampLabel: "01:09:25", unverified: true }],
+  });
+  const md = buildMeetingMarkdown(unverified);
+  assert.match(
+    md,
+    /## Decisões\n- Parceria confirmada \(fechou\) _\(não verificado: falante não identificado em \[01:09:25\]\)_\n/,
+  );
+  assert.match(
+    md,
+    /## Próximos passos\n- \[ \] Assinar o contrato _\(não verificado: falante não identificado em \[01:09:25\]\)_\n/,
+  );
+  const txt = buildMeetingText(unverified);
+  assert.match(
+    txt,
+    /DECISÕES\n {2}• Parceria confirmada \(fechou\) \(não verificado: falante não identificado em \[01:09:25\]\)\n/,
+  );
+  assert.match(
+    txt,
+    /PRÓXIMOS PASSOS\n {2}\[ \] Assinar o contrato \(não verificado: falante não identificado em \[01:09:25\]\)\n/,
+  );
+});

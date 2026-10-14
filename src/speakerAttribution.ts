@@ -1,4 +1,5 @@
 import { participantNameFromCandidate } from "./participantDetection";
+import type { TranscriptEntry } from "./types";
 import { namesMatch } from "./utils/nameUtils";
 
 /** Label used when Meet did not reveal who was speaking. */
@@ -107,6 +108,35 @@ export function resolveTabSpeaker(input: TabSpeakerInput): string {
     return resolveTranscriptSpeaker(input.currentSpeaker);
   }
   return DEFAULT_TRANSCRIPT_SPEAKER;
+}
+
+export interface RelabelInput {
+  /** The recording user's name, when it became known at some point. */
+  selfName?: string;
+  /** Everyone else who attended the call (the recording user excluded). */
+  others: string[];
+}
+
+/**
+ * Fixes labels once the meeting is over, with what is known by then. The
+ * microphone lines written as "Você" before the recording user's name was
+ * known carry it; in a call with one other attendee, the tab lines no active
+ * speaker named are that person's. Returns how many lines changed.
+ */
+export function relabelTranscript(transcript: TranscriptEntry[], input: RelabelInput): number {
+  const self = input.selfName?.trim();
+  const other = input.others.length === 1 ? input.others[0] : null;
+  let changed = 0;
+  for (const entry of transcript) {
+    if (self && entry.source === "mic" && entry.speaker === SELF_SPEAKER_FALLBACK) {
+      entry.speaker = self;
+      changed += 1;
+    } else if (other && entry.source === "tab" && entry.speaker === DEFAULT_TRANSCRIPT_SPEAKER) {
+      entry.speaker = other;
+      changed += 1;
+    }
+  }
+  return changed;
 }
 
 function wordSet(text: string): Set<string> {

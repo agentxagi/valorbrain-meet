@@ -1,9 +1,12 @@
 // Content script for the meeting page (Google Meet; Zoom and Microsoft Teams
-// web as best effort): participant names, active speaker, the in-page status
-// pill, the private late-joiner brief, chat messages and leave-call detection.
+// web as best effort): participant names, active speaker (tiles and Meet's
+// live captions), the in-page status pill, the private late-joiner brief, chat
+// messages and leave-call detection.
 // It never restyles the meeting app (all styles are scoped, see content.css).
+import { CaptionSpeakerTracker, type CaptionNode } from "./meetCaptions.ts";
 import {
   collectParticipantNames,
+  meetDisplayName,
   participantNameFromCandidate,
   type ParticipantNameCandidate,
 } from "./participantDetection.ts";
@@ -24,6 +27,8 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     participantNodes: DOM.participantNodes,
     participantTile: DOM.participantTile,
     activeSpeakerIndicators: DOM.activeSpeakerIndicators,
+    captionRegions: DOM.captionRegions,
+    lobbySelfName: DOM.lobbySelfName,
   };
 
   /** Labels of the buttons shown only after you leave or the call ends. */
@@ -238,9 +243,28 @@ import { shortcutKeys } from "./ui/shortcut.ts";
   /** "Conta do Google: Nome Sobrenome (email)" (account button in the header). */
   const GOOGLE_ACCOUNT =
     /^(?:Conta do Google|Google Account|Cuenta de Google|Compte Google):\s*(.+?)\s*(?:\(|$)/i;
-  /** "Nome (você)" / "Name (you)" marks the local user. */
-  const YOU_SUFFIX = /\s*\((?:você|voce|you|tú|vous)\)\s*$/i;
   let accountName: string | null = null;
+
+  /**
+   * The signed-in user's name, read where the page shows it: the account
+   * button and, in Meet's lobby, the name line. Inside the call Meet shows
+   * neither, so it is also read before joining (see the boot timer).
+   */
+  function readAccountName(): string | null {
+    if (accountName) return accountName;
+    for (const selector of SELECTORS.lobbySelfName) {
+      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+        const label = el.getAttribute("aria-label") || "";
+        const raw = label ? (GOOGLE_ACCOUNT.exec(label)?.[1] ?? "") : getTextValue(el);
+        const name = raw ? participantNameFromCandidate({ text: raw }) : null;
+        if (name && !/^(you|você|voce)$/i.test(name)) {
+          accountName = name;
+          return name;
+        }
+      }
+    }
+    return null;
+  }
 
   function participantNameFromTile(tile: HTMLElement): string | null {
     const name = meetParticipantNameFromTile(tile);
@@ -255,7 +279,7 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     for (const labelled of tile.querySelectorAll<HTMLElement>("[aria-label]")) {
       const fromMenu = MORE_OPTIONS_FOR.exec(labelled.getAttribute("aria-label") || "")?.[1];
       if (fromMenu) {
-        const name = participantNameFromCandidate({ text: fromMenu.replace(YOU_SUFFIX, "") });
+        const name = participantNameFromCandidate({ text: fromMenu });
         if (name) return name;
       }
     }
@@ -318,26 +342,24 @@ import { shortcutKeys } from "./ui/shortcut.ts";
         text: getTextValue(element),
       });
     }
-    // Every video tile has a "Mais opções para <Nome>" button; the local user's
-    // own name comes from the Google account button or a "(você)" label.
+    // Every video tile has a "Mais opções para <Nome>" button. The local
+    // user's own name comes with Meet's marker ("Nome (você)", "Nome (Your
+    // Presentation)" on a screen share) or, failing that, from the account.
     for (const labelled of document.querySelectorAll<HTMLElement>("[aria-label]")) {
       const label = labelled.getAttribute("aria-label") || "";
       const tileName = MORE_OPTIONS_FOR.exec(label)?.[1];
-      if (tileName) candidates.push({ text: tileName.replace(YOU_SUFFIX, "") });
-      if (!accountName) {
-        const account = GOOGLE_ACCOUNT.exec(label)?.[1];
-        if (account) accountName = participantNameFromCandidate({ text: account });
-      }
-      if (!selfName && YOU_SUFFIX.test(label) && label.length < 90) {
-        selfName = participantNameFromCandidate({ text: label.replace(YOU_SUFFIX, "") });
-      }
+      if (tileName) candidates.push({ text: tileName });
+      const shown = meetDisplayName(tileName ?? (label.length < 90 ? label : ""));
+      if (!selfName && shown.isSelf) selfName = participantNameFromCandidate({ text: shown.name });
     }
-    const names = collectParticipantNames(candidates).map((name) =>
-      name.replace(YOU_SUFFIX, "").trim(),
-    );
+    for (const element of elements) {
+      if (selfName) break;
+      const shown = meetDisplayName(getTextValue(element));
+      if (shown.isSelf) selfName = participantNameFromCandidate({ text: shown.name });
+    }
     return {
-      participants: Array.from(new Set(names.filter(Boolean))),
-      selfName: selfName || accountName,
+      participants: Array.from(new Set(collectParticipantNames(candidates))),
+      selfName: selfName || readAccountName(),
     };
   }
 
@@ -385,15 +407,62 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     });
     for (const tile of candidates) {
       const name = participantNameFromTile(tile);
-      if (name && name !== lastSpeaker) {
-        lastSpeaker = name;
-        chrome.runtime.sendMessage({ type: "ACTIVE_SPEAKER_CHANGED", name }).catch(() => {
-          lastSpeaker = null;
-        });
+      if (name) {
+        reportSpeaker(name);
         return;
       }
-      if (name) return;
     }
+  }
+
+  function reportSpeaker(name: string) {
+    if (name === lastSpeaker) return;
+    lastSpeaker = name;
+    chrome.runtime.sendMessage({ type: "ACTIVE_SPEAKER_CHANGED", name }).catch(() => {
+      lastSpeaker = null;
+    });
+  }
+
+  // Meet's live captions name the speaker of each turn (meetCaptions.ts).
+  // They are read while recording, whenever the user has captions (CC) on.
+  let captionTracker: CaptionSpeakerTracker | null = null;
+  let captionObserver: MutationObserver | null = null;
+  let captionRegion: Element | null = null;
+  let captionTimer: number | undefined;
+
+  function onCaptionMutations(mutations: MutationRecord[]) {
+    for (const mutation of mutations) {
+      const target = mutation.target;
+      const element = target.nodeType === Node.TEXT_NODE ? target.parentElement : target;
+      const speaker = captionTracker?.turn(element as unknown as CaptionNode | null);
+      if (speaker) reportSpeaker(speaker);
+    }
+  }
+
+  /** Meet may draw the region again (layout change): follow the current one. */
+  function attachCaptionRegion() {
+    const region = queryFirst(SELECTORS.captionRegions);
+    if (region === captionRegion) return;
+    captionObserver?.disconnect();
+    captionRegion = region;
+    if (!region) return;
+    captionObserver ??= new MutationObserver(onCaptionMutations);
+    captionObserver.observe(region, { characterData: true, childList: true, subtree: true });
+  }
+
+  function startCaptionReading() {
+    if (captionTimer !== undefined || SELECTORS.captionRegions.length === 0) return;
+    captionTracker = new CaptionSpeakerTracker();
+    attachCaptionRegion();
+    captionTimer = window.setInterval(attachCaptionRegion, 2000);
+  }
+
+  function stopCaptionReading() {
+    clearInterval(captionTimer);
+    captionTimer = undefined;
+    captionObserver?.disconnect();
+    captionObserver = null;
+    captionRegion = null;
+    captionTracker = null;
   }
 
   function startSpeakerDetection() {
@@ -418,6 +487,7 @@ import { shortcutKeys } from "./ui/shortcut.ts";
       subtree: true,
     });
     detectActiveSpeaker();
+    startCaptionReading();
   }
 
   function stopSpeakerDetection() {
@@ -426,6 +496,7 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     if (speakerCheckTimer) clearTimeout(speakerCheckTimer);
     speakerCheckTimer = null;
     lastSpeaker = null;
+    stopCaptionReading();
   }
 
   // ——— Leave-call detection ———
@@ -730,6 +801,13 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     .catch(() => {
       if (isMeetingRoomPath()) renderPill("hint");
     });
+
+  // The signed-in user's name is on the page before joining (the lobby), not
+  // in the call: read it early so microphone lines carry it.
+  const accountReadUntil = Date.now() + 15 * 60_000;
+  const accountTimer = window.setInterval(() => {
+    if (readAccountName() || Date.now() > accountReadUntil) clearInterval(accountTimer);
+  }, 1500);
 
   // Meet renders the lobby first; show the hint once the room UI exists.
   const bootTimer = setInterval(() => {

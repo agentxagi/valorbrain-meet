@@ -3,14 +3,16 @@ import assert from "node:assert/strict";
 
 import {
   buildSummaryMessages,
+  enforceSpeakerAttribution,
   formatTranscriptLine,
+  isIdentifiedSpeaker,
   mergeSummaryResult,
   parseVocabulary,
   selectTranscriptWindow,
   type SummaryFeatures,
   type SummaryState,
 } from "./meetingSummary.ts";
-import type { TranscriptEntry } from "./types.ts";
+import type { ActionItem, Decision, TranscriptEntry } from "./types.ts";
 
 const ALL: SummaryFeatures = { topics: true, decisions: true, actions: true, sentiment: true };
 
@@ -172,7 +174,9 @@ test("the summary rules say what a decision, an action, a topic and an open ques
   });
   // The rules added after the fabricated "decisions" of 2026-10-02 stay.
   assert.match(system.content, /Analogia, comparação, piada ou comentário tangencial/);
-  assert.match(system.content, /atribua o item à pessoa certa/);
+  // FB-0201: a person only for a line with an identified speaker.
+  assert.match(system.content, /só quando a linha citada tem uma pessoa identificada/);
+  assert.doesNotMatch(system.content, /atribua o item à pessoa certa/);
   assert.match(system.content, /uma recusa também é decisão/);
   assert.match(system.content, /Não é decisão: apresentação ou descrição/);
   assert.match(system.content, /proposta que ainda não teve resposta/);
@@ -416,4 +420,108 @@ test("buildSummaryMessages writes in the meeting language it is given", () => {
   assert.match(brazil.content, /Escreva sempre em português \(Brasil\)/);
   const [japanese] = buildSummaryMessages({ ...base, outputLanguage: "ja" });
   assert.match(japanese.content, /Escreva sempre em japonês/);
+});
+
+/**
+ * FB-0201 (Evous call, 09/10): 459 of 460 lines were "Participante", the user
+ * had one "Você" line, and the summary wrote "Parceria confirmada (fechou)" by
+ * Gus and Edgar from the goodbye.
+ */
+function fb0201Record() {
+  const transcript: TranscriptEntry[] = [
+    { id: "chunk_1", speaker: "Participante", text: "Você está me ouvindo bem aí?", timestamp: 0 },
+    { id: "chunk_2", speaker: "Você", text: "ValorBrain.", timestamp: 760 },
+    {
+      id: "chunk_3",
+      speaker: "Edgar Fonseca | EVOUS",
+      text: "A análise do uso do produto pode vir semana que vem.",
+      timestamp: 1810,
+    },
+    {
+      id: "chunk_4",
+      speaker: "Participante",
+      text: "Bora, fechou. Valeu, obrigado, bom final de semana.",
+      timestamp: 4165,
+      timestampLabel: "01:09:25",
+    },
+  ];
+  const decisions: Decision[] = [
+    {
+      text: "Parceria confirmada (fechou)",
+      by: "Gus e Edgar",
+      chunkId: "chunk_4",
+      timestampLabel: "01:09:25",
+      classification: "finalized",
+    },
+    { text: "Usar o ValorBrain", by: "Gus", chunkId: "chunk_2", classification: "finalized" },
+  ];
+  const actionItems: ActionItem[] = [
+    { task: "Mandar a análise de uso", owner: "Edgar Fonseca", chunkId: "chunk_3" },
+    // No source at all: nothing to check the owner against.
+    { task: "Assinar o contrato", owner: "Gus" },
+    // A wrong chunkId: the time still finds the line.
+    {
+      task: "Marcar a próxima call",
+      owner: "Edgar",
+      chunkId: "chunk_99",
+      timestampLabel: "01:09:25",
+    },
+  ];
+  return { transcript, decisions, actionItems };
+}
+
+test("FB-0201: no author or owner for what nobody identified said", () => {
+  const record = enforceSpeakerAttribution(fb0201Record());
+  assert.deepEqual(record.decisions, [
+    {
+      text: "Parceria confirmada (fechou)",
+      chunkId: "chunk_4",
+      timestampLabel: "01:09:25",
+      classification: "finalized",
+      unverified: true,
+    },
+    // The user's microphone ("Você") is an identified speaker.
+    { text: "Usar o ValorBrain", by: "Gus", chunkId: "chunk_2", classification: "finalized" },
+  ]);
+  assert.deepEqual(record.actionItems, [
+    { task: "Mandar a análise de uso", owner: "Edgar Fonseca", chunkId: "chunk_3" },
+    { task: "Assinar o contrato", unverified: true },
+    {
+      task: "Marcar a próxima call",
+      chunkId: "chunk_99",
+      timestampLabel: "01:09:25",
+      unverified: true,
+    },
+  ]);
+});
+
+test("an item gets its time from the line, and loses the mark once the line is named", () => {
+  const record = fb0201Record();
+  record.decisions = [{ text: "Parceria confirmada (fechou)", by: "Gus", chunkId: "chunk_4" }];
+  // The line has no timestampLabel: it is computed from the timestamp.
+  record.transcript[3] = { ...record.transcript[3], timestampLabel: undefined };
+  enforceSpeakerAttribution(record);
+  assert.deepEqual(record.decisions[0], {
+    text: "Parceria confirmada (fechou)",
+    chunkId: "chunk_4",
+    timestampLabel: "01:09:25",
+    unverified: true,
+  });
+  // At the end, the line turns out to be Edgar's: the mark goes, the stripped name does not come back.
+  record.transcript[3].speaker = "Edgar Fonseca | EVOUS";
+  enforceSpeakerAttribution(record);
+  assert.deepEqual(record.decisions[0], {
+    text: "Parceria confirmada (fechou)",
+    chunkId: "chunk_4",
+    timestampLabel: "01:09:25",
+  });
+});
+
+test("only 'Participante' and the old 'Audio' label name nobody", () => {
+  for (const label of ["Participante", "participante", "Audio", "", undefined]) {
+    assert.equal(isIdentifiedSpeaker(label), false, String(label));
+  }
+  for (const label of ["Você", "Gustavo Iucksh Santos", "Edgar Fonseca | EVOUS"]) {
+    assert.equal(isIdentifiedSpeaker(label), true, label);
+  }
 });
