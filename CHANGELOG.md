@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-10-14
+
+Quem falou passa a chegar à memória: nomes das legendas do Meet, marcador de quem gravou e resumo sem dono inventado (FB-0201).
+
+### ✨ Novidades
+
+- **Nomes de quem fala a partir das legendas do Meet.** Com as legendas (CC) ligadas, cada turno sai com o nome de quem falou em vez de "Participante". Sem CC, continuam valendo os marcadores "(você)" da apresentação, o nome do lobby e a regra de chamada de dois
+- O marcador de quem gravou é aplicado ao final da gravação: falas "Você" anteriores ao nome conhecido são renomeadas, e numa chamada de dois "Participante" vira a outra pessoa. O documento registra quem gravou e marca "Gustavo (você)" na lista de participantes
+- O resumo não inventa mais dono: uma decisão ou próximo passo só tem responsável quando uma linha com falante identificado a sustenta. Sem isso, o item sai marcado "_(não verificado: falante não identificado em [mm:ss])_" — no documento enviado ao ValorBrain, nos exports e no painel — e o motor do ValorBrain transforma em proposta pendente para você confirmar
+
+### 🐛 Bug Fixes
+
+- A lista de participantes não carrega mais o "(Your …)" que o Meet deixa no nome de quem gravou, e a pessoa para de aparecer duas vezes
+- "(Você)" acentuado agora é reconhecido como marcador de quem gravou
+
+### 🔧 Interno
+
+- Um guarda mecânico roda depois de cada mesclagem de resumo e antes de salvar: nenhuma atribuição sem falante identificado escapa, mesmo se o modelo tentar
+
+### Não verificado
+
+- Os seletores das legendas seguem o DOM que o Meet usa hoje (espelhados no TranscripTonic 3.4.3, 09/2026). Se o Meet mudar, a rotulação volta a "Participante" sem quebrar a gravação. Vale conferir numa chamada real com o CC ligado
+- Ligamos o CC manualmente nas chamadas de teste; ligá-lo automaticamente ao gravar ficou como decisão em aberto
+
 ## [2.5.1] - 2026-10-09
 
 O envio ao ValorBrain volta a funcionar para quem conectou pelo botão **Conectar com ValorBrain**.
