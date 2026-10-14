@@ -3,6 +3,7 @@
  * Pure module: no Chrome APIs, unit-tested in node.
  */
 
+import { unverifiedSpeakerNote } from "./meetingSummary";
 import type { State } from "./types";
 import {
   confidenceLabel,
@@ -89,7 +90,11 @@ export function buildMeetingMarkdown(session: State, options: ExportOptions = {}
   const decisions = (session.decisions ?? []).filter((d) => d?.text);
   if (decisions.length) {
     for (const d of decisions) {
-      const extra = [d.by, d.classification === "tentative" ? "a confirmar" : ""]
+      const extra = [
+        d.by,
+        d.classification === "tentative" ? "a confirmar" : "",
+        d.unverified ? unverifiedSpeakerNote(d) : "",
+      ]
         .filter(Boolean)
         .join(", ");
       lines.push(`- ${d.text}${extra ? ` _(${extra})_` : ""}`);
@@ -107,6 +112,7 @@ export function buildMeetingMarkdown(session: State, options: ExportOptions = {}
       if (a.owner) line += ` — ${a.owner}`;
       if (a.deadline) line += ` (prazo: ${a.deadline})`;
       if (a.isSpeculative) line += " _(ideia, não confirmada)_";
+      if (a.unverified) line += ` _(${unverifiedSpeakerNote(a)})_`;
       lines.push(line);
     }
   } else {
@@ -167,7 +173,10 @@ export function buildMeetingText(session: State, options: ExportOptions = {}): s
   const decisions = (session.decisions ?? []).filter((d) => d?.text);
   out.push(
     ...(decisions.length
-      ? decisions.map((d) => `  • ${d.text}${d.by ? ` (${d.by})` : ""}`)
+      ? decisions.map(
+          (d) =>
+            `  • ${d.text}${d.by ? ` (${d.by})` : ""}${d.unverified ? ` (${unverifiedSpeakerNote(d)})` : ""}`,
+        )
       : ["  (nenhuma)"]),
   );
   out.push("", "PRÓXIMOS PASSOS");
@@ -178,6 +187,7 @@ export function buildMeetingText(session: State, options: ExportOptions = {}): s
           let line = `  [${isDone(a.task) ? "x" : " "}] ${a.task}`;
           if (a.owner) line += ` — ${a.owner}`;
           if (a.deadline) line += ` (prazo: ${a.deadline})`;
+          if (a.unverified) line += ` (${unverifiedSpeakerNote(a)})`;
           if (a.confidence && a.confidence !== "high")
             line += ` [confiança ${confidenceLabel(a.confidence)}]`;
           return line;

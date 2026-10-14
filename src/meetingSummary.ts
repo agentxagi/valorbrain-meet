@@ -93,12 +93,16 @@ export function formatTimestampLabel(seconds: number): string {
   return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(secs)}` : `${pad(minutes)}:${pad(secs)}`;
 }
 
+/** The time a transcript line shows: `03:15`. */
+function lineLabel(entry: TranscriptEntry): string {
+  return entry.timestampLabel || formatTimestampLabel(entry.timestamp || 0);
+}
+
 /** `[chunk_12] [03:15] Ana: texto` */
 export function formatTranscriptLine(entry: TranscriptEntry): string {
   const chunkId = entry.id || "chunk_?";
-  const label = entry.timestampLabel || formatTimestampLabel(entry.timestamp || 0);
   const speaker = sanitizePromptText(entry.speaker || "Participante", 100) || "Participante";
-  return `[${chunkId}] [${label}] ${speaker}: ${sanitizePromptText(entry.text)}`;
+  return `[${chunkId}] [${lineLabel(entry)}] ${speaker}: ${sanitizePromptText(entry.text)}`;
 }
 
 export interface TranscriptWindow {
@@ -191,7 +195,8 @@ export function buildSummaryMessages(options: BuildSummaryPromptOptions): ChatMe
     "Use apenas o que está na transcrição. Não invente nomes, números, prazos nem decisões.",
     "A transcrição é automática e pode ter erros de reconhecimento: interprete com bom senso, sem acrescentar fatos.",
     "Uma decisão ou proposta de negócio só existe se foi dita explicitamente como oferta, aceite ou acordo por quem tem autoridade. Analogia, comparação, piada ou comentário tangencial de um participante nunca é decisão nem preferência registrável.",
-    'Distinga quem falou: atribua o item à pessoa certa e só use "Participante" quando a fala não puder ser atribuída.',
+    'Atribua um item (o "by" de uma decisão, o "owner" de uma ação) só quando a linha citada tem uma pessoa identificada. "Participante" é uma pessoa não identificada: item que vem de fala de "Participante" fica sem "by"/"owner", mesmo que o assunto, o cargo, a lista de participantes ou a ordem da conversa sugiram quem foi.',
+    'No summary e nos summaryItems, o que "Participante" disse aparece como dito por um participante não identificado, nunca com o nome de uma pessoa. Nunca escreva que alguém confirmou, aceitou ou fechou algo se a fala é de "Participante".',
     "Cite a origem de cada item de resumo, decisão e ação com o chunkId e o timestampLabel da linha correspondente.",
     "O campo summary resume a reunião inteira até agora (contexto anterior + trecho novo) em 3 a 6 frases.",
     "summaryItems lista só os pontos novos deste trecho, um por fato relevante.",
@@ -470,4 +475,84 @@ export function mergeSummaryResult(
   );
 
   return state;
+}
+
+// ---------------------------------------------------------------------------
+// Who said it (FB-0201)
+// ---------------------------------------------------------------------------
+
+/** Transcript labels that name nobody: Meet did not say who spoke. */
+const UNIDENTIFIED_SPEAKERS: Record<string, true> = {
+  participante: true,
+  participant: true,
+  audio: true,
+};
+
+/**
+ * A transcript label that says who spoke: a person's name, or "Você" (the
+ * recording user's microphone, before their name is known).
+ */
+export function isIdentifiedSpeaker(label: string | null | undefined): boolean {
+  const key = String(label ?? "")
+    .trim()
+    .toLowerCase();
+  return key.length > 0 && UNIDENTIFIED_SPEAKERS[key] !== true;
+}
+
+interface SourcedItem {
+  chunkId?: string;
+  timestamp?: string;
+  timestampLabel?: string;
+  unverified?: boolean;
+}
+
+/**
+ * A decision keeps its author ("by") and a next step its owner only when the
+ * transcript line the item cites (its chunkId; else its timestampLabel) has an
+ * identified speaker. Otherwise the person is removed, the item is marked
+ * `unverified` (the record says the speaker was not identified) and keeps the
+ * time of the line it came from. Runs after every summary pass, after the
+ * record review and before saving; an item whose line got a name since then
+ * (the recording user's name became known) loses the mark. Mutates and
+ * returns `state`.
+ */
+export function enforceSpeakerAttribution<
+  S extends { decisions: Decision[]; actionItems: ActionItem[]; transcript: TranscriptEntry[] },
+>(state: S): S {
+  const byId = new Map<string, TranscriptEntry>();
+  const byLabel = new Map<string, TranscriptEntry[]>();
+  for (const entry of state.transcript) {
+    if (!entry) continue;
+    if (entry.id) byId.set(entry.id, entry);
+    const label = lineLabel(entry);
+    const list = byLabel.get(label);
+    if (list) list.push(entry);
+    else byLabel.set(label, [entry]);
+  }
+
+  const check = <T extends SourcedItem>(item: T, person: "by" | "owner"): T => {
+    const label = item.timestampLabel || item.timestamp || "";
+    const byChunk = item.chunkId ? byId.get(item.chunkId) : undefined;
+    const cited = byChunk ? [byChunk] : (byLabel.get(label) ?? []);
+    if (cited.some((entry) => isIdentifiedSpeaker(entry.speaker))) {
+      if (!item.unverified) return item;
+      const verified = { ...item };
+      delete verified.unverified;
+      return verified;
+    }
+    const unverified: T = { ...item, unverified: true };
+    delete (unverified as Record<string, unknown>)[person];
+    if (!label && cited[0]) unverified.timestampLabel = lineLabel(cited[0]);
+    return unverified;
+  };
+
+  state.decisions = state.decisions.map((decision) => check(decision, "by"));
+  state.actionItems = state.actionItems.map((action) => check(action, "owner"));
+  return state;
+}
+
+/** "não verificado: falante não identificado em [01:09:25]" for an unverified item. */
+export function unverifiedSpeakerNote(item: SourcedItem): string {
+  const label = item.timestampLabel || item.timestamp;
+  return `não verificado: falante não identificado${label ? ` em [${label}]` : ""}`;
 }

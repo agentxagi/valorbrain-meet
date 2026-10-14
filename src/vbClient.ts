@@ -5,8 +5,10 @@
 // No URL, token, or tenant is ever hardcoded; everything comes from the
 // user-configured `vb.*` settings keys.
 
+import { unverifiedSpeakerNote } from "./meetingSummary";
 import { State } from "./types";
 import { platformLabelForUrl } from "./platforms";
+import { namesMatch } from "./utils/nameUtils";
 
 // ---------------------------------------------------------------------------
 // Settings (`vb.*` keys inside the shared `settings` object)
@@ -147,14 +149,25 @@ const TOPIC_STATUS_LABEL: Record<string, string> = {
   unresolved: "sem conclusão",
 };
 
+/**
+ * Who attended, without Meet's "You" placeholder. The recording user is
+ * marked "(você)", the name their microphone lines carry: "Ana, Gustavo
+ * (você)". The ValorBrain engine reads the mark as the account owner.
+ */
 function humanParticipants(session: State): string[] {
-  return Array.from(
+  const names = Array.from(
     new Set(
       (session.participants ?? [])
         .map((name) => String(name || "").trim())
         .filter((name) => name && name !== "You"),
     ),
   );
+  const self = session.recordedBy?.trim();
+  if (!self) return names;
+  const at = names.findIndex((name) => namesMatch(name, self));
+  if (at < 0) return [...names, `${self} (você)`];
+  names[at] = `${names[at]} (você)`;
+  return names;
 }
 
 /**
@@ -199,8 +212,12 @@ export function buildValorBrainContent(session: State): string {
   const decisions = (session.decisions ?? []).filter((d) => d?.text);
   if (decisions.length > 0) {
     for (const d of decisions) {
-      const tentative = d.classification === "tentative" ? " _(a confirmar)_" : "";
-      lines.push(`- ${d.text}${d.by ? ` — ${d.by}` : ""}${tentative}`);
+      const notes = [
+        d.classification === "tentative" ? "a confirmar" : "",
+        d.unverified ? unverifiedSpeakerNote(d) : "",
+      ].filter(Boolean);
+      const marks = notes.length > 0 ? ` _(${notes.join("; ")})_` : "";
+      lines.push(`- ${d.text}${d.by ? ` — ${d.by}` : ""}${marks}`);
     }
   } else {
     lines.push("_(nenhuma)_");
@@ -214,7 +231,11 @@ export function buildValorBrainContent(session: State): string {
       let item = `- [ ] ${a.task}`;
       if (a.owner) item += ` — ${a.owner}`;
       if (a.deadline) item += ` (prazo: ${a.deadline})`;
-      if (a.isSpeculative) item += " _(ideia, não confirmada)_";
+      const notes = [
+        a.isSpeculative ? "ideia, não confirmada" : "",
+        a.unverified ? unverifiedSpeakerNote(a) : "",
+      ].filter(Boolean);
+      if (notes.length > 0) item += ` _(${notes.join("; ")})_`;
       lines.push(item);
     }
   } else {

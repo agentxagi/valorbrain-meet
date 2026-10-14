@@ -176,6 +176,48 @@ test("buildValorBrainContent renders decisions, next steps, participants and tra
   assert.ok(content.includes("## Transcrição\n[01:05] Gus: Vamos usar REST."));
 });
 
+test("an item whose speaker was not identified says so and cites the line (FB-0201)", () => {
+  const content = buildValorBrainContent(
+    makeSession({
+      decisions: [
+        { text: "Primeiro passo: piloto", by: "Gus", timestampLabel: "00:20" },
+        { text: "Parceria confirmada (fechou)", timestampLabel: "01:09:25", unverified: true },
+        { text: "Talvez semanal", classification: "tentative", unverified: true },
+      ],
+      actionItems: [
+        { task: "Assinar o contrato", timestampLabel: "01:09:25", unverified: true },
+        { task: "Testar o bot", isSpeculative: true, unverified: true },
+      ],
+    }),
+  );
+  assert.ok(
+    content.includes(
+      "## Decisões\n- Primeiro passo: piloto — Gus\n" +
+        "- Parceria confirmada (fechou) _(não verificado: falante não identificado em [01:09:25])_\n" +
+        "- Talvez semanal _(a confirmar; não verificado: falante não identificado)_\n",
+    ),
+    content,
+  );
+  assert.ok(
+    content.includes(
+      "## Próximos passos\n" +
+        "- [ ] Assinar o contrato _(não verificado: falante não identificado em [01:09:25])_\n" +
+        "- [ ] Testar o bot _(ideia, não confirmada; não verificado: falante não identificado)_\n",
+    ),
+    content,
+  );
+});
+
+test("the participants mark who recorded, as their microphone lines name them", () => {
+  const marked = buildValorBrainContent(makeSession({ recordedBy: "gus" }));
+  assert.ok(marked.includes("## Participantes\nGus (você), Ana\n"), marked);
+  // A name from Settings that Meet showed differently is listed too.
+  const added = buildValorBrainContent(makeSession({ recordedBy: "Gustavo" }));
+  assert.ok(added.includes("## Participantes\nGus, Ana, Gustavo (você)\n"), added);
+  const unknown = buildValorBrainContent(makeSession());
+  assert.ok(unknown.includes("## Participantes\nGus, Ana\n"), unknown);
+});
+
 test("buildValorBrainContent lists topics and open points only when present", () => {
   const without = buildValorBrainContent(makeSession());
   assert.ok(!without.includes("## Assuntos"));
