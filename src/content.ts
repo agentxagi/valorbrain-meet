@@ -3,6 +3,12 @@
 // live captions), the in-page status pill, the private late-joiner brief, chat
 // messages and leave-call detection.
 // It never restyles the meeting app (all styles are scoped, see content.css).
+import {
+  ensureCaptionsOn,
+  isSafeFocusForShortcut,
+  pickCaptionControl,
+  type CaptionControlInfo,
+} from "./captionsAuto.ts";
 import { CaptionSpeakerTracker, type CaptionNode } from "./meetCaptions.ts";
 import {
   collectParticipantNames,
@@ -29,6 +35,7 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     activeSpeakerIndicators: DOM.activeSpeakerIndicators,
     captionRegions: DOM.captionRegions,
     lobbySelfName: DOM.lobbySelfName,
+    captionToggles: DOM.captionToggles,
   };
 
   /** Labels of the buttons shown only after you leave or the call ends. */
@@ -465,6 +472,92 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     captionTracker = null;
   }
 
+  // ——— Turning the captions on (captionsAuto.ts) ———
+
+  /** The recording (its start time) whose captions this page load handles. */
+  let captionsHandledFor: number | null = null;
+
+  /** The visible CC toggle and the state it shows; null when none reads as one. */
+  function readCaptionControl(): { el: HTMLElement; state: "on" | "off" } | null {
+    const elements: HTMLElement[] = [];
+    for (const selector of SELECTORS.captionToggles) {
+      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+        if (isVisible(el) && !elements.includes(el)) elements.push(el);
+      }
+    }
+    const infos: CaptionControlInfo[] = elements.map((el) => ({
+      label: el.getAttribute("aria-label") || el.getAttribute("data-tooltip") || "",
+      pressed: el.getAttribute("aria-pressed"),
+      text: el.textContent || "",
+    }));
+    const picked = pickCaptionControl(infos);
+    return picked ? { el: elements[picked.index], state: picked.state } : null;
+  }
+
+  /** Meet's "c" shortcut (it toggles captions), only when no text field has the focus. */
+  function pressCaptionsShortcut(): boolean {
+    const focused = document.activeElement as HTMLElement | null;
+    const inPage = focused && focused !== document.body ? focused : null;
+    const focus = inPage
+      ? {
+          tagName: inPage.tagName,
+          isContentEditable: inPage.isContentEditable,
+          role: inPage.getAttribute("role"),
+        }
+      : null;
+    if (!isSafeFocusForShortcut(focus)) return false;
+    const target = inPage ?? document.body;
+    for (const type of ["keydown", "keyup"]) {
+      target.dispatchEvent(
+        new KeyboardEvent(type, {
+          key: "c",
+          code: "KeyC",
+          keyCode: 67,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+    return true;
+  }
+
+  /**
+   * Turns Meet's captions on once per recording and page load (a reload while
+   * recording tries again), unless the setting is off, and tells the service
+   * worker how it went. Never turns them off, now or at the end.
+   */
+  async function autoEnableCaptions(recording: number) {
+    if (captionsHandledFor === recording || SELECTORS.captionToggles.length === 0) return;
+    captionsHandledFor = recording;
+    let enabled = true;
+    try {
+      const { settings } = await chrome.storage.local.get("settings");
+      enabled =
+        (settings as { autoEnableCaptions?: unknown } | undefined)?.autoEnableCaptions !== false;
+    } catch {
+      // Settings unreadable: the default (on) holds.
+    }
+    const current = () => captionsHandledFor === recording;
+    const status = await ensureCaptionsOn({
+      enabled,
+      // The recording ended meanwhile: nothing is read, so nothing is clicked.
+      state: () => (current() ? (readCaptionControl()?.state ?? "unknown") : "unknown"),
+      clickTurnOn: () => {
+        const control = current() ? readCaptionControl() : null;
+        if (control?.state !== "off") return false;
+        control.el.click();
+        return true;
+      },
+      pressShortcut: () => current() && pressCaptionsShortcut(),
+      wait: async (ms) => {
+        await wait(ms);
+      },
+    });
+    if (!current()) return;
+    console.info(`${LOG} captions: ${status}`);
+    chrome.runtime.sendMessage({ type: "CAPTIONS_STATUS", status }).catch(() => {});
+  }
+
   function startSpeakerDetection() {
     if (speakerObserver) return;
     speakerObserver = new MutationObserver(() => {
@@ -724,9 +817,11 @@ import { shortcutKeys } from "./ui/shortcut.ts";
       recordingStart = state.startTime || recordingStart || Date.now();
       startSpeakerDetection();
       startLeaveDetection();
+      if (PLATFORM === "meet") void autoEnableCaptions(recordingStart);
     } else {
       stopSpeakerDetection();
       stopLeaveDetection();
+      captionsHandledFor = null;
     }
 
     if (doneTimer && (recordingHere || savingHere)) {

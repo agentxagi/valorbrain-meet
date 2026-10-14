@@ -1,5 +1,6 @@
 // Side panel: live meeting view (summary, transcript, decisions, people) and
 // the local history of saved meetings with their ValorBrain delivery status.
+import { captionsNote } from "./captionsAuto";
 import type { ActionItem, MeetingNotice, State, TranscriptEntry } from "./types";
 import { initTheme } from "./theme";
 import { hydrateIcons, icon, type IconName } from "./ui/icons";
@@ -257,6 +258,8 @@ function renderAudioCard(s: State | null) {
         }${stats.chunksFailed ? ` · ${stats.chunksFailed} com erro` : ""}`,
       );
     }
+    const captions = captionsNote(s?.captions);
+    if (captions) parts.push(captions);
   } else {
     parts.push("A gravação usa o áudio da aba da reunião e o seu microfone.");
   }

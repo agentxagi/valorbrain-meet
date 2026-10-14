@@ -1,5 +1,7 @@
 // Shared TypeScript Interfaces for Late Meet
 
+import type { CaptionsStatus } from "./captionsAuto";
+
 /** Represents a discussion topic tracked during a meeting. */
 export interface Topic {
   name: string;
@@ -218,6 +220,12 @@ export interface State {
    * only; absent when it was never known and those lines say "Você").
    */
   recordedBy?: string;
+  /**
+   * Meet's captions in this recording (captionsAuto.ts): "enabled" when the
+   * extension turned them on, "failed" when it could not (the panel asks the
+   * user to). Absent outside Meet or before the page reported.
+   */
+  captions?: CaptionsStatus;
   /** Spelling fixes applied to the transcript (learned ones as lines arrive, the review at the end). */
   termCorrections?: TermCorrectionRecord[];
   /** The review of decisions, next steps, topics and open points when the meeting ended. */

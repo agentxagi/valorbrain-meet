@@ -54,6 +54,7 @@ const MANIFEST_HOSTS = [
 ];
 
 const TOGGLES: Array<{ id: string; key: string; defaultOn: boolean }> = [
+  { id: "auto-captions-toggle", key: "autoEnableCaptions", defaultOn: true },
   { id: "topic-toggle", key: "topicDetection", defaultOn: true },
   { id: "decision-toggle", key: "decisionDetection", defaultOn: true },
   { id: "action-toggle", key: "actionExtraction", defaultOn: true },

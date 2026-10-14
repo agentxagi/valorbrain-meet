@@ -1120,6 +1120,75 @@ test("a call of two where Meet named the user late: the record carries both name
   }
 });
 
+test("captions the extension turned on are logged in the session; a failure is shown", async () => {
+  const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+  // Not recording: the page's report is ignored.
+  const idle = await sendMessage({ type: "CAPTIONS_STATUS", status: "enabled" }, sender);
+  assert.equal(idle.ignored, true);
+
+  const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+  const start = await sendMessage({
+    type: "MANUAL_START_AUDIO",
+    tabId: TAB_ID,
+    meetingId: "abc-defg-hij",
+    meetingUrl: MEET_URL,
+    streamId: "stream-captions",
+  });
+  assert.equal(start.success, true, JSON.stringify(start));
+
+  // The page could not turn them on: the panel asks the user to.
+  await sendMessage({ type: "CAPTIONS_STATUS", status: "failed" }, sender);
+  assert.equal((await sendMessage({ type: "GET_STATE" })).captions, "failed");
+  const junk = await sendMessage({ type: "CAPTIONS_STATUS", status: "toString" }, sender);
+  assert.equal(junk.ignored, true);
+
+  // After a reload the page turns them on, and a later reload finds them on.
+  await sendMessage({ type: "CAPTIONS_STATUS", status: "enabled" }, sender);
+  await sendMessage({ type: "CAPTIONS_STATUS", status: "already-on" }, sender);
+  const live = await sendMessage({ type: "GET_STATE" });
+  assert.equal(live.captions, "enabled");
+
+  const text = "Bom dia a todos.";
+  sttResponses.push({
+    text,
+    duration: 3,
+    segments: [{ text: ` ${text}`, no_speech_prob: 0.02, avg_logprob: -0.2 }],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    source: "tab",
+    startedAt: Date.now() - 3000,
+    endedAt: Date.now(),
+  });
+  await waitFor(async () => {
+    const s = await sendMessage({ type: "GET_STATE" });
+    return s.stats?.chunksTranscribed === 1 ? s : null;
+  }, "line transcribed");
+  await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+  const index = await waitFor(
+    () =>
+      (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
+        ? (localStore.savedSessionIndex as AnyRecord[])
+        : null,
+    "session saved",
+  );
+  const saved = localStore[`savedSession:${index[0].id}`];
+  assert.equal(saved.captions, "enabled");
+  const events = saved.timeline.map((e: AnyRecord) => e.event);
+  assert.equal(
+    events.filter((e: string) => e === "Legendas ligadas pela extensão para identificar quem fala")
+      .length,
+    1,
+  );
+  assert.ok(events.some((e: string) => /Não consegui ligar as legendas/.test(e)));
+  // The next recording starts without it; the saved meeting keeps it.
+  assert.equal((await sendMessage({ type: "GET_STATE" })).captions, undefined);
+  // The later tests count saved meetings, and the history keeps 20: leave it as found.
+  await sendMessage({ type: "DELETE_SAVED_SESSION", sessionId: saved.id });
+});
+
 /** The record of a sales call as the live summary leaves it: 10 items, most of them noise. */
 const SALES_CALL_SUMMARY: AnyRecord = {
   summary: "Leonardo apresentou o programa de mentoria; Gustavo decidiu não aderir agora.",

@@ -43,6 +43,12 @@ export interface PlatformDom {
    * lobby): the name of who records, when Settings does not give one.
    */
   lobbySelfName: string[];
+  /**
+   * Candidates for the captions (CC) toggle; captionsAuto.ts reads which one
+   * is the toggle and its state from its label, aria-pressed and icon. Empty:
+   * the extension does not turn the platform's captions on.
+   */
+  captionToggles: string[];
   /** Button labels shown only after leaving the call. */
   postCallLabels: RegExp;
   /** Heading texts shown only after leaving the call. */
@@ -134,6 +140,20 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
       'div[role="region"][aria-label="Subtítulos" i]',
       'div[role="region"][tabindex="0"]',
     ],
+    // The CC button in the call toolbar: its label says what a click does
+    // ("Ativar legendas" / "Turn on captions" / "Activar subtítulos"), and its
+    // icon is the "closed_caption_off" ligature while captions are off (the
+    // one TranscripTonic 3.4.3 clicks).
+    captionToggles: [
+      'button[aria-label*="legenda" i]',
+      'button[aria-label*="caption" i]',
+      'button[aria-label*="subtítulo" i]',
+      'button[aria-label*="subtitulo" i]',
+      'button[data-tooltip*="legenda" i]',
+      'button[data-tooltip*="caption" i]',
+      'button[data-tooltip*="subtítulo" i]',
+      "button:has(.google-symbols)",
+    ],
     // The Google account button ("Conta do Google: Nome (email)") and the
     // lobby's name line (also read by TranscripTonic 3.4.3).
     lobbySelfName: [
@@ -187,6 +207,7 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
     ],
     captionRegions: [],
     lobbySelfName: [],
+    captionToggles: [],
     postCallLabels: /^(rejoin|reingressar|entrar novamente|return to home|voltar ao início)$/i,
     postCallTexts:
       /(this meeting has been ended|the host has ended this meeting|you have left the meeting|you left the meeting|a reunião foi encerrada|o anfitrião encerrou|você saiu da reunião)/i,
@@ -245,6 +266,7 @@ export const PLATFORM_DOM: Record<MeetingPlatform, PlatformDom> = {
     ],
     captionRegions: [],
     lobbySelfName: [],
+    captionToggles: [],
     postCallLabels: /^(rejoin|reingressar|ingressar novamente|voltar a entrar)$/i,
     postCallTexts:
       /(you left the meeting|you've left the meeting|the meeting has ended|call ended|você saiu da reunião|a reunião terminou|a chamada terminou|chamada encerrada)/i,
