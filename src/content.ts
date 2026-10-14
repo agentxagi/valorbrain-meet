@@ -441,7 +441,10 @@ import { shortcutKeys } from "./ui/shortcut.ts";
       const target = mutation.target;
       const element = target.nodeType === Node.TEXT_NODE ? target.parentElement : target;
       const speaker = captionTracker?.turn(element as unknown as CaptionNode | null);
-      if (speaker) reportSpeaker(speaker);
+      if (speaker) {
+        captionTurnSeen = true;
+        reportSpeaker(speaker);
+      }
     }
   }
 
@@ -476,6 +479,20 @@ import { shortcutKeys } from "./ui/shortcut.ts";
 
   /** The recording (its start time) whose captions this page load handles. */
   let captionsHandledFor: number | null = null;
+  /** The CC toggle was clicked in this page load (never a second click). */
+  let captionsClicked = false;
+  /** The "c" shortcut was pressed in this page load (never a second time). */
+  let captionsKeyPressed = false;
+  /** Captions were seen on in this page load: the extension never toggles them again. */
+  let captionsSeenOn = false;
+  /** A caption turn was read (captions are on, whatever the toggle says). */
+  let captionTurnSeen = false;
+
+  /** The caption region is on screen with captions in it. */
+  function captionRegionShowing(): boolean {
+    const region = queryFirst(SELECTORS.captionRegions);
+    return isVisible(region) && Boolean(region.textContent?.trim());
+  }
 
   /** The visible CC toggle and the state it shows; null when none reads as one. */
   function readCaptionControl(): { el: HTMLElement; state: "on" | "off" } | null {
@@ -538,21 +555,31 @@ import { shortcutKeys } from "./ui/shortcut.ts";
       // Settings unreadable: the default (on) holds.
     }
     const current = () => captionsHandledFor === recording;
+    // One click and one shortcut per page load, and none once captions were
+    // seen on: a second toggle could only turn them off.
+    const mayAct = () => current() && !captionsSeenOn;
     const status = await ensureCaptionsOn({
       enabled,
       // The recording ended meanwhile: nothing is read, so nothing is clicked.
       state: () => (current() ? (readCaptionControl()?.state ?? "unknown") : "unknown"),
+      captionsShowing: () => current() && (captionTurnSeen || captionRegionShowing()),
       clickTurnOn: () => {
-        const control = current() ? readCaptionControl() : null;
+        const control = mayAct() && !captionsClicked ? readCaptionControl() : null;
         if (control?.state !== "off") return false;
+        captionsClicked = true;
         control.el.click();
         return true;
       },
-      pressShortcut: () => current() && pressCaptionsShortcut(),
+      pressShortcut: () => {
+        if (!mayAct() || captionsKeyPressed || !pressCaptionsShortcut()) return false;
+        captionsKeyPressed = true;
+        return true;
+      },
       wait: async (ms) => {
         await wait(ms);
       },
     });
+    if (status === "enabled" || status === "already-on") captionsSeenOn = true;
     if (!current()) return;
     console.info(`${LOG} captions: ${status}`);
     chrome.runtime.sendMessage({ type: "CAPTIONS_STATUS", status }).catch(() => {});

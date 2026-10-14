@@ -10,13 +10,13 @@ A extensão liga as legendas do Meet ao gravar, para que o nome de quem fala che
 
 ### ✨ Novidades
 
-- **Legendas ligadas automaticamente.** Ao começar a gravar (e ao recarregar a página durante a gravação), se as legendas (CC) do Meet estiverem desligadas, a extensão as liga pelo botão de legendas; se o clique não pegar, usa o atalho "c" do Meet, só quando nenhum campo de texto está em foco. Você continua vendo as legendas e pode desligá-las no Meet; a extensão nunca as desliga, nem no fim
+- **Legendas ligadas automaticamente.** Ao começar a gravar (e ao recarregar a página durante a gravação), se as legendas (CC) do Meet estiverem desligadas, a extensão clica uma vez no botão de legendas. Se em até 6 segundos nem as legendas aparecem nem o botão passa a dizer que estão ligadas, e ele ainda diz "desligadas", ela tenta uma vez o atalho "c" do Meet, só quando nenhum campo de texto está em foco. Nunca um segundo clique. Você continua vendo as legendas e pode desligá-las no Meet; a extensão nunca as desliga, nem no fim, e depois de vê-las ligadas não mexe mais nelas naquela página
 - Nova opção **Configurações → Recursos → Ligar as legendas do Meet ao gravar** (ligada por padrão)
 - O painel diz "Legendas ligadas pela extensão para identificar quem fala" quando foi ela que ligou, e "Ligue as legendas (CC) para identificar quem fala" quando não conseguiu. A linha do tempo da reunião salva registra as duas coisas
 
 ### 🔧 Interno
 
-- O estado das legendas é lido do botão (rótulo "Ativar/Desativar legendas", "Turn on/off captions", "Activar/Desactivar subtítulos", `aria-pressed` ou o ícone `closed_caption_off`). Com o estado ilegível a extensão não clica nem aperta nada, e depois de cada ação ela espera e relê antes de agir de novo: assim nunca desliga legendas que já estavam ligadas
+- O estado das legendas é lido do botão (rótulo "Ativar/Desativar legendas", "Turn on/off captions", "Activar/Desactivar subtítulos", `aria-pressed` ou o ícone `closed_caption_off`) e da região das legendas na tela. Com o estado ilegível a extensão não clica nem aperta nada; cada forma de ligar (clique, atalho) é usada no máximo uma vez por carga da página, para que um toggle nunca desligue legendas que já ligaram
 
 ### Não verificado
 

@@ -103,8 +103,10 @@ export function isSafeFocusForShortcut(focus: FocusInfo | null): boolean {
 export interface CaptionsEnv {
   /** The setting (Configurações → Recursos), on by default. */
   enabled: boolean;
-  /** The state the page shows now. */
+  /** The state the CC toggle shows now. */
   state(): CaptionsState;
+  /** Captions are visibly on: the caption region shows, or a caption turn was read. */
+  captionsShowing(): boolean;
   /** Clicks the control that turns captions on; false when there is none. */
   clickTurnOn(): boolean;
   /** Presses Meet's "c" shortcut; false when focus is not safe. */
@@ -112,40 +114,57 @@ export interface CaptionsEnv {
   wait(ms: number): Promise<void>;
 }
 
-/** Waits between checks: the toolbar may still be loading, and Meet updates the button late. */
-export const CAPTIONS_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
-/** Clicks before the keyboard fallback is tried instead. */
-const CLICKS_BEFORE_SHORTCUT = 2;
+export interface CaptionsTiming {
+  /** Waits while the call toolbar loads, until the toggle's state can be read. */
+  findDelaysMs: number[];
+  /** How long a click or the shortcut has to show an effect before anything else is tried. */
+  effectWindowMs: number;
+  /** How often the effect is checked inside that window. */
+  pollMs: number;
+}
+
+export const CAPTIONS_TIMING: CaptionsTiming = {
+  findDelaysMs: [500, 1000, 2000, 4000],
+  effectWindowMs: 6000,
+  pollMs: 500,
+};
 
 /**
- * Turns captions on if they are off, and says how it went. Acts only on a
- * state read as "off", and after each action only observes for one round
- * (Meet may update the button late: acting again on a stale "off" would turn
- * them off). Never acts on an unknown state.
+ * Turns captions on if they are off, and says how it went. Every toggle is a
+ * risk of turning them OFF, so: nothing happens on an unreadable state; the
+ * turn-on control is clicked once, never twice; after it, the effect (the
+ * caption region or the toggle reading on) has a whole window to show; only
+ * if it does not and the toggle still reads off is the "c" shortcut pressed,
+ * once. Captions seen on at any point end it.
  */
 export async function ensureCaptionsOn(
   env: CaptionsEnv,
-  delays: number[] = CAPTIONS_RETRY_DELAYS_MS,
+  timing: CaptionsTiming = CAPTIONS_TIMING,
 ): Promise<CaptionsStatus> {
   if (!env.enabled) return "disabled";
-  let acted = false;
-  let justActed = false;
-  let clicks = 0;
-  for (const delay of delays) {
-    const state = env.state();
-    if (state === "on") return acted ? "enabled" : "already-on";
-    if (justActed) {
-      justActed = false;
-    } else if (state === "off") {
-      const clicked = clicks < CLICKS_BEFORE_SHORTCUT && env.clickTurnOn();
-      if (clicked) clicks += 1;
-      justActed = clicked || env.pressShortcut();
-      acted ||= justActed;
+  const isOn = () => env.captionsShowing() || env.state() === "on";
+  const turnedOn = async () => {
+    for (let waited = 0; waited < timing.effectWindowMs; waited += timing.pollMs) {
+      await env.wait(timing.pollMs);
+      if (isOn()) return true;
     }
+    return false;
+  };
+
+  let state: CaptionsState = isOn() ? "on" : env.state();
+  for (const delay of timing.findDelaysMs) {
+    if (state !== "unknown") break;
     await env.wait(delay);
+    state = isOn() ? "on" : env.state();
   }
-  if (env.state() === "on") return acted ? "enabled" : "already-on";
-  return "failed";
+  if (state === "on") return "already-on";
+  if (state === "unknown") return "failed";
+
+  const clicked = env.clickTurnOn();
+  if (clicked && (await turnedOn())) return "enabled";
+  if (isOn()) return clicked ? "enabled" : "already-on";
+  if (env.state() !== "off" || !env.pressShortcut()) return "failed";
+  return (await turnedOn()) ? "enabled" : "failed";
 }
 
 /**
