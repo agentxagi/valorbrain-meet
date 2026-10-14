@@ -102,6 +102,8 @@ export interface Decision {
   timestamp?: string;
   timestampLabel?: string;
   classification?: "tentative" | "finalized";
+  /** Attribution was stripped: the source utterance had no identified speaker. */
+  unverified?: boolean;
 }
 
 /** An action item extracted from the meeting, with optional owner, deadline, and confidence. */
@@ -114,6 +116,8 @@ export interface ActionItem {
   timestampLabel?: string;
   confidence?: "high" | "medium" | "low";
   isSpeculative?: boolean;
+  /** Attribution was stripped: the source utterance had no identified speaker. */
+  unverified?: boolean;
 }
 
 /** A key insight surfaced from the meeting along with a confidence score. */

@@ -1544,7 +1544,16 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
           : "O modelo não devolveu um resumo em JSON válido.",
       );
     }
-    mergeSummaryResult(state, parsed, features);
+    // chunkId → speakers, so the merge can strip attributions the model
+    // invented for utterances whose speaker was never identified.
+    const speakersByChunk = new Map<string, Set<string>>();
+    for (const entry of state.transcript) {
+      if (!entry?.id) continue;
+      const speakers = speakersByChunk.get(entry.id) ?? new Set<string>();
+      speakers.add(entry.speaker || "Participante");
+      speakersByChunk.set(entry.id, speakers);
+    }
+    mergeSummaryResult(state, parsed, features, speakersByChunk);
     state.lastSummarizedAt = Date.now();
     state.lastSummarizedIndex = window.endIndex;
     if (summaryRefusals.startTime === startTimeAtCall) summaryRefusals.inARow = 0;

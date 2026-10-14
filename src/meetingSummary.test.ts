@@ -417,3 +417,85 @@ test("buildSummaryMessages writes in the meeting language it is given", () => {
   const [japanese] = buildSummaryMessages({ ...base, outputLanguage: "ja" });
   assert.match(japanese.content, /Escreva sempre em japonês/);
 });
+
+test("buildSummaryMessages forbids attributing unidentified speech to a person", () => {
+  const [system] = buildSummaryMessages({
+    previousSummary: "",
+    transcriptLines: ["[chunk_1] [00:10] Participante: Acho que fechou."],
+    features: ALL,
+    participants: ["Ana"],
+    known: { decisions: [], actionItems: [], topics: [], questionsRaised: [] },
+    isFinal: false,
+  });
+  assert.match(system.content, /não identificada: não atribua o item a nenhuma pessoa/);
+  assert.match(
+    system.content,
+    /Nunca derive decisão, aceite ou acordo apenas de fala não identificada/,
+  );
+});
+
+test("mergeSummaryResult strips attribution from unidentified-speaker chunks", () => {
+  const state = emptyState();
+  const speakers = new Map<string, Set<string>>([
+    ["chunk_1", new Set(["Participante"])],
+    ["chunk_2", new Set(["Edgar Fonseca"])],
+    ["chunk_3", new Set(["Participante", "Ana"])], // one named speaker: identifiable
+  ]);
+  mergeSummaryResult(
+    state,
+    {
+      decisions: [
+        {
+          text: "Parceria confirmada (fechou)",
+          by: "Edgar Fonseca e Gustavo Iucksh Santos",
+          chunkId: "chunk_1",
+          timestampLabel: "03:15",
+          classification: "finalized",
+        },
+        { text: "Usar REST", by: "Edgar Fonseca", chunkId: "chunk_2", timestampLabel: "03:20" },
+        { text: "Sem chunk no mapa", by: "Alguém", timestampLabel: "03:25" },
+        { text: "Chunk misto", by: "Ana", chunkId: "chunk_3", timestampLabel: "03:30" },
+      ],
+    },
+    { topics: false, decisions: true, actions: false, sentiment: false },
+    speakers,
+  );
+  // Unidentified source: attribution stripped, tentative and unverified.
+  assert.equal(state.decisions[0].by, undefined);
+  assert.equal(state.decisions[0].classification, "tentative");
+  assert.equal(state.decisions[0].unverified, true);
+  // Identified source: untouched.
+  assert.equal(state.decisions[1].by, "Edgar Fonseca");
+  assert.equal(state.decisions[1].classification, "finalized");
+  assert.equal(state.decisions[1].unverified, undefined);
+  // Chunk not in the map (window expired): untouched.
+  assert.equal(state.decisions[2].by, "Alguém");
+  assert.equal(state.decisions[2].unverified, undefined);
+  // Mixed speakers on the chunk: attribution stands.
+  assert.equal(state.decisions[3].by, "Ana");
+  assert.equal(state.decisions[3].unverified, undefined);
+});
+
+test("mergeSummaryResult strips owner from unidentified-speaker actions", () => {
+  const state = emptyState();
+  const speakers = new Map([["chunk_9", new Set(["Participante"])]]);
+  mergeSummaryResult(
+    state,
+    { actionItems: [{ task: "Enviar o contrato", owner: "Gustavo", chunkId: "chunk_9" }] },
+    { topics: false, decisions: false, actions: true, sentiment: false },
+    speakers,
+  );
+  assert.equal(state.actionItems[0].owner, undefined);
+  assert.equal(state.actionItems[0].unverified, true);
+});
+
+test("mergeSummaryResult without the speaker map behaves as before", () => {
+  const state = emptyState();
+  mergeSummaryResult(
+    state,
+    { decisions: [{ text: "Parceria confirmada", by: "Edgar", classification: "finalized" }] },
+    { topics: false, decisions: true, actions: false, sentiment: false },
+  );
+  assert.equal(state.decisions[0].by, "Edgar");
+  assert.equal(state.decisions[0].unverified, undefined);
+});

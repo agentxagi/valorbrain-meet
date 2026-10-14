@@ -11,6 +11,7 @@ import {
   appendDistinct,
   decisionRule,
   insightRule,
+  isPlaceholderName,
   textRule,
   topicRule,
 } from "./nearDuplicates";
@@ -192,6 +193,7 @@ export function buildSummaryMessages(options: BuildSummaryPromptOptions): ChatMe
     "A transcrição é automática e pode ter erros de reconhecimento: interprete com bom senso, sem acrescentar fatos.",
     "Uma decisão ou proposta de negócio só existe se foi dita explicitamente como oferta, aceite ou acordo por quem tem autoridade. Analogia, comparação, piada ou comentário tangencial de um participante nunca é decisão nem preferência registrável.",
     'Distinga quem falou: atribua o item à pessoa certa e só use "Participante" quando a fala não puder ser atribuída.',
+    'Fala rotulada como "Participante" é de pessoa não identificada: não atribua o item a nenhuma pessoa (deixe "by"/"owner" vazios) e classifique a decisão como tentative. Nunca derive decisão, aceite ou acordo apenas de fala não identificada.',
     "Cite a origem de cada item de resumo, decisão e ação com o chunkId e o timestampLabel da linha correspondente.",
     "O campo summary resume a reunião inteira até agora (contexto anterior + trecho novo) em 3 a 6 frases.",
     "summaryItems lista só os pontos novos deste trecho, um por fato relevante.",
@@ -344,17 +346,41 @@ const CONFIDENCES = new Set(["high", "medium", "low"]);
 const SENTIMENTS = new Set(["positive", "neutral", "negative", "mixed"]);
 
 /**
+ * True when the item's source chunk is known and every speaker recorded for
+ * it is a placeholder ("Participante", "You", ...): nobody was identified for
+ * the utterance, so any attribution on the item is unverifiable. Chunks that
+ * are not in the map (window expired) leave the item untouched.
+ */
+function sourceUnidentified(
+  chunkId: string | undefined,
+  speakersByChunk?: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  if (!chunkId || !speakersByChunk) return false;
+  const speakers = speakersByChunk.get(chunkId);
+  if (!speakers || speakers.size === 0) return false;
+  for (const speaker of speakers) {
+    if (!isPlaceholderName(speaker)) return false;
+  }
+  return true;
+}
+
+/**
  * Merges one parsed model answer into `state` (mutates and returns it).
  * Unknown/invalid fields are ignored. An incoming decision, task, topic, open
  * point or insight that repeats one already registered (nearDuplicates.ts:
  * the same words, case, accents, punctuation and articles apart) is not added
  * again: the earlier item stays and takes what the repeat adds (an owner, a
  * deadline, a decision's or topic's latest classification or status).
+ *
+ * `speakersByChunk` (chunkId → speakers) enables the attribution guard: an
+ * item pointing at a chunk whose speakers are all placeholders loses its
+ * attributed person and is marked unverified.
  */
 export function mergeSummaryResult(
   state: SummaryState,
   parsed: Record<string, unknown>,
   features: SummaryFeatures,
+  speakersByChunk?: ReadonlyMap<string, ReadonlySet<string>>,
 ): SummaryState {
   const summary = asText(parsed.summary, 4000);
   if (summary) state.summary = summary;
@@ -395,12 +421,16 @@ export function mergeSummaryResult(
     const decisions = arrayOf(parsed.decisions)
       .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
       .map((item) => {
-        const by = asText(item.by, 100);
+        const { chunkId } = sourceRef(item);
+        const unidentified = sourceUnidentified(chunkId, speakersByChunk);
+        const by = unidentified ? "" : asText(item.by, 100);
         return {
           text: asText(item.text),
           ...(by ? { by } : {}),
           ...sourceRef(item),
-          classification: item.classification === "tentative" ? "tentative" : "finalized",
+          classification:
+            unidentified || item.classification === "tentative" ? "tentative" : "finalized",
+          ...(unidentified ? { unverified: true } : {}),
         } as Decision;
       })
       .filter((item) => item.text);
@@ -411,7 +441,9 @@ export function mergeSummaryResult(
     const actions = arrayOf(parsed.actionItems)
       .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
       .map((item) => {
-        const owner = asText(item.owner, 100);
+        const { chunkId } = sourceRef(item);
+        const unidentified = sourceUnidentified(chunkId, speakersByChunk);
+        const owner = unidentified ? "" : asText(item.owner, 100);
         const deadline = asText(item.deadline, 100);
         return {
           task: asText(item.task),
@@ -422,6 +454,7 @@ export function mergeSummaryResult(
             ? item.confidence
             : "medium") as ActionItem["confidence"],
           isSpeculative: item.isSpeculative === true,
+          ...(unidentified ? { unverified: true } : {}),
         } as ActionItem;
       })
       .filter((item) => item.task);

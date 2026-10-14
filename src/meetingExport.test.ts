@@ -82,3 +82,27 @@ test("text and JSON exports carry the same content", () => {
   assert.deepEqual(data.participants, ["Ana", "Bruno"]);
   assert.equal(data.transcript.length, 2);
 });
+
+test("unverified items are marked in both markdown and text exports", () => {
+  const marked = session({
+    decisions: [
+      {
+        text: "Parceria confirmada (fechou)",
+        classification: "tentative",
+        unverified: true,
+      },
+      { text: "Lançar na sexta", by: "Ana", classification: "finalized" },
+    ],
+    actionItems: [{ task: "Enviar o contrato", unverified: true }],
+  });
+  const md = buildMeetingMarkdown(marked);
+  assert.match(
+    md,
+    /## Decisões\n- Parceria confirmada \(fechou\) _\(a confirmar, não verificado\)_/,
+  );
+  assert.match(md, /- Lançar na sexta _\(Ana\)_/);
+  assert.match(md, /## Próximos passos\n- \[ \] Enviar o contrato _\(não verificado\)_/);
+  const txt = buildMeetingText(marked);
+  assert.match(txt, /• Parceria confirmada \(fechou\) \(não verificado\)/);
+  assert.match(txt, /\[ \] Enviar o contrato \(não verificado\)/);
+});
