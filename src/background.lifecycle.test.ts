@@ -476,7 +476,16 @@ test("a recording is transcribed, its language detected, summarized in it, saved
   assert.equal(payload.collection, "meetings");
   assert.match(payload.title, /^Reunião: Lançamento da versão 2 \(/);
   assert.match(payload.content, /## Resumo\nA equipe decidiu lançar/);
-  assert.match(payload.content, /## Próximos passos\n- \[ \] Preparar o changelog — Bruno/);
+  // Meet named nobody in this call: the record names nobody either (FB-0201).
+  assert.match(
+    payload.content,
+    /## Decisões\n- Lançar na sexta-feira _\(não verificado: falante não identificado em \[00:00\]\)_\n/,
+  );
+  assert.match(
+    payload.content,
+    /## Próximos passos\n- \[ \] Preparar o changelog \(prazo: quinta-feira\) _\(não verificado: falante não identificado\)_\n/,
+  );
+  assert.doesNotMatch(payload.content, /— Bruno/);
   assert.match(payload.content, /## Pontos em aberto\n- Qual o preço do plano empresarial\?/);
   assert.match(payload.content, /## Transcrição\n\[00:00\] Participante: Bom dia, pessoal\./);
   assert.match(payload.content, /\n- Registrado pelo ValorBrain Meet 2\.4\.0 \(transcrição/);
@@ -755,7 +764,9 @@ test("everyone who attended is saved, even after they left or the user hung up",
   );
   const saved = localStore[`savedSession:${index[0].id}`];
   assert.deepEqual(saved.participants, ["Ana", "Bruno"]);
-  assert.match(buildValorBrainContent(saved), /\n## Participantes\nAna, Bruno\n/);
+  // Meet showed the user only as "Você"; their name comes from Settings.
+  assert.equal(saved.recordedBy, "Gustavo");
+  assert.match(buildValorBrainContent(saved), /\n## Participantes\nAna, Bruno, Gustavo \(você\)\n/);
 
   // The final review and summary still know who was there.
   const chatUser = (pattern: RegExp) =>
@@ -891,6 +902,224 @@ test("in a call of two, a line from the tab is the other person's, by the live l
   );
 });
 
+/**
+ * The summary model as in FB-0201 (Evous call, 09/10): it names owners for
+ * everything, the "fechou" of the goodbye included.
+ */
+const FB0201_SUMMARY: AnyRecord = {
+  summary: "Edgar e Gustavo falaram do piloto com a Evous.",
+  summaryItems: [],
+  topics: [],
+  decisions: [
+    {
+      text: "Primeiro passo: piloto com a Evous",
+      by: "Gustavo Iucksh Santos",
+      timestampLabel: "00:20",
+      classification: "finalized",
+    },
+    {
+      text: "Parceria confirmada (fechou)",
+      by: "Gustavo Iucksh Santos e Edgar Fonseca",
+      timestampLabel: "00:30",
+      classification: "finalized",
+    },
+  ],
+  actionItems: [
+    {
+      task: "Enviar a análise de uso do produto",
+      owner: "Edgar Fonseca",
+      deadline: "semana que vem",
+      timestampLabel: "00:10",
+    },
+    {
+      task: "Assinar o contrato da parceria",
+      owner: "Gustavo Iucksh Santos",
+      timestampLabel: "00:30",
+    },
+  ],
+  sentiment: "positive",
+  keyInsights: [],
+  contradictions: [],
+  questionsRaised: [],
+};
+
+/** Sends one segment `offsetMs` after the recording started and waits for it. */
+async function sayAt(
+  startTime: number,
+  offsetMs: number,
+  source: "tab" | "mic",
+  text: string,
+  transcribedBefore: number,
+) {
+  sttResponses.push({
+    text,
+    duration: 3,
+    segments: [{ text: ` ${text}`, no_speech_prob: 0.02, avg_logprob: -0.2 }],
+  });
+  await sendMessage({
+    type: "OFFSCREEN_AUDIO_CHUNK",
+    audioBase64: fakeChunk(),
+    mimeType: "audio/webm;codecs=opus",
+    source,
+    startedAt: startTime + offsetMs,
+    endedAt: startTime + offsetMs + 3000,
+  });
+  await waitFor(async () => {
+    const s = await sendMessage({ type: "GET_STATE" });
+    return s.stats?.chunksTranscribed === transcribedBefore + 1 ? s : null;
+  }, `line at ${offsetMs} ms transcribed`);
+}
+
+test("FB-0201 replay: Meet's caption speakers and self marker reach the record; unnamed speech names nobody", async () => {
+  const settingsBefore = localStore.settings;
+  // No name in Settings: who records comes from Meet.
+  localStore.settings = { ...localStore.settings, selfName: "" };
+  summaryResponse = FB0201_SUMMARY;
+  fetchCalls.length = 0;
+  try {
+    const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+    const start = await sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: TAB_ID,
+      meetingId: "abc-defg-hij",
+      meetingUrl: MEET_URL,
+      streamId: "stream-fb0201",
+      includeMicrophone: true,
+    });
+    assert.equal(start.success, true, JSON.stringify(start));
+    const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+    const { startTime } = await sendMessage({ type: "GET_STATE" });
+
+    // What the content script sends for the FB-0201 page: the tiles, and the
+    // user's own name read from "Gustavo Iucksh Santos (Your Presentation)".
+    await sendMessage(
+      {
+        type: "PARTICIPANTS_UPDATED",
+        participants: ["Edgar Fonseca | EVOUS", "Ana Souza", "Gustavo Iucksh Santos"],
+        selfName: "Gustavo Iucksh Santos",
+      },
+      sender,
+    );
+
+    // Captions: Edgar's turn, then the user's own turn ("You" in an English Meet).
+    await sendMessage({ type: "ACTIVE_SPEAKER_CHANGED", name: "Edgar Fonseca | EVOUS" }, sender);
+    await sayAt(
+      startTime,
+      10_000,
+      "tab",
+      "A gente manda a análise de uso do produto semana que vem.",
+      0,
+    );
+    const you = await sendMessage({ type: "ACTIVE_SPEAKER_CHANGED", name: "You" }, sender);
+    assert.equal(you.success, true, "the caption's self label is a speaker turn");
+    await sayAt(startTime, 20_000, "mic", "Então o primeiro passo é o piloto com a Evous.", 1);
+    // Nobody's caption covers the goodbye: in a call of three it stays unnamed.
+    await sayAt(startTime, 30_000, "tab", "Bora, fechou. Valeu, obrigado, bom final de semana.", 2);
+
+    await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+    const index = await waitFor(
+      () =>
+        (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
+          ? (localStore.savedSessionIndex as AnyRecord[])
+          : null,
+      "session saved",
+    );
+    const saved = localStore[`savedSession:${index[0].id}`];
+    assert.deepEqual(
+      saved.transcript.map((e: AnyRecord) => [e.timestampLabel, e.speaker]),
+      [
+        ["00:10", "Edgar Fonseca | EVOUS"],
+        ["00:20", "Gustavo Iucksh Santos"],
+        ["00:30", "Participante"],
+      ],
+    );
+    assert.equal(saved.recordedBy, "Gustavo Iucksh Santos");
+
+    const storeCall = fetchCalls.findLast((c) => c.url.endsWith("/api/v1/memory/store"))!;
+    const content = JSON.parse(String(storeCall.init.body)).content as string;
+    assert.match(
+      content,
+      /## Decisões\n- Primeiro passo: piloto com a Evous — Gustavo Iucksh Santos\n- Parceria confirmada \(fechou\) _\(não verificado: falante não identificado em \[00:30\]\)_\n/,
+    );
+    assert.match(
+      content,
+      /## Próximos passos\n- \[ \] Enviar a análise de uso do produto — Edgar Fonseca \(prazo: semana que vem\)\n- \[ \] Assinar o contrato da parceria _\(não verificado: falante não identificado em \[00:30\]\)_\n/,
+    );
+    assert.match(
+      content,
+      /## Participantes\nEdgar Fonseca \| EVOUS, Ana Souza, Gustavo Iucksh Santos \(você\)\n/,
+    );
+    assert.match(
+      content,
+      /## Transcrição\n\[00:10\] Edgar Fonseca \| EVOUS: A gente manda .*\n\[00:20\] Gustavo Iucksh Santos: Então o primeiro passo .*\n\[00:30\] Participante: Bora, fechou\./,
+    );
+  } finally {
+    localStore.settings = settingsBefore;
+    summaryResponse = DEFAULT_SUMMARY;
+  }
+});
+
+test("a call of two where Meet named the user late: the record carries both names", async () => {
+  const settingsBefore = localStore.settings;
+  localStore.settings = { ...localStore.settings, selfName: "" };
+  try {
+    const savedBefore = (localStore.savedSessionIndex as AnyRecord[]).length;
+    const start = await sendMessage({
+      type: "MANUAL_START_AUDIO",
+      tabId: TAB_ID,
+      meetingId: "abc-defg-hij",
+      meetingUrl: MEET_URL,
+      streamId: "stream-late-self",
+      includeMicrophone: true,
+    });
+    assert.equal(start.success, true, JSON.stringify(start));
+    const sender = { tab: { id: TAB_ID, url: MEET_URL } };
+    const { startTime } = await sendMessage({ type: "GET_STATE" });
+    // The tiles, but not yet which one is the user (doc 2026-10-09 with Ricardo).
+    await sendMessage(
+      { type: "PARTICIPANTS_UPDATED", participants: ["Ricardo Moraes", "Gustavo Iucksh Santos"] },
+      sender,
+    );
+    await sayAt(startTime, 5_000, "mic", "Ricardo, te mando a proposta hoje.", 0);
+    await sayAt(startTime, 15_000, "tab", "Perfeito, fico no aguardo da proposta.", 1);
+    const live = await sendMessage({ type: "GET_STATE" });
+    assert.deepEqual(
+      live.transcript.map((e: AnyRecord) => e.speaker),
+      ["Você", "Participante"],
+      "while the user is unknown, the lines say so",
+    );
+
+    // The user shares the screen: "Gustavo Iucksh Santos (Your Presentation)".
+    await sendMessage(
+      {
+        type: "PARTICIPANTS_UPDATED",
+        participants: ["Ricardo Moraes", "Gustavo Iucksh Santos"],
+        selfName: "Gustavo Iucksh Santos",
+      },
+      sender,
+    );
+    await sendMessage({ type: "MANUAL_STOP_AUDIO" });
+    const index = await waitFor(
+      () =>
+        (localStore.savedSessionIndex as AnyRecord[]).length === savedBefore + 1
+          ? (localStore.savedSessionIndex as AnyRecord[])
+          : null,
+      "session saved",
+    );
+    const saved = localStore[`savedSession:${index[0].id}`];
+    assert.deepEqual(
+      saved.transcript.map((e: AnyRecord) => e.speaker),
+      ["Gustavo Iucksh Santos", "Ricardo Moraes"],
+    );
+    assert.match(
+      buildValorBrainContent(saved),
+      /\n\[00:05\] Gustavo Iucksh Santos: Ricardo, te mando .*\n\[00:15\] Ricardo Moraes: Perfeito/,
+    );
+  } finally {
+    localStore.settings = settingsBefore;
+  }
+});
+
 /** The record of a sales call as the live summary leaves it: 10 items, most of them noise. */
 const SALES_CALL_SUMMARY: AnyRecord = {
   summary: "Leonardo apresentou o programa de mentoria; Gustavo decidiu não aderir agora.",
@@ -911,12 +1140,18 @@ const SALES_CALL_SUMMARY: AnyRecord = {
       text: "Gustavo decide não aderir agora",
       by: "Gustavo",
       chunkId: "chunk_1",
+      timestampLabel: "00:00",
       classification: "tentative",
     },
   ],
   actionItems: [
     { task: "Enviar o link da reunião para o Gustavo entrar", confidence: "high" },
-    { task: "Desenhar a carta de apresentação do Gustavo", owner: "Leonardo", deadline: "sexta" },
+    {
+      task: "Desenhar a carta de apresentação do Gustavo",
+      owner: "Leonardo",
+      deadline: "sexta",
+      timestampLabel: "00:00",
+    },
   ],
   sentiment: "neutral",
   keyInsights: [],
@@ -940,6 +1175,7 @@ async function recordAndStop(streamId: string): Promise<number> {
     streamId,
   });
   assert.equal(start.success, true, JSON.stringify(start));
+  // Gustavo (the microphone) says it: his line has an identified speaker.
   const text = "Eu não vou aderir agora, mas mande a carta de apresentação.";
   sttResponses.push({
     text,
@@ -950,6 +1186,7 @@ async function recordAndStop(streamId: string): Promise<number> {
     type: "OFFSCREEN_AUDIO_CHUNK",
     audioBase64: fakeChunk(),
     mimeType: "audio/webm;codecs=opus",
+    source: "mic",
     startedAt: Date.now() - 5000,
     endedAt: Date.now(),
   });
@@ -995,6 +1232,8 @@ test("the record is reviewed by the model, checked and merged before it is saved
         text: "Gustavo decide não aderir agora",
         by: "Gustavo",
         chunkId: "chunk_1",
+        timestampLabel: "00:00",
+        timestamp: "00:00",
         classification: "finalized",
       },
     ]);
@@ -1033,7 +1272,10 @@ test("the record is reviewed by the model, checked and merged before it is saved
     assert.equal(body.temperature, 0);
     assert.equal(body.max_tokens, 6000);
     assert.deepEqual(body.response_format, { type: "json_object" });
-    assert.match(body.messages[1].content, /\nD3 Gustavo decide não aderir agora — por: Gustavo/);
+    assert.match(
+      body.messages[1].content,
+      /\nD3 \[00:00\] Gustavo decide não aderir agora — por: Gustavo/,
+    );
     assert.match(body.messages[1].content, /Quem gravou a reunião: Gustavo\.\n<\/participantes>/);
 
     // The document sent to ValorBrain carries the reviewed record and nothing about the review.

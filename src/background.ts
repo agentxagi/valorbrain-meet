@@ -33,6 +33,7 @@ import {
   isEchoOf,
   normalizeActiveSpeakerName,
   rangesOverlap,
+  relabelTranscript,
   resolveTabSpeaker,
   SELF_SPEAKER_FALLBACK,
   type SpeakerEvent,
@@ -112,6 +113,7 @@ import { cleanTranscription, type CleanTranscription } from "./transcriptFilter"
 import { extractJsonObject, parseJsonObjectStrict } from "./llmJson";
 import {
   buildSummaryMessages,
+  enforceSpeakerAttribution,
   formatTimestampLabel,
   mergeSummaryResult,
   sanitizePromptText,
@@ -1067,6 +1069,24 @@ function selfSpeakerName(settings: PipelineSettings): string {
   return selfNameCandidates(settings)[0] ?? SELF_SPEAKER_FALLBACK;
 }
 
+/**
+ * Labels the transcript with what is known once the call is over
+ * (relabelTranscript): the recording user's name on the microphone lines
+ * written as "Você" before it was known, and the other attendee of a call of
+ * two on the tab lines no active speaker named. Returns the name the
+ * microphone lines carry (undefined: still unknown).
+ */
+async function relabelSpeakersAtEnd(): Promise<string | undefined> {
+  const selves = selfNameCandidates((await getSettings()) as PipelineSettings);
+  if (selves.length === 0) return undefined;
+  const others = (state.attendees ?? []).filter(
+    (name) => !SELF_PLACEHOLDER.test(name) && !selves.some((self) => namesMatch(name, self)),
+  );
+  const changed = relabelTranscript(state.transcript, { selfName: selves[0], others });
+  if (changed > 0) addTimeline(`Falantes revisados no fim: ${changed} falas`);
+  return selves[0];
+}
+
 function isFeatureEnabled(settings: PipelineSettings, key: keyof PipelineSettings): boolean {
   return settings[key] !== false;
 }
@@ -1545,6 +1565,7 @@ async function runSummaryPass(fromIndex: number, settings: PipelineSettings, isF
       );
     }
     mergeSummaryResult(state, parsed, features);
+    enforceSpeakerAttribution(state);
     state.lastSummarizedAt = Date.now();
     state.lastSummarizedIndex = window.endIndex;
     if (summaryRefusals.startTime === startTimeAtCall) summaryRefusals.inARow = 0;
@@ -1852,6 +1873,8 @@ async function consolidateMeetingRecord(hurry: AbortSignal): Promise<void> {
 
   const local = dedupeRecord(state);
   state.consolidation = reviewed ? { ...reviewed, after: local.after } : local;
+  // The review may name an author or owner: only for lines with a speaker.
+  enforceSpeakerAttribution(state);
 }
 
 // ---------------------------------------------------------------------------
@@ -2620,6 +2643,10 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
     let savedSession: StoredSession | null = null;
     if (wasRecording) {
       await withTimeout(audioChunkQueue.whenIdle(), STOP_TRANSCRIPTION_TIMEOUT_MS);
+      const recordedBy = await relabelSpeakersAtEnd().catch((err) => {
+        console.warn(`${LOG_PREFIX} Speaker labels not revised:`, err);
+        return undefined;
+      });
       if (state.transcript.length > 0) {
         // Spelling first, so the final summary is written from the fixed text.
         await withTimeout(
@@ -2640,6 +2667,8 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           STOP_CONSOLIDATION_TIMEOUT_MS,
         );
       }
+      // Last word on who said what: the record names nobody the transcript does not.
+      enforceSpeakerAttribution(state);
 
       const hasContent = state.transcript.length > 0 || Boolean(state.summary.trim());
       if (hasContent) {
@@ -2660,6 +2689,7 @@ async function stopAudioCapture(reason = "Gravação encerrada") {
           endReason: reason,
           // Which build wrote it, so a problem can be traced from the record.
           ...(appVersion ? { appVersion } : {}),
+          ...(recordedBy ? { recordedBy } : {}),
         };
         try {
           savedSession = await withSavedSessions(async () => {
@@ -3107,7 +3137,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ success: true, ignored: true });
           return;
         }
-        const speaker = normalizeActiveSpeakerName(message.name);
+        // Captions write the local user as "Você"/"You": their turn ends the
+        // previous speaker's, and never names a tab line.
+        const rawName = typeof message.name === "string" ? message.name.trim() : "";
+        const speaker = SELF_PLACEHOLDER.test(rawName)
+          ? SELF_SPEAKER_FALLBACK
+          : normalizeActiveSpeakerName(rawName);
         if (!speaker) {
           sendResponse({ success: false, error: "Invalid active speaker name" });
           return;

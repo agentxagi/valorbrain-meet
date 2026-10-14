@@ -7,9 +7,39 @@ import {
   isEchoOf,
   normalizeActiveSpeakerName,
   rangesOverlap,
+  relabelTranscript,
   resolveTabSpeaker,
   resolveTranscriptSpeaker,
+  SELF_SPEAKER_FALLBACK,
 } from "./speakerAttribution.ts";
+import type { TranscriptEntry } from "./types.ts";
+
+test("the end of the meeting names the user's early lines and the other person of a call of two", () => {
+  const lines = (): TranscriptEntry[] => [
+    { speaker: SELF_SPEAKER_FALLBACK, text: "Te mando a proposta.", timestamp: 5, source: "mic" },
+    { speaker: DEFAULT_TRANSCRIPT_SPEAKER, text: "Fico no aguardo.", timestamp: 15, source: "tab" },
+    { speaker: "Ana", text: "Combinado.", timestamp: 20, source: "tab" },
+  ];
+  const two = lines();
+  assert.equal(relabelTranscript(two, { selfName: "Gustavo", others: ["Ricardo"] }), 2);
+  assert.deepEqual(
+    two.map((e) => e.speaker),
+    ["Gustavo", "Ricardo", "Ana"],
+  );
+
+  // Two other people: the unnamed tab line stays unnamed.
+  const three = lines();
+  assert.equal(relabelTranscript(three, { selfName: "Gustavo", others: ["Ricardo", "Ana"] }), 1);
+  assert.deepEqual(
+    three.map((e) => e.speaker),
+    ["Gustavo", DEFAULT_TRANSCRIPT_SPEAKER, "Ana"],
+  );
+
+  // Without the user's name, "Você" stays.
+  const unknown = lines();
+  assert.equal(relabelTranscript(unknown, { others: [] }), 0);
+  assert.equal(unknown[0].speaker, SELF_SPEAKER_FALLBACK);
+});
 
 test("active speaker names are normalized with participant-name filtering", () => {
   assert.equal(normalizeActiveSpeakerName("Ada Lovelace"), "Ada Lovelace");
