@@ -46,7 +46,7 @@ function stripExcludedLabels(value: string): string {
     cleaned = cleaned.replace(regex, " ");
   }
 
-  cleaned = cleaned.replace(/(^|\s)[-/]+(?=\s|$)/g, " ");
+  cleaned = cleaned.replace(/(^|\s)[-/]+(?=\s|$)/g, " ").replace(/\(\s*\)/g, " ");
 
   return cleanText(cleaned);
 }
@@ -55,10 +55,47 @@ const LOWERCASE_EXCLUDED_LABELS = new Set(
   Array.from(EXCLUDED_PARTICIPANT_LABELS).map((label) => label.toLowerCase()),
 );
 
+/**
+ * The suffix Meet writes after a display name, in the languages it ships:
+ * "(você)" / "(You)" on the local user, "(Your Presentation)" /
+ * "(Sua apresentação)" on the local user's screen share, and "(Presentation)"
+ * / "(Apresentação)" on someone else's. "(Your )" is what an older build left
+ * of "(Your Presentation)" after dropping the word "Presentation".
+ */
+const SELF_MARKER =
+  /\s*\((?:you|você|voce|tú|tu|vous|(?:your|sua|seu|su|votre)(?:\s[^()]*)?)\s*\)\s*$/i;
+const PRESENTATION_MARKER =
+  /\s*\((?:presentation|apresentação|apresentacao|presentación|presentacion|présentation)\)\s*$/i;
+
+/**
+ * Splits Meet's marker from a display name: "Ana Souza (Your Presentation)"
+ * → { name: "Ana Souza", isSelf: true }; "Bruno (Apresentação)" →
+ * { name: "Bruno", isSelf: false }. A name without a marker comes back as is.
+ */
+export function splitMeetNameMarker(raw: string): { name: string; isSelf: boolean } {
+  const value = cleanText(raw);
+  if (SELF_MARKER.test(value)) {
+    return { name: cleanText(value.replace(SELF_MARKER, "")), isSelf: true };
+  }
+  return { name: cleanText(value.replace(PRESENTATION_MARKER, "")), isSelf: false };
+}
+
+/**
+ * The name in an element's text (icon ligatures, control labels and Meet's
+ * marker removed) and whether the marker says it is the local user. The
+ * marker is read before and after the cleanup: "Ana (Your Presentation)
+ * more_vert" and "Ana (Your Presentation) Muted" both are the local user.
+ */
+export function meetDisplayName(raw: string): { name: string; isSelf: boolean } {
+  const first = splitMeetNameMarker(stripIconText(raw));
+  const second = splitMeetNameMarker(stripExcludedLabels(first.name));
+  return { name: second.name, isSelf: first.isSelf || second.isSelf };
+}
+
 export function participantNameFromCandidate(candidate: ParticipantNameCandidate): string | null {
-  const selfName = cleanText(candidate.selfName || "");
-  const text = stripExcludedLabels(candidate.text || "");
-  const ariaLabel = cleanText(candidate.ariaLabel || "");
+  const selfName = splitMeetNameMarker(candidate.selfName || "").name;
+  const text = meetDisplayName(candidate.text || "").name;
+  const ariaLabel = splitMeetNameMarker(candidate.ariaLabel || "").name;
 
   const participantAriaName = ariaLabel.startsWith("Participant:")
     ? ariaLabel.replace(/^Participant:\s*/, "")
