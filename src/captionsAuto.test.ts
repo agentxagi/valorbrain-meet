@@ -6,7 +6,6 @@ import {
   captionsNote,
   ensureCaptionsOn,
   isCaptionsStatus,
-  isSafeFocusForShortcut,
   mergeCaptionsStatus,
   pickCaptionControl,
   type CaptionsEnv,
@@ -14,41 +13,36 @@ import {
 } from "./captionsAuto.ts";
 
 /**
- * A Meet page on a clock. The CC button and "c" are real toggles: each flips
- * the captions, so a second toggle turns them back off. The button's label and
- * the caption region may show the change late (or never).
+ * A Meet page on a clock. The CC button is a real toggle: a second click turns
+ * captions back off. The button's label and the caption region may show the
+ * change late (or never), and the toolbar may appear late (the lobby).
  */
 function page(
   initiallyOn: boolean,
   options: {
     clickWorks?: boolean;
-    shortcutWorks?: boolean;
-    focusSafe?: boolean;
     /** ms after a change before the label reads it. */
     labelDelayMs?: number;
     /** ms after captions go on before the region shows them. */
     regionDelayMs?: number;
     /** When the toolbar can be read at all. */
     toolbarAtMs?: number;
+    /** When the recording ends. */
+    recordingEndsAtMs?: number;
   } = {},
 ) {
   const {
     clickWorks = true,
-    shortcutWorks = true,
-    focusSafe = true,
     labelDelayMs = 0,
     regionDelayMs = Infinity,
     toolbarAtMs = 0,
+    recordingEndsAtMs = Infinity,
   } = options;
   let clock = 0;
   let on = initiallyOn;
   let labelOn = initiallyOn;
   let changedAt = -Infinity;
   const log: string[] = [];
-  const toggle = () => {
-    on = !on;
-    changedAt = clock;
-  };
   const label = (): CaptionsState => {
     if (clock < toolbarAtMs) return "unknown";
     if (clock - changedAt >= labelDelayMs) labelOn = on;
@@ -56,28 +50,26 @@ function page(
   };
   const env: CaptionsEnv = {
     enabled: true,
+    active: () => clock < recordingEndsAtMs,
     state: label,
     captionsShowing: () => on && clock - changedAt >= regionDelayMs,
     clickTurnOn: () => {
       if (label() !== "off") return false;
       log.push(`click@${clock}`);
-      if (clickWorks) toggle();
-      return true;
-    },
-    pressShortcut: () => {
-      if (!focusSafe) return false;
-      log.push(`key@${clock}`);
-      if (shortcutWorks) toggle();
+      if (clickWorks) {
+        on = !on;
+        changedAt = clock;
+      }
       return true;
     },
     wait: async (ms) => {
       clock += ms;
     },
   };
-  return { env, log, isOn: () => on };
+  return { env, log, isOn: () => on, clock: () => clock };
 }
 
-test("captions already on: nothing is clicked or pressed", async () => {
+test("captions already on: nothing is clicked", async () => {
   const meet = page(true);
   assert.equal(await ensureCaptionsOn(meet.env), "already-on");
   assert.deepEqual(meet.log, []);
@@ -104,39 +96,36 @@ test("the caption region shows before the label changes: enabled, nothing more i
   assert.equal(meet.isOn(), true);
 });
 
-test("the click does nothing: after the whole 6 s window, the shortcut once", async () => {
-  const meet = page(false, { clickWorks: false });
-  assert.equal(await ensureCaptionsOn(meet.env), "enabled");
-  assert.deepEqual(meet.log, ["click@0", "key@6000"]);
-  assert.equal(meet.isOn(), true);
+test("a hidden tab redraws nothing in 6 s: one click, the hint, and the captions stay on", async () => {
+  const meet = page(false, { labelDelayMs: Infinity });
+  assert.equal(await ensureCaptionsOn(meet.env), "failed");
+  assert.deepEqual(meet.log, ["click@0"]);
+  assert.equal(meet.isOn(), true, "nothing undid the click");
 });
 
-test("nothing works: one click, one shortcut, then the panel hint", async () => {
-  const meet = page(false, { clickWorks: false, shortcutWorks: false });
+test("the click does nothing: one click, then 'failed' and the panel hint, never a key", async () => {
+  const meet = page(false, { clickWorks: false });
   assert.equal(await ensureCaptionsOn(meet.env), "failed");
-  assert.deepEqual(meet.log, ["click@0", "key@6000"]);
+  assert.deepEqual(meet.log, ["click@0"]);
   assert.equal(captionsNote("failed"), "Ligue as legendas (CC) para identificar quem fala.");
 });
 
-test("with the focus in a text field the shortcut is never pressed", async () => {
-  const meet = page(false, { clickWorks: false, focusSafe: false });
-  assert.equal(await ensureCaptionsOn(meet.env), "failed");
-  assert.deepEqual(meet.log, ["click@0"]);
+test("recording from the lobby: it waits for the call's toolbar, then clicks once", async () => {
+  const meet = page(false, { toolbarAtMs: 60_000 });
+  assert.equal(await ensureCaptionsOn(meet.env), "enabled");
+  assert.equal(meet.log.length, 1);
+  const clickedAt = Number(meet.log[0].split("@")[1]);
+  assert.ok(clickedAt >= 60_000 && clickedAt < 63_000, meet.log[0]);
 });
 
-test("a state it cannot read is never acted on (no toggling captions off by mistake)", async () => {
-  const meet = page(false, { toolbarAtMs: Infinity });
+test("a state it cannot read is never acted on; the wait ends with the recording", async () => {
+  const meet = page(false, { toolbarAtMs: Infinity, recordingEndsAtMs: 120_000 });
   assert.equal(await ensureCaptionsOn(meet.env), "failed");
   assert.deepEqual(meet.log, []);
+  assert.ok(meet.clock() >= 120_000 && meet.clock() < 124_000);
 });
 
-test("the toolbar appears late: one click once it reads 'off'", async () => {
-  const meet = page(false, { toolbarAtMs: 1500 });
-  assert.equal(await ensureCaptionsOn(meet.env), "enabled");
-  assert.deepEqual(meet.log, ["click@1500"]);
-});
-
-test("the setting off: no click, no key, no hint", async () => {
+test("the setting off: no click, no hint", async () => {
   const meet = page(false);
   assert.equal(await ensureCaptionsOn({ ...meet.env, enabled: false }), "disabled");
   assert.deepEqual(meet.log, []);
@@ -171,30 +160,6 @@ test("the CC button's state comes from its label, aria-pressed or icon, in pt, e
     { index: 1, state: "off" },
   );
   assert.equal(pickCaptionControl([{ label: "Sair da chamada", pressed: null, text: "" }]), null);
-});
-
-test("the shortcut is pressed only when no text field has the focus", () => {
-  assert.equal(isSafeFocusForShortcut(null), true);
-  assert.equal(
-    isSafeFocusForShortcut({ tagName: "BUTTON", isContentEditable: false, role: null }),
-    true,
-  );
-  assert.equal(
-    isSafeFocusForShortcut({ tagName: "textarea", isContentEditable: false, role: null }),
-    false,
-  );
-  assert.equal(
-    isSafeFocusForShortcut({ tagName: "INPUT", isContentEditable: false, role: null }),
-    false,
-  );
-  assert.equal(
-    isSafeFocusForShortcut({ tagName: "DIV", isContentEditable: true, role: null }),
-    false,
-  );
-  assert.equal(
-    isSafeFocusForShortcut({ tagName: "DIV", isContentEditable: false, role: "textbox" }),
-    false,
-  );
 });
 
 test("once the extension turned captions on, the recording says so after a reload", () => {

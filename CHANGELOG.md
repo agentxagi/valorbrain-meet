@@ -10,18 +10,18 @@ A extensão liga as legendas do Meet ao gravar, para que o nome de quem fala che
 
 ### ✨ Novidades
 
-- **Legendas ligadas automaticamente.** Ao começar a gravar (e ao recarregar a página durante a gravação), se as legendas (CC) do Meet estiverem desligadas, a extensão clica uma vez no botão de legendas. Se em até 6 segundos nem as legendas aparecem nem o botão passa a dizer que estão ligadas, e ele ainda diz "desligadas", ela tenta uma vez o atalho "c" do Meet, só quando nenhum campo de texto está em foco. Nunca um segundo clique. Você continua vendo as legendas e pode desligá-las no Meet; a extensão nunca as desliga, nem no fim, e depois de vê-las ligadas não mexe mais nelas naquela página
+- **Legendas ligadas automaticamente.** Ao começar a gravar (e ao recarregar a página durante a gravação), se as legendas (CC) do Meet estiverem desligadas, a extensão clica uma vez no botão de legendas e confere, por até 6 segundos, se as legendas apareceram ou se o botão passou a dizer que estão ligadas. Nunca um segundo clique e nenhum atalho de teclado. Se a gravação começa no lobby, a extensão espera entrar na chamada para clicar. Você continua vendo as legendas e pode desligá-las no Meet; a extensão nunca as desliga, nem no fim, e depois de vê-las ligadas não mexe mais nelas naquela página
 - Nova opção **Configurações → Recursos → Ligar as legendas do Meet ao gravar** (ligada por padrão)
 - O painel diz "Legendas ligadas pela extensão para identificar quem fala" quando foi ela que ligou, e "Ligue as legendas (CC) para identificar quem fala" quando não conseguiu. A linha do tempo da reunião salva registra as duas coisas
 
 ### 🔧 Interno
 
-- O estado das legendas é lido do botão (rótulo "Ativar/Desativar legendas", "Turn on/off captions", "Activar/Desactivar subtítulos", `aria-pressed` ou o ícone `closed_caption_off`) e da região das legendas na tela. Com o estado ilegível a extensão não clica nem aperta nada; cada forma de ligar (clique, atalho) é usada no máximo uma vez por carga da página, para que um toggle nunca desligue legendas que já ligaram
+- O estado das legendas é lido do botão (rótulo "Ativar/Desativar legendas", "Turn on/off captions", "Activar/Desactivar subtítulos", `aria-pressed` ou o ícone `closed_caption_off`) e da região das legendas na tela. Com o estado ilegível a extensão não clica; o único gesto é um clique por carga da página no controle que liga as legendas, para que nada que ela faça possa desligá-las. O atalho "c" do Meet não é usado: é um toggle às cegas e, numa aba em segundo plano em que o Meet demora a redesenhar o botão, desfaria um clique que funcionou
 
 ### Não verificado
 
 - Os seletores do botão de legendas seguem o Meet de hoje (o ícone é o mesmo que o TranscripTonic 3.4.3 usa). Se o Meet mudar o botão, a extensão não liga as legendas, o painel pede para ligar e a gravação segue como na 2.6.0. Vale conferir numa chamada real em português e em inglês
-- O atalho "c" é enviado como evento sintético; o Meet pode ignorá-lo. Nesse caso vale só o clique no botão
+- Numa aba em segundo plano, o Meet pode demorar mais de 6 segundos para mostrar que ligou: o painel pede para ligar as legendas mesmo com elas já ligadas, e a extensão não clica de novo
 
 ## [2.6.0] - 2026-10-14
 

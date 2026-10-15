@@ -3,12 +3,7 @@
 // live captions), the in-page status pill, the private late-joiner brief, chat
 // messages and leave-call detection.
 // It never restyles the meeting app (all styles are scoped, see content.css).
-import {
-  ensureCaptionsOn,
-  isSafeFocusForShortcut,
-  pickCaptionControl,
-  type CaptionControlInfo,
-} from "./captionsAuto.ts";
+import { ensureCaptionsOn, pickCaptionControl, type CaptionControlInfo } from "./captionsAuto.ts";
 import { CaptionSpeakerTracker, type CaptionNode } from "./meetCaptions.ts";
 import {
   collectParticipantNames,
@@ -481,8 +476,6 @@ import { shortcutKeys } from "./ui/shortcut.ts";
   let captionsHandledFor: number | null = null;
   /** The CC toggle was clicked in this page load (never a second click). */
   let captionsClicked = false;
-  /** The "c" shortcut was pressed in this page load (never a second time). */
-  let captionsKeyPressed = false;
   /** Captions were seen on in this page load: the extension never toggles them again. */
   let captionsSeenOn = false;
   /** A caption turn was read (captions are on, whatever the toggle says). */
@@ -511,37 +504,11 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     return picked ? { el: elements[picked.index], state: picked.state } : null;
   }
 
-  /** Meet's "c" shortcut (it toggles captions), only when no text field has the focus. */
-  function pressCaptionsShortcut(): boolean {
-    const focused = document.activeElement as HTMLElement | null;
-    const inPage = focused && focused !== document.body ? focused : null;
-    const focus = inPage
-      ? {
-          tagName: inPage.tagName,
-          isContentEditable: inPage.isContentEditable,
-          role: inPage.getAttribute("role"),
-        }
-      : null;
-    if (!isSafeFocusForShortcut(focus)) return false;
-    const target = inPage ?? document.body;
-    for (const type of ["keydown", "keyup"]) {
-      target.dispatchEvent(
-        new KeyboardEvent(type, {
-          key: "c",
-          code: "KeyC",
-          keyCode: 67,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    }
-    return true;
-  }
-
   /**
-   * Turns Meet's captions on once per recording and page load (a reload while
+   * Turns Meet's captions on with one click per page load (a reload while
    * recording tries again), unless the setting is off, and tells the service
-   * worker how it went. Never turns them off, now or at the end.
+   * worker how it went. A recording started in the lobby waits, for as long
+   * as it lasts, for the call's CC button. Never turns captions off.
    */
   async function autoEnableCaptions(recording: number) {
     if (captionsHandledFor === recording || SELECTORS.captionToggles.length === 0) return;
@@ -555,24 +522,20 @@ import { shortcutKeys } from "./ui/shortcut.ts";
       // Settings unreadable: the default (on) holds.
     }
     const current = () => captionsHandledFor === recording;
-    // One click and one shortcut per page load, and none once captions were
-    // seen on: a second toggle could only turn them off.
-    const mayAct = () => current() && !captionsSeenOn;
     const status = await ensureCaptionsOn({
       enabled,
+      active: current,
       // The recording ended meanwhile: nothing is read, so nothing is clicked.
       state: () => (current() ? (readCaptionControl()?.state ?? "unknown") : "unknown"),
       captionsShowing: () => current() && (captionTurnSeen || captionRegionShowing()),
+      // One click per page load, none once captions were seen on: a second
+      // toggle could only turn them off.
       clickTurnOn: () => {
-        const control = mayAct() && !captionsClicked ? readCaptionControl() : null;
+        if (!current() || captionsClicked || captionsSeenOn) return false;
+        const control = readCaptionControl();
         if (control?.state !== "off") return false;
         captionsClicked = true;
         control.el.click();
-        return true;
-      },
-      pressShortcut: () => {
-        if (!mayAct() || captionsKeyPressed || !pressCaptionsShortcut()) return false;
-        captionsKeyPressed = true;
         return true;
       },
       wait: async (ms) => {
