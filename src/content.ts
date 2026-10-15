@@ -3,6 +3,7 @@
 // live captions), the in-page status pill, the private late-joiner brief, chat
 // messages and leave-call detection.
 // It never restyles the meeting app (all styles are scoped, see content.css).
+import { ensureCaptionsOn, pickCaptionControl, type CaptionControlInfo } from "./captionsAuto.ts";
 import { CaptionSpeakerTracker, type CaptionNode } from "./meetCaptions.ts";
 import {
   collectParticipantNames,
@@ -29,6 +30,7 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     activeSpeakerIndicators: DOM.activeSpeakerIndicators,
     captionRegions: DOM.captionRegions,
     lobbySelfName: DOM.lobbySelfName,
+    captionToggles: DOM.captionToggles,
   };
 
   /** Labels of the buttons shown only after you leave or the call ends. */
@@ -434,7 +436,10 @@ import { shortcutKeys } from "./ui/shortcut.ts";
       const target = mutation.target;
       const element = target.nodeType === Node.TEXT_NODE ? target.parentElement : target;
       const speaker = captionTracker?.turn(element as unknown as CaptionNode | null);
-      if (speaker) reportSpeaker(speaker);
+      if (speaker) {
+        captionTurnSeen = true;
+        reportSpeaker(speaker);
+      }
     }
   }
 
@@ -463,6 +468,84 @@ import { shortcutKeys } from "./ui/shortcut.ts";
     captionObserver = null;
     captionRegion = null;
     captionTracker = null;
+  }
+
+  // ——— Turning the captions on (captionsAuto.ts) ———
+
+  /** The recording (its start time) whose captions this page load handles. */
+  let captionsHandledFor: number | null = null;
+  /** The CC toggle was clicked in this page load (never a second click). */
+  let captionsClicked = false;
+  /** Captions were seen on in this page load: the extension never toggles them again. */
+  let captionsSeenOn = false;
+  /** A caption turn was read (captions are on, whatever the toggle says). */
+  let captionTurnSeen = false;
+
+  /** The caption region is on screen with captions in it. */
+  function captionRegionShowing(): boolean {
+    const region = queryFirst(SELECTORS.captionRegions);
+    return isVisible(region) && Boolean(region.textContent?.trim());
+  }
+
+  /** The visible CC toggle and the state it shows; null when none reads as one. */
+  function readCaptionControl(): { el: HTMLElement; state: "on" | "off" } | null {
+    const elements: HTMLElement[] = [];
+    for (const selector of SELECTORS.captionToggles) {
+      for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+        if (isVisible(el) && !elements.includes(el)) elements.push(el);
+      }
+    }
+    const infos: CaptionControlInfo[] = elements.map((el) => ({
+      label: el.getAttribute("aria-label") || el.getAttribute("data-tooltip") || "",
+      pressed: el.getAttribute("aria-pressed"),
+      text: el.textContent || "",
+    }));
+    const picked = pickCaptionControl(infos);
+    return picked ? { el: elements[picked.index], state: picked.state } : null;
+  }
+
+  /**
+   * Turns Meet's captions on with one click per page load (a reload while
+   * recording tries again), unless the setting is off, and tells the service
+   * worker how it went. A recording started in the lobby waits, for as long
+   * as it lasts, for the call's CC button. Never turns captions off.
+   */
+  async function autoEnableCaptions(recording: number) {
+    if (captionsHandledFor === recording || SELECTORS.captionToggles.length === 0) return;
+    captionsHandledFor = recording;
+    let enabled = true;
+    try {
+      const { settings } = await chrome.storage.local.get("settings");
+      enabled =
+        (settings as { autoEnableCaptions?: unknown } | undefined)?.autoEnableCaptions !== false;
+    } catch {
+      // Settings unreadable: the default (on) holds.
+    }
+    const current = () => captionsHandledFor === recording;
+    const status = await ensureCaptionsOn({
+      enabled,
+      active: current,
+      // The recording ended meanwhile: nothing is read, so nothing is clicked.
+      state: () => (current() ? (readCaptionControl()?.state ?? "unknown") : "unknown"),
+      captionsShowing: () => current() && (captionTurnSeen || captionRegionShowing()),
+      // One click per page load, none once captions were seen on: a second
+      // toggle could only turn them off.
+      clickTurnOn: () => {
+        if (!current() || captionsClicked || captionsSeenOn) return false;
+        const control = readCaptionControl();
+        if (control?.state !== "off") return false;
+        captionsClicked = true;
+        control.el.click();
+        return true;
+      },
+      wait: async (ms) => {
+        await wait(ms);
+      },
+    });
+    if (status === "enabled" || status === "already-on") captionsSeenOn = true;
+    if (!current()) return;
+    console.info(`${LOG} captions: ${status}`);
+    chrome.runtime.sendMessage({ type: "CAPTIONS_STATUS", status }).catch(() => {});
   }
 
   function startSpeakerDetection() {
@@ -724,9 +807,11 @@ import { shortcutKeys } from "./ui/shortcut.ts";
       recordingStart = state.startTime || recordingStart || Date.now();
       startSpeakerDetection();
       startLeaveDetection();
+      if (PLATFORM === "meet") void autoEnableCaptions(recordingStart);
     } else {
       stopSpeakerDetection();
       stopLeaveDetection();
+      captionsHandledFor = null;
     }
 
     if (doneTimer && (recordingHere || savingHere)) {

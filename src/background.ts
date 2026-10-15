@@ -120,6 +120,7 @@ import {
   selectTranscriptWindow,
   type SummaryFeatures,
 } from "./meetingSummary";
+import { isCaptionsStatus, mergeCaptionsStatus } from "./captionsAuto";
 import { buildTranscriptionPrompt, mergeVocabulary } from "./transcriptionPrompt";
 import {
   EMPTY_LANGUAGE_LOCK,
@@ -517,6 +518,7 @@ async function hydrateState() {
           }
           const consolidation = readConsolidationReport(stored.consolidation);
           if (consolidation) state.consolidation = consolidation;
+          if (isCaptionsStatus(stored.captions)) state.captions = stored.captions;
           const graph = stored.graphVocabulary as Partial<GraphVocabulary> | null | undefined;
           if (graph && typeof graph === "object" && Array.isArray(graph.terms)) {
             state.graphVocabulary = {
@@ -670,6 +672,7 @@ function resetState() {
   state.stats = emptyStats();
   state.termCorrections = [];
   delete state.consolidation;
+  delete state.captions;
   state.graphVocabulary = null;
   if (vocabularyRetryTimer) clearTimeout(vocabularyRetryTimer);
   vocabularyRetryTimer = null;
@@ -727,6 +730,7 @@ function snapshot(): State {
     lastSummarizedAt: state.lastSummarizedAt ?? 0,
     lastSummarizedIndex: state.lastSummarizedIndex ?? 0,
     notice: state.notice ?? null,
+    ...(state.captions ? { captions: state.captions } : {}),
     micActive: state.micActive ?? null,
     finalizing: state.finalizing === true,
     stats: { ...(state.stats ?? emptyStats()) },
@@ -3185,6 +3189,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
         }
         sendResponse({ success: true, muted });
+        return;
+      }
+
+      case "CAPTIONS_STATUS": {
+        const status = message.status;
+        if (
+          !state.audioActive ||
+          !isCaptionsStatus(status) ||
+          !isMessageFromActiveMeeting({
+            senderTabId: sender?.tab?.id,
+            senderUrl: sender?.tab?.url || sender?.url,
+            targetTabId: state.targetTabId,
+            meetingId: state.meetingId,
+            meetingUrl: state.meetingUrl,
+          })
+        ) {
+          sendResponse({ success: true, ignored: true });
+          return;
+        }
+        const next = mergeCaptionsStatus(state.captions, status);
+        if (next === "enabled" && state.captions !== "enabled") {
+          addTimeline("Legendas ligadas pela extensão para identificar quem fala");
+        } else if (next === "failed" && state.captions !== "failed") {
+          addTimeline("Não consegui ligar as legendas: falas da aba podem sair como Participante");
+        }
+        state.captions = next;
+        await broadcastStateUpdate(true);
+        sendResponse({ success: true, captions: next });
         return;
       }
 
